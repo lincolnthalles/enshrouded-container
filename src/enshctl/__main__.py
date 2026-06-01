@@ -92,7 +92,7 @@ def main() -> None:
 
     try:
         COMMANDS[args.command]()
-    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+    except OSError, RuntimeError, subprocess.SubprocessError, ValueError:
         logger.exception("Fatal error during %s", args.command)
         sys.exit(1)
 

@@ -96,14 +96,14 @@ class BackupInfo:
 def get_min_free_warn() -> int:
     try:
         return int(os.environ.get("BACKUP_MIN_FREE_SPACE_WARN", str(DEFAULT_MIN_FREE_WARN)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return DEFAULT_MIN_FREE_WARN
 
 
 def get_min_free_stop() -> int:
     try:
         return int(os.environ.get("BACKUP_MIN_FREE_SPACE_STOP", str(DEFAULT_MIN_FREE_STOP)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return DEFAULT_MIN_FREE_STOP
 
 
@@ -180,7 +180,7 @@ def get_level(fmt: BackupFormat) -> int:
     if raw:
         try:
             level = int(raw)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             level = fmt.get_default_level()
         return fmt.clamp_level(level)
     return fmt.get_default_level()

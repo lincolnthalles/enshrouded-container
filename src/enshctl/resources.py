@@ -35,7 +35,7 @@ def read_pid_rss(pid: int) -> int:
         for line in Path(f"/proc/{pid}/status").read_text().splitlines():
             if line.startswith("VmRSS:"):
                 return int(line.split()[1])
-    except (OSError, ValueError, IndexError):
+    except OSError, ValueError, IndexError:
         pass
     return 0
 
@@ -45,7 +45,7 @@ def read_pid_cpu_ticks(pid: int) -> int:
     try:
         fields = Path(f"/proc/{pid}/stat").read_text().split()
         return int(fields[13]) + int(fields[14]) + int(fields[15]) + int(fields[16])
-    except (OSError, ValueError, IndexError):
+    except OSError, ValueError, IndexError:
         return 0
 
 
@@ -54,7 +54,7 @@ def read_system_cpu_ticks() -> int:
     try:
         parts = Path("/proc/stat").read_text().splitlines()[0].split()[1:]
         return sum(int(p) for p in parts)
-    except (OSError, ValueError, IndexError):
+    except OSError, ValueError, IndexError:
         return 0
 
 
