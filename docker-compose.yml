@@ -1,8 +1,8 @@
 services:
   enshrouded:
-    build: .
+    image: ghcr.io/lincolnthalles/enshrouded-container:latest
     container_name: enshrouded-server
-    restart: unless-stopped
+    restart: on-failure:5
 
     ports:
       - "15636:15636/udp"
