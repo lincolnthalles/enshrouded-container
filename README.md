@@ -21,10 +21,10 @@ docker compose down
 ## Features
 
 - **Version pinning**: Pin exact game server versions via Steam manifest IDs. Set `VERSION=latest` for automatic updates or `VERSION=<manifest_id>` for deterministic deployments.
-- **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the pristine game install, keeping the original files untouched.
+- **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the game server install, keeping the original files untouched.
 - **Config via env vars**: Any `ENSHROUDED_*` env var is converted to a nested JSON key in `enshrouded_server.json`. Works with any config field, including future game updates.
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
-- **Ntsync**: Can improve game server performance by better emulating Windows synchronization primitives. Requires a host with kernel 6.14+ and mounting `/dev/ntsync` into the container.
+- **ntsync**: Can improve game server performance by better emulating Windows synchronization primitives. Requires a host with kernel 6.14+ and mounting `/dev/ntsync` into the container.
 - **Resource polling**: Periodically logs CPU% and RSS for the orchestrator and game server process tree. Set `RESOURCE_POLL_INTERVAL` (default 60s) to control the interval.
 
 ## Requirements
@@ -69,15 +69,17 @@ docker compose down
 | `ENSHROUDED_QUERY_PORT` | 15637             | Query port       |
 
 > [!WARNING]
-> When removing a setting previously applied via environment variable, edit or delete the JSON file manually — the env var value will be re-applied on next start only if the key is present in the environment.
+> After removing a setting previously applied via environment variable, edit or delete the JSON file manually.
+> The env var value will be re-applied on next start only if the key is present in the environment.
 
 See [Environment Variable Config Reference](./docs/env-config-reference.md) for a full list of `ENSHROUDED_*` environment variables.
 
 ## Custom Config
 
-Mount a base `enshrouded_server.json` at `/data/config/enshrouded_server.json`. Environment variables override any values in this file. The generated config is written to `/data/config/enshrouded_server.json` and symlinked into the game directory.
+Mount a base `enshrouded_server.json` at `/data/config/enshrouded_server.json`. Environment variables override any values in this file. The final config is symlinked into the game server directory.
 
-The config file is modified at runtime by the game server (e.g. banned players). To remove a setting previously applied via environment variable, edit or delete the JSON file manually — the env var value will be re-applied on next start only if the key is present in the environment.
+> [!IMPORTANT]
+> The config file can be modified at runtime by the game server (e.g. banned players).
 
 ```yaml
 volumes:
@@ -87,7 +89,6 @@ volumes:
 Configuration reference:
 
 - [Enshrouded Knowledge Base: Server Gameplay Settings](https://enshrouded.zendesk.com/hc/en-us/articles/20453241249821-Server-Gameplay-Settings)
--
 
 ## Volumes
 
@@ -97,7 +98,7 @@ Configuration reference:
 | `wineprefix`        | `/data/wineprefix` | Wine prefix directory                               |
 | `mods`              | `/data/mods`       | Mod files overlaid via symlinks                     |
 | `saves`             | `/data/saves`      | World save data                                     |
-| `backups`           | `/data/backups`    | Backup archives (tar.zst)                           |
+| `backups`           | `/data/backups`    | Backup archives                                     |
 | `config`            | `/data/config`     | Optional base `enshrouded_server.json`              |
 | `logs`              | `/data/logs`       | Server log files                                    |
 
@@ -131,8 +132,8 @@ mods/
 
 Ps: you must cross-reference [client patch notes](https://steamdb.info/app/1203620/patchnotes/) dates with [server manifest](https://steamdb.info/depot/2278521/manifests/) dates to find matching client/server versions.
 
-[Depot 2278521 for Enshrouded Dedicated Server](https://steamdb.info/depot/2278521/manifests/)
-[Depot 1203621 for Enshrouded Client](https://steamdb.info/depot/1203621/manifests/)
+- [Depot 2278521 for Enshrouded Dedicated Server](https://steamdb.info/depot/2278521/manifests/)
+- [Depot 1203621 for Enshrouded Client](https://steamdb.info/depot/1203621/manifests/)
 
 ## Ports
 
@@ -143,7 +144,7 @@ Ps: you must cross-reference [client patch notes](https://steamdb.info/app/12036
 | 27015 | TCP      | SRCDS Rcon port                                        |
 | 27015 | UDP      | gameplay traffic                                       |
 
-[Required Ports for Steam](https://help.steampowered.com/en/faqs/view/2EA8-4D75-DA21-31EB)
+[Required Ports for Steam](https://support.steampowered.com/kb_article.php?ref=8571-GLVN-8711)
 
 ## Using old manifests
 
@@ -151,7 +152,9 @@ Anonymous accounts can only download the latest manifest.
 
 If you do not provide any authentication and request an older manifest, the orchestrator will show the Steam QR code on the terminal for you to authenticate via the mobile app.
 
-> Note that downloading older manifests is a flaky process as the CDN tends to keep only the latest manifests. If you encounter issues (e.g., `ServiceUnavailable`, `NotFound`), insist, try again later or use a different manifest.
+> [!NOTE]
+> Downloading older manifests is a flaky process as the CDN tends to keep only the latest manifests.
+> If you encounter issues (e.g., `ServiceUnavailable`, `NotFound`), insist, try again later or use a different manifest.
 
 ### Downloading with Steam authentication
 
