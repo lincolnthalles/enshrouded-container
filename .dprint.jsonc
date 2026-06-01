@@ -25,8 +25,6 @@
     "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm@40a2fdda7040317eb1b23520f3a00769a5571eedb049c4ca9175c1b9eeba01ae",
     // https://github.com/dprint/dprint-plugin-toml/releases
     "https://plugins.dprint.dev/toml-0.7.0.wasm@0126c8112691542d30b52a639076ecc83e07bace877638cee7c6915fd36b8629"
-    // https://github.com/dprint/dprint-plugin-ruff/releases
-    // "https://plugins.dprint.dev/ruff-0.7.13.wasm@e94b857f97e955600b55a5c38faaf4703f248e2aec47aa06a701f202918c680d"
   ],
   "exec": {
     "commands": [
@@ -48,12 +46,6 @@
       }
     ]
   },
-  // "ruff": {
-  //   // https://dprint.dev/plugins/ruff/config/
-  //   "associations": [
-  //     "**/*.py"
-  //   ]
-  // },
   "json": {
     // https://dprint.dev/plugins/json/config/
     "associations": [
