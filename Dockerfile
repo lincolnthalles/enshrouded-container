@@ -29,8 +29,6 @@ LABEL org.opencontainers.image.licenses="BlueOak-1.0.0"
 LABEL org.opencontainers.image.vendor="Lincoln Nogueira"
 LABEL org.opencontainers.image.source="https://github.com/lincolnthalles/enshrouded-container"
 
-ARG WINESTAGING=false # staging=3,88 GB / base=3,54 GB
-
 ENV HOME=/home/steam
 ENV PUID=1000
 ENV PGID=1000
@@ -43,19 +41,10 @@ RUN dnf5 install -y --allowerasing --setopt=install_weak_deps=False \
         python3-pip \
         procps-ng \
         util-linux \
-        xorg-x11-server-Xvfb
-
-RUN if [ "${WINESTAGING}" = "true" ]; then \
-    dnf5 install -y --setopt=install_weak_deps=False dnf5-plugins 'dnf-command(config-manager)' && \
-    rpmkeys --import https://dl.winehq.org/wine-builds/winehq.key && \
-    dnf5 config-manager addrepo --from-repofile=https://dl.winehq.org/wine-builds/fedora/44/winehq.repo && \
-    dnf5 install -y --allowerasing --setopt=install_weak_deps=False \
-        winehq-staging && \
-    ln -s /opt/wine-staging/bin/* /usr/local/bin/ ;\
-    else \
-        dnf5 install -y --allowerasing --setopt=install_weak_deps=False \
-            wine-core wine-common wine-ldap;\
-    fi
+        xorg-x11-server-Xvfb \
+        wine-core \
+        wine-common \
+        wine-ldap
 
 RUN mkdir -p /opt/depotdownloader
 COPY --from=dd-builder /out/DepotDownloader /opt/depotdownloader/DepotDownloader
