@@ -1,0 +1,145 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "enshrouded-server-container"
+version = "0.1.0"
+description = "Docker container for Enshrouded dedicated server with version pinning, mod injection, and automated backups"
+requires-python = ">=3.14"
+dependencies = [
+    "zstandard>=0.25.0",
+    "rich>=13.0.0",
+    "textual>=0.80.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.14",
+]
+
+[project.scripts]
+enshctl = "enshctl.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/enshctl"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+src = ["src/enshctl", "src/tests"]
+line-length = 120
+target-version = 'py314'
+fix = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    'COM812', # Missing trailing comma. Redundant with formatter usage.
+    'D101',
+    'D102',
+    'D103', # Missing docstring in public function.
+    'S603', # `subprocess` call: check for execution of untrusted input.
+    'S202',
+    'S607',
+    'PLR0911', # Too many return statements.
+    'PLR0912',
+    'PLR2004', # Magic value used in comparison.
+    'S108', # Probable insecure usage of temporary file or directory.
+    'S310', # Audit URL open for permitted schemes. Allowing use of `file:` or custom schemes is often unexpected.
+    'T201', # print found.
+    'TRY003', # Avoid specifying long messages outside the exception class.
+    'FBT001',
+    'FBT002',
+    'C901',
+    'ANN001',
+    'ARG001',
+    'PERF401',
+]
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    '__pycache__',
+    '.git',
+    '.mypy_cache',
+    '.ruff_cache',
+    '.venv',
+    '.vscode',
+    'dist',
+    'data',
+]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+
+[tool.ruff.lint.per-file-ignores]
+"test_*.py" = [
+    'S101', # Use of `assert` detected.
+    'S105', # Possible hardcoded password assigned to: "password".
+    'S106', # Possible hardcoded password assigned to argument: "steam_password".
+    'PLC0415', # Local imports for env isolation.
+    'SLF001', # Private member accessed.
+    'PT019', # Fixture `_mock_discover` without value is injected as parameter.
+]
+"src/enshctl/commands/*.py" = [
+    'PLC0415', # argparse and Rich imports kept local for CLI dispatch.
+]
+"src/enshctl/backup.py" = [
+    'PLC0415', # Local imports in start_scheduler to avoid circular imports.
+    'TRY300', # Return in try/except is intentional.
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-wrap-aliases = false
+
+[tool.mypy]
+mypy_path = "src/enshctl"
+files = ["src/**/*.py"]
+python_version = "3.14"
+pretty = true
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["enshctl.config", "enshctl.install"]
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["enshctl.commands.restore"]
+disable_error_code = "misc"
+
+[[tool.mypy.overrides]]
+module = ["ztandard.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["textual.*", "zstandard.*"]
+ignore_missing_imports = true
+
+[tool.ty.environment]
+python = "./.venv"
+python-platform = "linux"
+python-version = "3.14"
+
+[[tool.ty.overrides]]
+include = ["tests/**", "**/test_*.py"]
+
+[tool.ty.overrides.rules]
+possibly-unresolved-reference = "warn"
+invalid-argument-type = "ignore"
+unresolved-attribute = "ignore"
+
+# [tool.ty.analysis]
+# allowed-unresolved-imports = ["rich.*", "textual.**", "zstandard.**"]
+
+[tool.uv]
+exclude-newer = "7 days"

@@ -1,0 +1,50 @@
+services:
+  enshrouded:
+    build: .
+    container_name: enshrouded-server
+    restart: unless-stopped
+
+    ports:
+      - "15636:15636/udp"
+      - "15637:15637/udp"
+      - "27015:27015"
+      - "27015:27015/udp"
+
+    environment:
+      VERSION: "${VERSION:-latest}"
+      BACKUP_CRON: "${BACKUP_CRON:-*/60 * * * *}"
+      # BACKUP_FORMAT: "${BACKUP_FORMAT:-zstd}"
+      # BACKUP_LEVEL: "${BACKUP_LEVEL:-9}"
+      # BACKUP_KEEP_LAST: "${BACKUP_KEEP_LAST:-24}"
+      # BACKUP_LIVE: "${BACKUP_LIVE:-true}"
+      # BACKUP_COLD: "${BACKUP_COLD:-true}"
+      # BACKUP_EMERGENCY: "${BACKUP_EMERGENCY:-true}"
+      # FORCE_INSTALL: "${FORCE_INSTALL:-0}"
+      # LOG_TAIL: "${LOG_TAIL:-0}"
+      ENSHROUDED_NAME: "${ENSHROUDED_NAME:-Enshrouded Server}"
+      ENSHROUDED_SLOT_COUNT: "${ENSHROUDED_SLOT_COUNT:-16}"
+      ENSHROUDED_USER_GROUPS__0__NAME: "${ENSHROUDED_USER_GROUPS__0__NAME:-Default}"
+      ENSHROUDED_USER_GROUPS__0__PASSWORD: "${ENSHROUDED_USER_GROUPS__0__PASSWORD:-}"
+      TZ: "${TZ:-UTC}"
+
+    volumes:
+      - ./enshrouded-data/backups:/data/backups
+      - ./enshrouded-data/config:/data/config
+      - ./enshrouded-data/logs:/data/logs
+      - ./enshrouded-data/mods:/data/mods
+      - ./enshrouded-data/saves:/data/saves
+      - enshrouded_manifests:/data/manifests
+      - enshrouded_wineprefix:/data/wineprefix
+
+    devices:
+      # Optional. May improve the game server performance.
+      # If ntsync support is not enabled in your Linux kernel (`lsmod | grep ntsync`), comment out this section.
+      # Check if it's in use: `lsof -p $(pidof wineserver) | grep ntsync`
+      - /dev/ntsync:/dev/ntsync
+    cap_add:
+      # Optional. Allow backups to run at a lower priority.
+      - SYS_NICE
+
+volumes:
+  enshrouded_manifests:
+  enshrouded_wineprefix:

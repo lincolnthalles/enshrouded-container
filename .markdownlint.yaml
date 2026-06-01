@@ -1,0 +1,10 @@
+# https://github.com/DavidAnson/markdownlint/blob/main/schema/.markdownlint.yaml
+
+# Default state for all rules
+default: true
+
+MD013: false
+MD028: false
+MD033: false
+MD041: false
+MD043: false

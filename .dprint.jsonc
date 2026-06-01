@@ -1,0 +1,95 @@
+{
+  "$schema": "https://plugins.dprint.dev/dprint/dprint-plugin-json/latest/schema.json",
+  "excludes": [
+    "**/.git",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/__pycache__",
+    "**/.venv"
+  ],
+  "includes": [
+    "**/*.{json,jsonc,md,py,toml,yaml,yml}",
+    "**/justfile"
+  ],
+  "lineWidth": 96,
+  "indentWidth": 4,
+  "plugins": [
+    // https://github.com/dprint/dprint-plugin-exec/releases
+    "https://plugins.dprint.dev/exec-0.6.2.json@df98f54ffd3092b8a841aedd6d098a2651f16d0a796a40535774f1a8b4b9d463",
+    // https://github.com/dprint/dprint-plugin-json/releases
+    "https://plugins.dprint.dev/json-0.21.3.wasm@f34c8fbaeda1f42c479d4a5fa2c86f93d105c2d527ec61fffe912e4d9dc5cc77",
+    // https://github.com/dprint/dprint-plugin-markdown/releases
+    "https://plugins.dprint.dev/markdown-0.22.1.wasm@4906fbb038977732aae0e216e4b0b957e2722f8d79282660ccb36d27dd051f17",
+    // https://github.com/g-plane/pretty_yaml/releases
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm@40a2fdda7040317eb1b23520f3a00769a5571eedb049c4ca9175c1b9eeba01ae",
+    // https://github.com/dprint/dprint-plugin-toml/releases
+    "https://plugins.dprint.dev/toml-0.7.0.wasm@0126c8112691542d30b52a639076ecc83e07bace877638cee7c6915fd36b8629"
+    // https://github.com/dprint/dprint-plugin-ruff/releases
+    // "https://plugins.dprint.dev/ruff-0.7.13.wasm@e94b857f97e955600b55a5c38faaf4703f248e2aec47aa06a701f202918c680d"
+  ],
+  "exec": {
+    "commands": [
+      {
+        "cwd": "${configDir}",
+        "command": "just --dump --justfile {{file_path}}",
+        "stdin": false,
+        "fileNames": "justfile",
+        "exts": [
+          "justfile"
+        ]
+      },
+      // Python: ruff
+      {
+        "cwd": "${configDir}",
+        "command": "ruff format --stdin-filename {{file_path}} --silent",
+        "exts": ["py"],
+        "stdin": true
+      }
+    ]
+  },
+  // "ruff": {
+  //   // https://dprint.dev/plugins/ruff/config/
+  //   "associations": [
+  //     "**/*.py"
+  //   ]
+  // },
+  "json": {
+    // https://dprint.dev/plugins/json/config/
+    "associations": [
+      "**/*.{json,jsonc}"
+    ],
+    "useTabs": false,
+    "indentWidth": 2,
+    "newLineKind": "lf",
+    "lineWidth": 96,
+    "trailingCommas": "never"
+  },
+  "markdown": {
+    // https://dprint.dev/plugins/markdown/config/
+    "associations": [
+      "**/*.md"
+    ],
+    "lineWidth": 96
+  },
+  "toml": {
+    // https://dprint.dev/plugins/toml/config/
+    "associations": [
+      "**/*.toml"
+    ],
+    "lineWidth": 96,
+    "useTabs": false,
+    "indentWidth": 4,
+    "newLineKind": "lf",
+    "comment.forceLeadingSpace": false,
+    "cargo.applyConventions": true
+  },
+  "yaml": {
+    // https://dprint.dev/plugins/pretty_yaml/config/
+    "associations": [
+      "**/*.{yaml,yml}"
+    ],
+    "indentWidth": 2,
+    "printWidth": 96
+  }
+}

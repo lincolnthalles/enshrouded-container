@@ -1,0 +1,31 @@
+# Data volumes
+enshrouded-data/
+
+# Env
+.env
+.env.local
+
+# Python
+*.py[cod]
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.zed/*
+!.zed/settings.json
+*.swp
+*.swo
+*~
+
+# Agent tooling
+!AGENTS.md
+openspec/*
+!openspec/specs/
+!openspec/config.yaml

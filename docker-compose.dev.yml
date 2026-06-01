@@ -1,0 +1,89 @@
+# Development compose file — mounts ./data (already in .gitignore).
+# Usage: just dev
+
+services:
+  enshrouded:
+    build: .
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /tmp/src
+
+    image: dev-enshrouded-server-container
+    container_name: dev-enshrouded-server
+    restart: no
+    stop_grace_period: 120s
+    # network_mode: host
+    ports:
+      - "15636:15636/udp"
+      - "15637:15637/udp"
+
+    environment:
+      VERSION: "latest"
+      TZ: America/Sao_Paulo
+
+      ORCHESTRATOR_LOG_FILE: /data/logs/orchestrator.log
+      ORCHESTRATOR_LOG_LEVEL: WARNING
+
+      BACKUP_CRON: "*/1 * * * *"
+      # BACKUP_KEEP_LAST: 5
+      # BACKUP_KEEP_HOURLY: 24
+      # BACKUP_KEEP_DAILY: 7
+      # BACKUP_KEEP_WEEKLY: 4
+      # BACKUP_KEEP_MONTHLY: 12
+      # BACKUP_KEEP_YEARLY: 1
+      BACKUP_FORMAT: zstd
+      BACKUP_LEVEL: 6
+      BACKUP_COLD: 1
+
+      ENSHROUDED_NAME: "[Dev] Enshrouded Server"
+      ENSHROUDED_TAGS: '["Portuguese","Exploration","LookingForPlayers"]'
+      ENSHROUDED_IP: 0.0.0.0
+      ENSHROUDED_SLOT_COUNT: 6
+
+      ENSHROUDED_ENABLE_VOICE_CHAT: true
+      ENSHROUDED_ENABLE_TEXT_CHAT: true
+
+      ENSHROUDED_GAME_SETTINGS_PRESET: Custom
+      ENSHROUDED_GAME_SETTINGS__MINING_DAMAGE_FACTOR: 2.0
+      ENSHROUDED_GAME_SETTINGS__RESOURCE_DROP_STACK_AMOUNT_FACTOR: 2.0
+      ENSHROUDED_GAME_SETTINGS__PLAYER_HEALTH_FACTOR: 1.0
+
+      ENSHROUDED_USER_GROUPS__0__NAME: Default
+      ENSHROUDED_USER_GROUPS__0__PASSWORD:
+      ENSHROUDED_USER_GROUPS__0__CAN_KICK_BAN: false
+      ENSHROUDED_USER_GROUPS__0__CAN_ACCESS_INVENTORIES: true
+      ENSHROUDED_USER_GROUPS__0__CAN_EDIT_WORLD: true
+      ENSHROUDED_USER_GROUPS__0__CAN_EDIT_BASE: true
+      ENSHROUDED_USER_GROUPS__0__CAN_EXTEND_BASE: true
+      ENSHROUDED_USER_GROUPS__0__RESERVED_SLOTS: 0
+
+      ENSHROUDED_USER_GROUPS__1__NAME: Admin
+      ENSHROUDED_USER_GROUPS__1__PASSWORD: admin
+      ENSHROUDED_USER_GROUPS__1__CAN_KICK_BAN: true
+      ENSHROUDED_USER_GROUPS__1__CAN_ACCESS_INVENTORIES: true
+      ENSHROUDED_USER_GROUPS__1__CAN_EDIT_WORLD: true
+      ENSHROUDED_USER_GROUPS__1__CAN_EDIT_BASE: true
+      ENSHROUDED_USER_GROUPS__1__CAN_EXTEND_BASE: true
+      ENSHROUDED_USER_GROUPS__1__RESERVED_SLOTS: 1
+
+    volumes:
+      - enshrouded_wineprefix:/data/wineprefix
+      - ./enshrouded-data/manifests:/data/manifests
+      - ./enshrouded-data/mods:/data/mods
+      - ./enshrouded-data/saves:/data/saves
+      - ./enshrouded-data/backups:/data/backups
+      - ./enshrouded-data/config:/data/config
+      - ./enshrouded-data/logs:/data/logs
+
+    devices:
+      # This is required for ntsync to work inside Docker.
+      # If ntsync support is not enabled in your Linux kernel (`lsmod | grep ntsync`), comment out this section.
+      # Check if it's in use: `lsof -p $(pidof wineserver) | grep ntsync`
+      - /dev/ntsync:/dev/ntsync
+    cap_add:
+      - SYS_NICE
+
+volumes:
+  enshrouded_wineprefix:
