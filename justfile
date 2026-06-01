@@ -1,5 +1,18 @@
 export ACTIVATE_VENV := "source " + justfile_directory() + "/.venv/bin/activate"
 
+[private]
+_ensure_venv:
+    #!/bin/env bash
+    if ! command -v uv &> /dev/null; then
+        echo "uv not found! Install it from https://docs.astral.sh/uv/#installation"
+        exit 1
+    fi
+    if [ ! -d "./.venv" ]; then
+        uv venv
+    fi      
+    $ACTIVATE_VENV
+    uv sync --no-install-project
+
 @default:
     just --list
 
@@ -44,7 +57,7 @@ fmt:
 dev:
     docker compose -f docker-compose.dev.yml up -d --build --force-recreate
     docker logs dev-enshrouded-server -f
-    
+
 [group('test container')]
 dev-debug-config:
     docker compose -f docker-compose.dev.yml run --build --rm enshrouded debug-config
@@ -52,16 +65,20 @@ dev-debug-config:
 [group('test container')]
 dev-version-info:
     docker compose -f docker-compose.dev.yml run --build --rm enshrouded version-info
-    
+
 [private]
-_ensure_venv:
-    #!/bin/env bash
-    if ! command -v uv &> /dev/null; then
-        echo "uv not found! Install it from https://docs.astral.sh/uv/#installation"
-        exit 1
-    fi
-    if [ ! -d "./.venv" ]; then
-        uv venv
-    fi      
-    $ACTIVATE_VENV
-    uv sync --no-install-project
+git-retag TAG:
+    #!/usr/bin/env bash
+    set +e
+    TAG="v{{ trim_start_matches(TAG, 'v') }}"
+    git push origin :refs/tags/$TAG
+    git tag -d $TAG
+    git tag -a $TAG -m "Tag $TAG"
+    git push origin $TAG
+
+[doc('Tag and push to GitHub, triggering the release workflow.')]
+publish TAG: validate
+    #!/usr/bin/env bash
+    TAG="v{{ trim_start_matches(TAG, 'v') }}"
+    just git-retag "$TAG"
+    git push origin main
