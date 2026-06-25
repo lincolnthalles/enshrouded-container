@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from enshctl.install import DEFAULT_MIN_FREE_SPACE, get_min_free_space
 
 
@@ -54,7 +55,6 @@ class TestDownloadVersionQuota:
             patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
             patch.object(install, "check_manifestfile_support", return_value=False),
             patch.object(install, "download_depots"),
-            patch.object(install, "sys"),
         ):
             install.download_version("999", force=True)
 
@@ -76,10 +76,9 @@ class TestDownloadVersionQuota:
             patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
             patch.object(install, "check_manifestfile_support", return_value=False),
             patch.object(install, "download_depots"),
-            patch.object(install, "sys") as mock_sys,
+            pytest.raises(SystemExit),
         ):
             install.download_version("999", force=True)
-            mock_sys.exit.assert_called_once_with(1)
 
     def test_install_quota_same_manifest_partial_counts(
         self,
@@ -105,7 +104,6 @@ class TestDownloadVersionQuota:
             patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
             patch.object(install, "check_manifestfile_support", return_value=False),
             patch.object(install, "download_depots"),
-            patch.object(install, "sys"),
         ):
             install.download_version("999", force=True)
 
@@ -130,7 +128,6 @@ class TestDownloadVersionQuota:
             patch.object(install, "MANIFESTS_DIR", manifests_dir),
             patch.object(install, "get_version", return_value="999"),
             patch("enshctl.install.shutil.disk_usage", return_value=mock_disk),
-            patch.object(install, "sys") as mock_sys,
+            pytest.raises(SystemExit),
         ):
             install.download_version("999", force=True)
-            mock_sys.exit.assert_called_once_with(1)

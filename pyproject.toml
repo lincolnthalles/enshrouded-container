@@ -15,6 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pyrefly>=1.1.0",
     "pytest>=9.0.3",
     "ruff>=0.15.14",
 ]
@@ -34,6 +35,11 @@ src = ["src/enshctl", "src/tests"]
 line-length = 120
 target-version = 'py314'
 fix = true
+extend-exclude = [
+    '__pycache__',
+    'dist',
+    'enshrouded-data',
+]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -58,18 +64,6 @@ ignore = [
     'ANN001',
     'ARG001',
     'PERF401',
-]
-
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    '__pycache__',
-    '.git',
-    '.mypy_cache',
-    '.ruff_cache',
-    '.venv',
-    '.vscode',
-    'dist',
-    'data',
 ]
 
 # Allow unused variables when underscore-prefixed.
@@ -102,44 +96,22 @@ convention = "numpy"
 combine-as-imports = true
 force-wrap-aliases = false
 
-[tool.mypy]
-mypy_path = "src/enshctl"
-files = ["src/**/*.py"]
-python_version = "3.14"
-pretty = true
-strict = true
+[tool.pyrefly]
+project-includes = ["src/**/*.py"]
+search-path = ["src/enshctl"]
+python-version = "3.14.0"
+preset = "strict"
 
-[[tool.mypy.overrides]]
-module = ["enshctl.config", "enshctl.install"]
-warn_return_any = false
+[tool.pyrefly.errors]
+redundant-cast = "warn"
+unnecessary-type-conversion = "warn"
+unnecessary-comparison = "warn"
 
-[[tool.mypy.overrides]]
-module = ["enshctl.commands.restore"]
-disable_error_code = "misc"
+# [[tool.pyrefly.sub-config]]
+# matches = "src/enshctl/commands/restore.py"
 
-[[tool.mypy.overrides]]
-module = ["ztandard.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["textual.*", "zstandard.*"]
-ignore_missing_imports = true
-
-[tool.ty.environment]
-python = "./.venv"
-python-platform = "linux"
-python-version = "3.14"
-
-[[tool.ty.overrides]]
-include = ["tests/**", "**/test_*.py"]
-
-[tool.ty.overrides.rules]
-possibly-unresolved-reference = "warn"
-invalid-argument-type = "ignore"
-unresolved-attribute = "ignore"
-
-# [tool.ty.analysis]
-# allowed-unresolved-imports = ["rich.*", "textual.**", "zstandard.**"]
+# [tool.pyrefly.sub-config.errors]
+# unreachable = false
 
 [tool.uv]
 exclude-newer = "7 days"

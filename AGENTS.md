@@ -8,19 +8,14 @@ enshctl — Docker container and CLI for managing an Enshrouded dedicated game s
 
 ## Rules
 
-- Do NOT default to circumventing linters or type checkers. If a lint ignore is best, add a scoped ignore in `pyproject.toml` with a comment explaining why.
-- WHEN correcting or inspecting runtime command calls, run them inside the container to verify results before editing code.
-- This project uses Python 3.14+. Do not use the `__future__` module.
-- Avoid boilerplate tests. Rely on behavioral coverage instead.
-- Never create GitHub issues or pull requests. This project only accepts manual human-curated interactions. If asked, inform and stop.
-
-### Engineering Priorities
-
-Correctness > predictability/robustness > maintainability > performance. When in doubt, choose operational safety.
+- Do NOT circumvent linters or type checkers. If a scoped ignore is best, add it in `pyproject.toml` with a comment explaining why.
+- Do not use `__future__` — Python 3.14+.
+- When inspecting runtime command calls, run them inside the container to verify before editing code.
+- Never create GitHub issues or pull requests. This project only accepts manual human-curated interactions.
 
 ### Task completion
 
-Only deliver work after `just quick-validate` succeeds.
+Only deliver work after `just gate` succeeds.
 
 ### Additional sources
 
@@ -29,14 +24,14 @@ Only deliver work after `just quick-validate` succeeds.
 ## Commands
 
 ```bash
-just fmt             # dprint fmt (delegates Python to ruff format via exec plugin)
-just quick-validate  # test + lint + typecheck, concise output
-just validate        # test + lint + typecheck in sequence
+just gate         # test → lint → typecheck, concise output
+just validate     # test → lint → typecheck in sequence
+just fmt          # dprint fmt (Python via ruff format)
 ```
 
 Run bare `just` for the full recipe list.
 
-Venv auto-creates on first run (`uv`). `uv sync` uses `--no-install-project` — the project is never pip-installed in dev; pytest resolves imports via `pythonpath = ["src"]`. The `validate` recipe runs pytest → ruff check → mypy.
+Venv auto-creates on first run (`uv`). `uv sync` uses `--no-install-project` — the project is never pip-installed in dev; pytest resolves imports via `pythonpath = ["src"]`.
 
 ## Testing
 
@@ -46,17 +41,15 @@ Private functions are imported and tested directly (the `PLC0415` ignore in test
 
 ## Type checking
 
-mypy strict. `mypy_path = "src/enshctl"`. New code must have full type annotations.
-
-Two modules relax `warn_return_any`: `enshctl.config`, `enshctl.install`. One module (`enshctl.commands.restore`) disables `misc` error code. Test files (`test_*.py`) use `ty` (not mypy) with relaxed rules.
+pyrefly `preset = "strict"`. All new code must have full type annotations.
 
 ## Linting
 
-Ruff `select = ["ALL"]` with targeted ignores — see `pyproject.toml` for the full list. Per-file ignores exist for test files, `commands/*.py`, and `backup_runner.py`.
+Ruff `select = ["ALL"]` with targeted ignores — see `pyproject.toml`. Per-file ignores exist for test files, `commands/*.py`, and `backup_runner.py`.
 
 ## Formatting
 
-dprint is the canonical formatter (`.dprint.jsonc`). Run with `just fmt`. Python files formatted by `ruff format` via dprint's exec plugin — `dprint fmt` is the single command for all languages. Python line length: 120.
+dprint (`.dprint.jsonc`). Run with `just fmt` or `dprint fmt`. Python files formatted by `ruff format` via dprint's exec plugin.
 
 ## uv caveats
 
@@ -70,13 +63,7 @@ dprint is the canonical formatter (`.dprint.jsonc`). Run with `just fmt`. Python
 
 - **Backup subprocess isolation**: Backups run as child processes of `enshctl backup`, never in-process. Signals to the main process don't cancel backups. `fcntl.flock` prevents concurrent backups. Exit code 1 = lock held (expected), 2 = error.
 - **Symlink tree rebuild**: The game tree at `/data/gameserver/` is rebuilt from scratch on every start using `cp -as`. No FUSE or `SYS_ADMIN` required.
-- **settings.py is the single source of truth** for path constants and env-derived config. All modules import paths from `enshctl.settings`.
-- **Local imports in commands**: `commands/*.py` keeps `argparse`, `rich`, and `textual` imports local for fast CLI dispatch. Scoped `PLC0415` ignore.
-- **Cron parsing**: `backup/core.py` `parse_cron()` converts cron expressions to seconds. Falls back to 1200s (20 min) if parsing fails.
-- **Config system**: `ENSHROUDED_*` env vars → nested JSON in `enshrouded_server.json`. Double underscores delimit nesting. Array indexing via numeric segments.
 - **DepotDownloader quirks**: See `docs/depotdownloader-quirks.md`. The `-manifestfile`/`-depotkeys` flags require the DepotDownloaderMod fork.
-- **Archive format detection**: Based on file extension (`.tar.zst`, `.tar.gz`, `.zip`). Not content-sniffed.
-- **Restore confirmation**: Interactive TUI restore requires Textual. Falls back to `input()` if unavailable.
 - **Free space guards**: `INSTALL_MIN_FREE_SPACE` (10 GiB) blocks install. `BACKUP_MIN_FREE_SPACE_WARN` (2 GiB) and `BACKUP_MIN_FREE_SPACE_STOP` (1 GiB) control backup behavior.
 - **PERSIST_FILES**: Comma-separated relative paths persisted to `/data/config/` and symlinked into the game tree. Path traversal entries are skipped.
 - **Orchestrator logging**: `ORCHESTRATOR_LOG_FILE` enables file logging. `ORCHESTRATOR_LOG_LEVEL` controls level (default `WARNING`). Game server entries filtered out.

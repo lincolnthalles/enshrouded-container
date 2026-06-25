@@ -8,7 +8,6 @@ enshrouded-data/
 # Python
 *.py[cod]
 __pycache__/
-.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 dist/

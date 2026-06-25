@@ -1,10 +1,13 @@
 export ACTIVATE_VENV := "source " + justfile_directory() + "/.venv/bin/activate"
 
+@_default:
+    just --list
+
 [private]
 _ensure_venv:
-    #!/bin/env bash
+    #!/usr/bin/env -S bash -euo pipefail
     if ! command -v uv &> /dev/null; then
-        echo "uv not found! Install it from https://docs.astral.sh/uv/#installation"
+        echo "uv not found! Install it from https://docs.astral.sh/uv/getting-started/installation/"
         exit 1
     fi
     if [ ! -d "./.venv" ]; then
@@ -13,34 +16,37 @@ _ensure_venv:
     $ACTIVATE_VENV
     uv sync --no-install-project
 
-@default:
-    just --list
+# Run tests with pytest
+test *ARGS='': _ensure_venv
+    $ACTIVATE_VENV && pytest {{ ARGS }} src/tests/
 
-test *VERBOSE='': _ensure_venv
-    $ACTIVATE_VENV && pytest {{ VERBOSE }} src/tests/
-
+# Lint the project with ruff
 lint: _ensure_venv
     $ACTIVATE_VENV && ruff check src/enshctl src/tests/
 
+# Typecheck the project with pyrefly
 typecheck: _ensure_venv
-    $ACTIVATE_VENV && mypy src/enshctl        
+    $ACTIVATE_VENV && pyrefly check 
 
-validate *VERBOSE='': _ensure_venv
-    #!/bin/env bash
-    set -euo pipefail
+# Run all validations (lint, typecheck, test)
+validate *ARGS='': _ensure_venv
+    #!/usr/bin/env -S bash -euo pipefail
     $ACTIVATE_VENV
-    pytest {{ VERBOSE }} src/tests/ 
+    pytest {{ ARGS }} src/tests/ 
     ruff check src/enshctl src/tests/
-    mypy src/enshctl
+    pyrefly check --output-format=min-text
 
-@quick-validate:
-    just validate >/dev/null && echo "All validations passed." || echo "ERROR. Run 'just validate' for more details."
+# Concise version of validate
+@gate:
+    just validate >/dev/null 2>&1 && echo "[OK] All validations passed." || echo "[ERROR] Run 'just validate' for more details."
 
+# Build the project with uv
 build:
-    uv build     
+    uv build
 
+# Clean project artifacts
 clean:
-    rm -rf __pycache__ .pytest_cache .mypy_cache .ruff_cache .venv .pytest_cache dist
+    rm -rf __pycache__ .pytest_cache .ruff_cache .venv .pytest_cache dist
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     find . -type f -name '*.pyc' -delete 2>/dev/null || true
     echo "Cleaning Docker…"
@@ -50,6 +56,7 @@ clean:
     docker image rm dev-enshrouded-server-container || true
     docker image prune -f
 
+# Format code
 fmt:
     dprint fmt
 
@@ -76,7 +83,7 @@ git-retag TAG:
     git tag -a $TAG -m "Tag $TAG"
     git push origin $TAG
 
-[doc('Tag and push to GitHub, triggering the release workflow.')]
+# Tag and push to GitHub, triggering the release workflow.
 publish TAG: validate
     #!/usr/bin/env bash
     TAG="v{{ trim_start_matches(TAG, 'v') }}"

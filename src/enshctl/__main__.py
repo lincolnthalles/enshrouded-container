@@ -10,6 +10,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from os import environ
 from pathlib import Path
+from typing import override
 
 from enshctl.commands import COMMANDS
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 class _GameServerFilter(logging.Filter):
     """Filter out game server log entries from the orchestrator file log."""
 
+    @override
     def filter(self, record: logging.LogRecord) -> bool:
         return getattr(record, "source", "") != "gameserver"
 

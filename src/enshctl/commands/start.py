@@ -73,7 +73,7 @@ def _setup_directories() -> None:
 
     logger.info("Recursively setting permissions for working directories under /data")
     logger.info("UID: %d, GID: %d", uid, gid)
-    paths = (p if isinstance(p, Path) else Path(str(p)) for p in dirs)
+    paths = (Path(str(p)) for p in dirs)
     for p in paths:
         p.mkdir(parents=True, exist_ok=True)
         with suppress(OSError):

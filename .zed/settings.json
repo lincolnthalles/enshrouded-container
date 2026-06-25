@@ -3,49 +3,64 @@
 //
 // For the best development experience with this project, install the following extensions:
 // - https://zed.dev/extensions/ruff
-// - https://zed.dev/extensions/ty
+// - https://zed.dev/extensions/pyrefly
 {
   "file_scan_exclusions": [
     "**/.git",
-    "**/.mypy_cache",
     "**/.pytest_cache",
     "**/.ruff_cache",
     "**/.venv",
     "**/__pycache__"
   ],
-  "format_on_save": "on",
-  "formatter": {
-    "external": {
-      "command": "dprint",
-      "arguments": [
-        "fmt",
-        "--config",
-        ".dprint.jsonc",
-        "--stdin",
-        "{buffer_path}"
-      ]
-    }
-  },
-  "languages": {
-    "Python": {
-      "formatter": "language_server",
-      "language_servers": [
-        "ruff",
-        "ty"
-      ]
-    }
-  },
   "file_types": {
     "GitHub Actions": [
       ".github/workflows/*.yml"
     ]
   },
+  "format_on_save": "on",
+  "formatter": {
+    "external": {
+      "command": "dprint",
+      "arguments": ["fmt", "--config", ".dprint.jsonc", "--stdin", "{buffer_path}"]
+    }
+  },
+  "languages": {
+    "Just": { "formatter": "language_server" },
+    "Python": {
+      "language_servers": [
+        "dprint",
+        "pyrefly",
+        "ruff",
+        "!pylsp",
+        "!pyright",
+        "!ty"
+      ]
+    }
+  },
+  "lsp": {
+    "pyrefly": {
+      "binary": {
+        "path": ".venv/bin/pyrefly",
+        "arguments": [
+          "lsp"
+        ]
+      },
+      "settings": {
+        "python": {
+          "pythonPath": ".venv/bin/python"
+        },
+        "pyrefly": {
+          "python_interpreter": ".venv/bin/python"
+        }
+      }
+    }
+  },
   "language_servers": [
     "dprint",
-    "ruff",
-    "ty",
     "json-language-server",
     "just-lsp",
-    "markdownlint"
+    "markdownlint",
+    "pyrefly",
+    "ruff"
   ]
 }

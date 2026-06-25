@@ -18,18 +18,17 @@ EXIT_SUCCESS = 0
 EXIT_LOCK_HELD = 1
 EXIT_ERROR = 2
 
+_priority_state = {"warned": False}
+
 
 def _make_priority_lowerer() -> Callable[[], None]:
-    warned = False
-
     def inner() -> None:
-        nonlocal warned
         try:
             nice(19)
         except OSError:
-            if not warned:
+            if not _priority_state["warned"]:
                 logger.warning("SYS_NICE cap unavailable, backup runs at default CPU priority")
-                warned = True
+                _priority_state["warned"] = True
             else:
                 logger.debug("SYS_NICE cap unavailable, backup runs at default CPU priority")
 
@@ -40,9 +39,9 @@ def _make_priority_lowerer() -> Callable[[], None]:
                 check=True,
             )
         except OSError, subprocess.CalledProcessError:
-            if not warned:
+            if not _priority_state["warned"]:
                 logger.warning("ionice unavailable, backup runs at default IO priority")
-                warned = True
+                _priority_state["warned"] = True
             else:
                 logger.debug("ionice unavailable, backup runs at default IO priority")
 

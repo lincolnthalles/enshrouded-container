@@ -1,7 +1,7 @@
 """Tests for config module."""
 
 from os import environ
-from typing import cast
+from typing import Any, cast
 
 from enshctl.config import (
     _resolve_array_overrides,
@@ -72,7 +72,7 @@ def test_deep_merge_nested() -> None:
 
 
 def test_deep_merge_new_key() -> None:
-    base: dict = {"name": "Base"}
+    base: dict[str, Any] = {"name": "Base"}
     override = {"port": 9999}
     result = deep_merge(base, override)
     assert result["name"] == "Base"
@@ -117,8 +117,8 @@ def test_env_to_dict_ignores_non_enshrouded() -> None:
 
 def test_resolve_array_overrides() -> None:
 
-    base = {"userGroups": [{"name": "default"}], "bans": []}
-    merged = {
+    base: dict[str, Any] = {"userGroups": [{"name": "default"}], "bans": []}
+    merged: dict[str, Any] = {
         "userGroups": {
             "admin": {"password": "AdminXXXXXXXX", "canKickBan": True},
             "friend": {"password": "FriendXXXXXXXX", "canKickBan": False},
@@ -127,7 +127,7 @@ def test_resolve_array_overrides() -> None:
     }
     _resolve_array_overrides(base, merged)
     assert len(merged["userGroups"]) == 2
-    groups = {g["name"]: g for g in cast("list", merged["userGroups"])}
+    groups = {g["name"]: g for g in cast("list[dict[str, Any]]", merged["userGroups"])}
     assert groups["admin"]["password"] == "AdminXXXXXXXX"
     assert groups["admin"]["canKickBan"] is True
     assert groups["friend"]["password"] == "FriendXXXXXXXX"
@@ -136,11 +136,11 @@ def test_resolve_array_overrides() -> None:
 
 
 def test_resolve_array_overrides_nested() -> None:
-    base = {"outer": {"items": []}}
-    merged: dict = {"outer": {"items": {"a": {"value": 1}, "b": {"value": 2}}}}
+    base: dict[str, Any] = {"outer": {"items": []}}
+    merged: dict[str, Any] = {"outer": {"items": {"a": {"value": 1}, "b": {"value": 2}}}}
     _resolve_array_overrides(base, merged)
-    items = merged["outer"]["items"]
+    items = cast("list[dict[str, Any]]", merged["outer"]["items"])
     assert len(items) == 2
-    by_name = {i["name"]: i for i in cast("dict", items)}
+    by_name = {i["name"]: i for i in items}
     assert by_name["a"]["value"] == 1
     assert by_name["b"]["value"] == 2

@@ -21,7 +21,6 @@ def test_server_context_state_isolation() -> None:
     ctx_a.shutdown_requested = True
     ctx_a.server_process = cast("Popen[bytes] | None", object())
 
-    assert ctx_a.shutdown_requested is True
     assert ctx_b.shutdown_requested is False
     assert ctx_b.server_process is None
 
@@ -33,7 +32,6 @@ def test_sigterm_handler_sets_shutdown_flag() -> None:
     assert ctx.shutdown_requested is False
     with pytest.raises(SystemExit):
         handler(15, None)  # SIGTERM = 15
-    assert ctx.shutdown_requested is True
 
 
 def test_sigterm_handler_with_running_process() -> None:

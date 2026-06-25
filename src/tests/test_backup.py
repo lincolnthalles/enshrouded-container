@@ -3,6 +3,7 @@
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from enshctl.backup import (
@@ -17,6 +18,9 @@ from enshctl.backup import (
     release_lock,
     select_backup,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_backup_format_zstd() -> None:
@@ -326,7 +330,7 @@ def test_release_lock_is_idempotent(tmp_path: Path) -> None:
 # --- Priority tests (11.5) ---
 
 
-def test_lower_priority_with_nice(caplog: object) -> None:
+def test_lower_priority_with_nice(caplog: pytest.LogCaptureFixture) -> None:
     from enshctl.backup_runner import _lower_priority
 
     with (
@@ -339,7 +343,7 @@ def test_lower_priority_with_nice(caplog: object) -> None:
     mock_nice.assert_called_once_with(19)
 
 
-def test_lower_priority_warns_once_on_nice_failure(caplog: object) -> None:
+def test_lower_priority_warns_once_on_nice_failure(caplog: pytest.LogCaptureFixture) -> None:
     from enshctl.backup_runner import _lower_priority
 
     with (
@@ -369,11 +373,11 @@ def test_parse_cron_aligns_to_clock_boundary() -> None:
     assert result == 180.0
 
 
-def test_lower_priority_warns_once_on_ionice_failure(caplog: object) -> None:
+def test_lower_priority_warns_once_on_ionice_failure(caplog: pytest.LogCaptureFixture) -> None:
     import enshctl.backup_runner as br
     from enshctl.backup_runner import _lower_priority
 
-    br._priority_warned = False
+    br._priority_state["warned"] = False
     with (
         patch("enshctl.backup_runner.nice"),
         patch(
@@ -482,7 +486,7 @@ class TestCreateBackupDiskSpace:
         _mock_needed: MagicMock,
         mock_disk_usage: MagicMock,
         tmp_path: Path,
-        caplog: object,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         from enshctl.backup import create_backup
 

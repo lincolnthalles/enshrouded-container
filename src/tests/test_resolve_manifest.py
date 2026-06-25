@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from enshctl import install
 
 if TYPE_CHECKING:
@@ -92,13 +93,9 @@ def test_resolve_manifest_latest_no_cache_no_manifests_exits(tmp_path: Path) -> 
     with (
         patch.object(install, "LATEST_MANIFEST_FILE", control),
         patch.object(install, "fetch_manifests", return_value=[]),
+        pytest.raises(SystemExit),
     ):
-        try:
-            install.resolve_manifest("latest")
-            msg = "Expected SystemExit"
-            raise AssertionError(msg)
-        except SystemExit:
-            pass
+        install.resolve_manifest("latest")
 
 
 def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from os import environ
 
 def human_size(size_bytes: float) -> str:
     """Format a byte count as a human-readable string (B, KB, MB, GB, TB)."""
-    size = float(size_bytes)
+    size = size_bytes
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024:
             return f"{size:.1f} {unit}"

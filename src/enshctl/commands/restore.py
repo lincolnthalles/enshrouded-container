@@ -4,7 +4,7 @@ import logging
 import shutil
 import sys
 import tarfile
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
 from enshctl.backup import (
     LOCK_FILE,
@@ -25,6 +25,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class RestoreError(Exception):
+    """Raised when a restore operation cannot be completed."""
+
+
 RESTORE_TMP_DIR = SAVE_DIR.parent / "saves-restore-tmp"
 
 
@@ -38,10 +43,9 @@ def _confirm_restore(filename: str, size: int) -> bool:
         from rich.prompt import Confirm
 
         Console()
-        result = Confirm.ask(
+        return Confirm.ask(
             f"Restore [bold]{filename}[/bold] ({human_size(size)}) to /data/saves? This will erase current saves."
         )
-        return bool(result)
     except ImportError:
         response = input(
             f"Restore {filename} ({human_size(size)}) to /data/saves? This will erase current saves. [y/N]: "
@@ -102,6 +106,8 @@ def run() -> None:
 
     try:
         _perform_restore(backup_path)
+    except RestoreError:
+        sys.exit(1)
     finally:
         release_lock(fd)
 
@@ -125,8 +131,7 @@ def _perform_restore(backup_path: Path) -> None:
             human_size(free),
         )
         shutil.rmtree(RESTORE_TMP_DIR, ignore_errors=True)
-        sys.exit(1)
-        return  # unreachable; safety for mocked sys.exit
+        raise RestoreError from None
 
     # Compute sizes for the space check
     tmp_size = sum(f.stat().st_size for f in RESTORE_TMP_DIR.rglob("*") if f.is_file())
@@ -146,8 +151,7 @@ def _perform_restore(backup_path: Path) -> None:
             human_size(shortfall),
         )
         shutil.rmtree(RESTORE_TMP_DIR, ignore_errors=True)
-        sys.exit(1)
-        return  # unreachable; safety for mocked sys.exit
+        raise RestoreError from None
 
     # Clear saves contents (don't rmtree the mount point itself)
     logger.info("Clearing current saves...")
@@ -190,14 +194,14 @@ def _list_backups(backups: list[Any]) -> None:
 def _interactive_restore() -> Path | None:
     try:
         from textual.app import App, ComposeResult
-        from textual.binding import Binding
+        from textual.binding import Binding, BindingType
         from textual.widgets import Footer, Header, ListItem, ListView, Static
     except ImportError:
         logger.exception("Interactive restore requires Textual. Use --file or --when instead.")
         sys.exit(1)
 
-    class RestoreApp(App):
-        BINDINGS: ClassVar[list[Binding]] = [
+    class RestoreApp(App[None]):
+        BINDINGS: ClassVar[list[BindingType]] = [
             Binding("q", "quit", "Quit"),
             Binding("escape", "quit", "Quit"),
         ]
@@ -207,6 +211,7 @@ def _interactive_restore() -> Path | None:
             self._backups = list_backups(get_backup_dir())
             self.selected: BackupInfo | None = None
 
+        @override
         def compose(self) -> ComposeResult:
             yield Header()
             yield Static("Select a backup to restore (q to quit)")
@@ -221,6 +226,7 @@ def _interactive_restore() -> Path | None:
                     self.exit()
                     return
 
+        @override
         async def action_quit(self) -> None:
             self.exit()
 

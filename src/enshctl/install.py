@@ -441,7 +441,6 @@ def download_version(
             human_size(partial_size),
         )
         sys.exit(1)
-        return None  # unreachable; safety for mocked sys.exit
 
     target_dir.mkdir(parents=True, exist_ok=True)
     uid = int(environ.get("PUID", "1000"))
