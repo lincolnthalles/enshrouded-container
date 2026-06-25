@@ -14,11 +14,7 @@ services:
     container_name: dev-enshrouded-server
     restart: no
     stop_grace_period: 120s
-    # network_mode: host
-    ports:
-      - "15636:15636/udp"
-      - "15637:15637/udp"
-
+    network_mode: host
     environment:
       VERSION: "latest"
       TZ: America/Sao_Paulo

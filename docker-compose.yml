@@ -3,13 +3,13 @@ services:
     image: ghcr.io/lincolnthalles/enshrouded-container:latest
     container_name: enshrouded-server
     restart: on-failure:5
-
-    ports:
-      - "15636:15636/udp"
-      - "15637:15637/udp"
-      - "27015:27015"
-      - "27015:27015/udp"
-
+    network_mode: host
+    # This likely won't work:
+    # ports:
+    #   - "15636:15636/udp"
+    #   - "15637:15637/udp"
+    #   - "27015:27015"
+    #   - "27015:27015/udp"
     environment:
       VERSION: "${VERSION:-latest}"
       BACKUP_CRON: "${BACKUP_CRON:-*/60 * * * *}"
