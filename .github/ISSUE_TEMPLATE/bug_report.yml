@@ -1,0 +1,67 @@
+name: Bug Report
+description: Report a bug in the container, CLI (enshctl), or server behavior
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Before filing, search existing issues to avoid duplicates.
+
+        > [!IMPORTANT]
+        > Do not dump AI-generated walls of text here. They are noisy, often not
+        > nearly as helpful as they seem, and are extra time-consuming to review.
+        >
+        > If you're using an AI assistant, be kind enough to summarize the issue in your own words.
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      description: |
+        A clear description of what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: |
+        What did you do, and what command did you run?
+      placeholder: |
+        1. Run `docker compose up -d`
+        2. Run `enshctl backup`
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      description: |
+        What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs or error output
+      description: |
+        Paste relevant logs from `docker logs <container>` or `enshctl` output. Wrap in triple backticks.
+    validations:
+      required: false
+  - type: input
+    attributes:
+      label: Docker image tag or commit
+      description: |
+        Which version of the image or commit are you running?
+      placeholder: "latest, v0.1.0, or commit SHA"
+    validations:
+      required: false
+  - type: input
+    attributes:
+      label: Host OS and Docker version
+      description: |
+        Output of `uname -a` and `docker --version`.
+      placeholder: "Ubuntu 24.04, Docker 27.0.3"
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: |
+        Any other context — environment variables used, compose overrides, disk layout, etc.
