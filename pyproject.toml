@@ -90,7 +90,7 @@ docstring-quotes = "double"
 "src/enshctl/commands/*.py" = [
     'PLC0415', # argparse and Rich imports kept local for CLI dispatch.
 ]
-"src/enshctl/backup.py" = [
+"src/enshctl/backup_runner.py" = [
     'PLC0415', # Local imports in start_scheduler to avoid circular imports.
     'TRY300', # Return in try/except is intentional.
 ]
