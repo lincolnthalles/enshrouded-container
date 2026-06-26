@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  merge_group:
+  pull_request:
+    paths:
+      - "**/workflows/*.yml"
+      - "**/uv.lock"
+      - "**/pyproject.toml"
+      - "**/*.py"
+      - "justfile"
+  push:
+    branches: ["main"]
+    paths:
+      - "**/workflows/*.yml"
+      - "**/uv.lock"
+      - "**/pyproject.toml"
+      - "**/*.py"
+      - "justfile"
+  workflow_dispatch:
+
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version-file: "pyproject.toml"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --no-install-project
+
+      - name: Run tests
+        run: uv run pytest src/tests/
+
+      - name: Lint
+        run: uv run ruff check src/enshctl src/tests/
+
+      - name: Typecheck
+        run: uv run pyrefly check --output-format=min-text

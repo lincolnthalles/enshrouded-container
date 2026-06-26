@@ -1,5 +1,9 @@
 # Enshrouded Dedicated Server Container
 
+[![CodeQL](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/audit-codeql.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/audit-codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lincolnthalles/enshrouded-container/badge)](https://scorecard.dev/viewer/?uri=github.com/lincolnthalles/enshrouded-container)
+[![build](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml)
+
 Fedora 44 + Wine 11 Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, and automated backups.
 
 ## Quick Start
