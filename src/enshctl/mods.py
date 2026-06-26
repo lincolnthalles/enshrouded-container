@@ -134,7 +134,10 @@ def build_game_tree(version: str, *, puid: int = 1000, pgid: int = 1000) -> None
     # PERSIST_FILES
     _setup_persist_files(manifest, target)
 
-    # Set ownership
-    chown(target, puid, pgid)
+    # Set ownership (may fail in unprivileged environments like CI)
+    try:
+        chown(target, puid, pgid)
+    except OSError:
+        logger.debug("Could not chown %s to %d:%d (unprivileged environment?)", target, puid, pgid)
 
     logger.info("Game tree built at %s", target)

@@ -42,10 +42,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: "pyproject.toml"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          python-version-file: "pyproject.toml"
+          version-file: "pyproject.toml"
           enable-cache: true
 
       - name: Install dependencies
