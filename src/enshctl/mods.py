@@ -2,7 +2,6 @@
 
 import logging
 import shutil
-import subprocess
 from os import chown, environ
 from typing import TYPE_CHECKING
 
@@ -85,7 +84,7 @@ def build_game_tree(version: str, *, puid: int = 1000, pgid: int = 1000) -> None
 
     On every startup:
     1. Wipe /data/gameserver/
-    2. Symlink manifest files (cp -as)
+    2. Symlink manifest files
     3. Overlay mod files (force-create symlinks)
     4. Config symlink to /data/config/enshrouded_server.json
     5. Handle PERSIST_FILES for additional writable files
@@ -109,8 +108,13 @@ def build_game_tree(version: str, *, puid: int = 1000, pgid: int = 1000) -> None
             logger.warning("Failed to fully remove %s, attempting rebuild anyway", target)
     target.mkdir(parents=True, exist_ok=True)
 
-    # Symlink manifest files
-    subprocess.run(["cp", "-as", f"{manifest}/.", str(target)], check=True)
+    # Symlink manifest files (pure Python, no cp -as — avoids EPERM in CI)
+    for src in manifest.rglob("*"):
+        if not src.is_file():
+            continue
+        dest = target / src.relative_to(manifest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.symlink_to(src)
 
     # Overlay mod files
     if MODS_DIR.exists():
