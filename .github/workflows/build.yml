@@ -51,7 +51,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push
-        uses: docker/build-push-action@1d0c110a5d679453d30b396aa86f6bb6ae377b76 # v7.2.0
+        uses: docker/build-push-action@bc3a3a5f72a6dca16c2c2468d1dfc55ee66d2193 # v7.2.0
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
