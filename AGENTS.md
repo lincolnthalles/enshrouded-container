@@ -6,22 +6,18 @@ Canonical instructions for AI assistants working on this codebase.
 
 enshctl — Docker container and CLI for managing an Enshrouded dedicated game server with version pinning, mod injection, and automated backups.
 
-## Rules
+## Sources
 
-- Do NOT circumvent linters or type checkers. If a scoped ignore is best, add it in `pyproject.toml` with a comment explaining why.
-- Do not use `__future__` — Python 3.14+.
-- When inspecting runtime command calls, run them inside the container to verify before editing code.
-- Never create GitHub issues or pull requests. This project only accepts manual human-curated interactions.
+- `openspec/**` — intended behavior, when present (untracked locally, may be absent in CI).
+- `pyproject.toml` — normative for pytest, ruff, pyrefly config. Do not duplicate its values here.
+- `justfile` — normative for workflow commands.
+- `docs/depotdownloader-quirks.md` — DepotDownloader fork behavior.
 
-### Task completion
+When sources disagree: specs for intent, code/config for current behavior, this file for conventions.
 
-Only deliver work after `just gate` succeeds.
+## Workflow
 
-### Additional sources
-
-- `openspec/specs/**` — Spec-driven development artifacts (use openspec skills when present).
-
-## Commands
+Done means `just gate` passes. Do not deliver code changes before it.
 
 ```bash
 just gate         # test → lint → typecheck, concise output
@@ -29,41 +25,81 @@ just validate     # test → lint → typecheck in sequence
 just fmt          # dprint fmt (Python via ruff format)
 ```
 
-Run bare `just` for the full recipe list.
+Run bare `just` for the full list. Venv auto-creates via `uv`; pytest resolves imports via `pythonpath = ["src"]`, the project is never pip-installed in dev.
 
-Venv auto-creates on first run (`uv`). `uv sync` uses `--no-install-project` — the project is never pip-installed in dev; pytest resolves imports via `pythonpath = ["src"]`.
+Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `select = ["ALL"]`, see `pyproject.toml` for current ignores. Python 3.14+, no `__future__`.
 
-## Testing
+## Rules
 
-pytest with `pythonpath = ["src"]` — imports use full package path: `from enshctl.config import ...`. Tests in `src/tests`. No conftest, no fixtures. Tests manually set/clean env vars with try/finally. Uses `unittest.mock.patch` for isolation.
+- Do NOT circumvent linters or type checkers. A scoped ignore belongs in `pyproject.toml` with a why-comment.
+- Verify runtime command calls inside the container before editing code.
+- Prefer correctness and robustness over convenience. Roll back safely and clean up; never leave partial installs, restores, or backups behind.
 
-Private functions are imported and tested directly (the `PLC0415` ignore in test files allows local imports for env isolation).
+## Code Style
 
-## Type checking
+- Abbreviations only for short-lived variables in <=5-line scopes (single-letter preferred). Exported names stay descriptive.
+- Qualifiers carry meaning: big-endian for non-booleans (`latency_ms_max`), little-endian for booleans (`is_enabled`). Prefer `api: Fetcher` over `fetcher: Fetcher`.
+- Readability: state invariants positively. Functional for small iterator logic, imperative on hot paths. Early returns or ternaries over reassignment, `else` blocks, or nested `if`s; collapse nested `if`s with `and`. Pass critical options explicitly at call sites.
+- Do NOT create single-use helpers under ~10 LoC to shorten a function.
+- Treat `index`, `count`, and `size` as distinct types.
 
-pyrefly `preset = "strict"`. All new code must have full type annotations.
+## Architecture & Modules
 
-## Linting
+- One clear responsibility per module. Entry points handle wiring and startup flow only.
+- Do not create or expand catch-all `utils`/`helpers` modules; place logic in its domain module.
+- Separate pure domain logic from I/O and platform integration. Make dependencies explicit through signatures.
+- Split on diverging responsibilities. Extract a helper only if reused or independently meaningful through a public contract.
 
-Ruff `select = ["ALL"]` with targeted ignores — see `pyproject.toml`. Per-file ignores exist for test files, `commands/*.py`, and `backup_runner.py`.
+## API & Error Handling
 
-## Formatting
+- Add context when propagating errors. No silent failures.
+- Catch at architectural boundaries, not randomly. Fail fast.
+- Warnings for recoverable errors; descriptive errors for fatal failures.
+- Unicode ellipsis in user-facing status output: `...` -> `…`.
 
-dprint (`.dprint.jsonc`). Run with `just fmt` or `dprint fmt`. Python files formatted by `ruff format` via dprint's exec plugin.
+## Concurrency & State
 
-## uv caveats
+- Prefer immutable data; scope mutability narrowly.
+- Background work uses threads with explicit stop events. Do not add `asyncio` outside UI callbacks.
+- Backups run subprocess-isolated with `flock` exclusion; signals to the parent do not cancel them. Document stop/lock invariants when non-obvious.
 
-`[tool.uv] exclude-newer = "7 days"` is set. When syncing old branches or pinned deps predating that window, override with `UV_EXCLUDE_NEWER=0` or adjust the cutoff.
+## Comments
+
+- Leave surrounding comments unchanged unless directly related to the task.
+- Omit new comments by default. `D101–D103` are ignored — do not add docstrings to satisfy them; where a docstring exists, follow numpy convention.
+- Explain intent, not steps. Inline comments only for non-obvious logic. Never address the user in code comments.
+
+## Tests
+
+- Location: `src/tests`, full-package imports (`from enshctl.config import ...`). No conftest, no fixtures.
+- Test public contracts and behavior only, with deep equality over whole objects. Do not test private helpers directly or duplicate implementation logic in the test.
+- Deterministic: no wall-clock, network, or environment coupling unless the behavior under test requires it.
+- Isolation: inject env-derived values as arguments; do not mutate `os.environ`. Mock only at the system boundary (subprocess, filesystem, network), never domain logic.
+- Mark with `# GIVEN` / `# WHEN` / `# THEN` (`# AND` as needed).
+- Only high-value regression tests covering success, failure, and edge cases. No tests for statically defined values, no negative tests for removed logic.
 
 ## Docker
 
-3-stage build: Python wheel → DepotDownloader (dotnet) → Fedora 44 runtime. `vendor/DepotDownloader/` is built from source in stage 2. Entrypoint: `enshctl`, default command: `start`.
+3-stage build: Python wheel → DepotDownloader (dotnet, built from `vendor/DepotDownloader/`) → Fedora runtime. Entrypoint `enshctl`, default `start`.
 
 ## Gotchas
 
-- **Backup subprocess isolation**: Backups run as child processes of `enshctl backup`, never in-process. Signals to the main process don't cancel backups. `fcntl.flock` prevents concurrent backups. Exit code 1 = lock held (expected), 2 = error.
-- **Symlink tree rebuild**: The game tree at `/data/gameserver/` is rebuilt from scratch on every start using `cp -as`. No FUSE or `SYS_ADMIN` required.
-- **DepotDownloader quirks**: See `docs/depotdownloader-quirks.md`. The `-manifestfile`/`-depotkeys` flags require the DepotDownloaderMod fork.
-- **Free space guards**: `INSTALL_MIN_FREE_SPACE` (10 GiB) blocks install. `BACKUP_MIN_FREE_SPACE_WARN` (2 GiB) and `BACKUP_MIN_FREE_SPACE_STOP` (1 GiB) control backup behavior.
-- **PERSIST_FILES**: Comma-separated relative paths persisted to `/data/config/` and symlinked into the game tree. Path traversal entries are skipped.
-- **Orchestrator logging**: `ORCHESTRATOR_LOG_FILE` enables file logging. `ORCHESTRATOR_LOG_LEVEL` controls level (default `WARNING`). Game server entries filtered out.
+Behavioral only; current thresholds and paths live in settings/config, not here.
+
+- Backup isolation: child-process execution, `flock` exclusion. Lock-held exit is expected, distinct from error exit.
+- Game tree at `/data/gameserver/` is rebuilt from scratch each start via `cp -as`. No FUSE or `SYS_ADMIN`.
+- DepotDownloader `-manifestfile`/`-depotkeys` require the Mod fork — see `docs/depotdownloader-quirks.md`.
+- Free-space guards gate installs and backups; see settings for current thresholds.
+- `PERSIST_FILES`: relative paths persisted to `/data/config/` and symlinked in; traversal entries skipped.
+- Orchestrator file logging is opt-in via env; game server entries are filtered out.
+
+## Contributing
+
+Agent-driven GitHub contributions on the user's behalf. No `CONTRIBUTING.md` or `.github/` templates.
+
+- Style (contributions only): plain high-signal English, no emojis. Complete sentences; headings, lists, or tables when clearer. Keep responses concise; completeness wins over brevity.
+- Never create an issue or PR unless the user directly requests that specific issue/PR in this session. Inferred intent is not permission. Covers `gh issue/pr create`, API, and UI paths.
+- Issues: problem simply, then suggested solution briefly. Omit implementation detail unless material. Upload evidence to GitHub.
+- PRs: subject `type(scope): imperative summary`, ≤72 chars, short lowercase scope. Body states the problem in a sentence or two, then the fix. State why over how.
+- PR scope: one problem per PR. Adjacent cleanup needs its own PR unless required for the fix. Bump only deps the fix requires.
+- PR evidence: upload to GitHub, never commit screenshots. UI changes need before/after images. Report material outcomes, risks, caveats, and blockers; omit inventories the diff already shows.
