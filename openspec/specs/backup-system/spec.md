@@ -6,7 +6,7 @@ Scheduled, shutdown-triggered, and crash-triggered backups of the saves director
 
 ### Requirement: Backup module structure
 
-The backup system SHALL be organized as a `backup/` subpackage with the following modules: `__init__.py` (re-exports public API), `locking.py` (file lock management), `archive.py` (compression/decompression/verification), `core.py` (format/level selection, disk space checks, cron parsing, constants). The public API SHALL remain backward compatible — all existing imports from `enshctl.backup` SHALL continue to work.
+The backup system SHALL be organized as a `backup/` subpackage with the following modules: `__init__.py` (re-exports public API), `locking.py` (file lock management), `archive.py` (compression/decompression/verification), `catalog.py` (filename grammar, `BackupInfo`, discovery via `scan_dir`/`scan_all`, selection via `select`), `core.py` (format/level resolution, disk space checks, backup creation). The public API SHALL remain backward compatible — all existing imports from `enshctl.backup` SHALL continue to work.
 
 #### Scenario: Backward compatible imports
 
@@ -17,6 +17,11 @@ The backup system SHALL be organized as a `backup/` subpackage with the followin
 
 - **WHEN** `acquire_lock` and `release_lock` are needed
 - **THEN** they SHALL be defined in `enshctl/backup/locking.py` and re-exported from `__init__.py`
+
+#### Scenario: Catalog owns discovery
+
+- **WHEN** a caller needs to list or select backups
+- **THEN** it SHALL use `enshctl.backup.catalog` (`scan_dir`, `scan_all`, `select`) rather than re-implementing directory scans
 
 ### Requirement: Cron-driven backups
 
