@@ -1,6 +1,8 @@
 # Data volumes
 enshrouded-data/
 
+tmp
+
 # Env
 .env
 .env.local
