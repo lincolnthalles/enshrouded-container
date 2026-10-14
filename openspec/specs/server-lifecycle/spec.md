@@ -79,7 +79,7 @@ When the game server exits unexpectedly (not SIGTERM-initiated) and `BACKUP_EMER
 #### Scenario: Emergency backup spawned
 
 - **WHEN** the game server exits with a non-zero code and `context.shutdown_requested` is false and `BACKUP_EMERGENCY=1`
-- **THEN** `_run_backup(["--emergency"])` SHALL be executed before `sys.exit()`
+- **THEN** `_run_backup(["--emergency"], detach=True)` SHALL be executed before `sys.exit()`
 
 #### Scenario: Emergency backup skipped when disabled
 

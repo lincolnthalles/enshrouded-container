@@ -13,7 +13,7 @@ services:
     image: dev-enshrouded-server-container
     container_name: dev-enshrouded-server
     restart: no
-    stop_grace_period: 120s
+    stop_grace_period: 300s
     network_mode: host
     environment:
       VERSION: "latest"

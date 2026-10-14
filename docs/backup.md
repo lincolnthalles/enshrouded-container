@@ -61,11 +61,14 @@ Boolean values: `1`/`true`/`on`/`yes` = enabled, `0`/`false`/`off`/`no` = disabl
 
 ### Graceful shutdown
 
-On SIGTERM the orchestrator sends SIGINT to the game server, waits up to
-`SHUTDOWN_TIMEOUT` for it to exit (SIGKILL after), waits up to
-`SHUTDOWN_BACKUP_WAIT` for any in-progress backup to release the lock, then
-runs the cold backup detached from the parent process group before cleaning
-up Wine. The compose `stop_grace_period` must cover the sum of both waits.
+On SIGTERM the orchestrator sends SIGINT directly to the game server process
+(`pkill -INT -f enshrouded_server.exe` as `steam`, falling back to the
+`runuser` wrapper), waits up to `SHUTDOWN_TIMEOUT` for it to exit (SIGKILL
+after), waits up to `SHUTDOWN_BACKUP_WAIT` for any in-progress backup to
+release the lock, then runs the cold backup detached from the parent process
+group before cleaning up Wine. The compose `stop_grace_period` must exceed
+the sum of both waits plus the cold backup's own runtime — 300s default
+covers 60s + 120s with margin.
 
 | Env var                | Default | Description                                                     |
 | ---------------------- | ------- | --------------------------------------------------------------- |

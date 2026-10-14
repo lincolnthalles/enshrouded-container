@@ -81,13 +81,18 @@ def main() -> int:
 
     lock_path = Path(settings.backup_dir) / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
+    waited = False
     if fd is None and args.wait > 0:
+        waited = True
         deadline = time.monotonic() + args.wait
         while fd is None and time.monotonic() < deadline:
             time.sleep(1)
             fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
-        logger.info("Lock held by another process, skipping backup")
+        if waited:
+            logger.warning("Backup lock still held after %ds wait, skipping backup", args.wait)
+        else:
+            logger.info("Lock held by another process, skipping backup")
         return EXIT_LOCK_HELD
 
     try:

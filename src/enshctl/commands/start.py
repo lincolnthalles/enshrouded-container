@@ -150,12 +150,47 @@ def _run_backup(extra_args: list[str] | None = None, *, detach: bool = False) ->
             for line in output.splitlines():
                 logger.log(BACKUP, _strip_child_prefix(line))
         elif result.returncode == 1:
-            logger.debug("Backup skipped: lock held by another process")
+            if extra_args and "--wait" in extra_args:
+                logger.warning("Cold backup skipped: lock held by another process")
+            else:
+                logger.debug("Backup skipped: lock held by another process")
         else:
             for line in output.splitlines():
                 logger.log(BACKUP, _strip_child_prefix(line))
     except OSError as exc:
         logger.warning("Failed to spawn backup subprocess: %s", exc)
+
+
+def _signal_game(sig: int) -> bool:
+    """Send a signal to the game server process tree, bypassing the runuser wrapper.
+
+    Returns True if at least one signal was delivered.
+    """
+    delivered = False
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/runuser",
+                "-u",
+                "steam",
+                "--",
+                "pkill",
+                f"-{sig}",
+                "-f",
+                "enshrouded_server.exe",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except OSError, subprocess.SubprocessError:
+        logger.warning("Failed to signal game server process")
+        return False
+    else:
+        delivered = result.returncode == 0
+        if not delivered:
+            logger.warning("No game server process matched for signal %d", sig)
+        return delivered
 
 
 def _make_sigterm_handler(
@@ -168,22 +203,27 @@ def _make_sigterm_handler(
         context.shutdown_requested = True
         stop_event.set()
 
-        if context.server_process and context.server_process.poll() is None:
-            logger.info("Sending SIGINT to server process")
-            context.server_process.send_signal(signal.SIGINT)
-            try:
-                context.server_process.wait(timeout=settings.shutdown_timeout)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout
-                )
-                context.server_process.kill()
-                context.server_process.wait()
-
         try:
+            if context.server_process and context.server_process.poll() is None:
+                logger.info("Sending SIGINT to server process")
+                if not _signal_game(signal.SIGINT):
+                    context.server_process.send_signal(signal.SIGINT)
+                try:
+                    context.server_process.wait(timeout=settings.shutdown_timeout)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout
+                    )
+                    with suppress(OSError):
+                        context.server_process.kill()
+                    with suppress(OSError):
+                        context.server_process.wait()
+
             if settings.backup_cold and backup.backup_needed():
                 logger.info("Creating cold shutdown backup")
                 _run_backup(["--cold", "--wait", str(settings.shutdown_backup_wait)], detach=True)
+        except OSError:
+            logger.exception("Shutdown signal handling failed")
         finally:
             _cleanup_wineserver()
             PIDFILE.unlink(missing_ok=True)

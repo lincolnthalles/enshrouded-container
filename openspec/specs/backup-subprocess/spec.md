@@ -6,7 +6,7 @@ Subprocess-isolated backup execution with lowered priority and exclusive file lo
 
 ### Requirement: Backup runs in subprocess
 
-Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(extra_args: list[str] | None = None)` function. On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at WARNING level.
+Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(extra_args=None, detach=False)` function. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at WARNING level.
 
 #### Scenario: Scheduler spawns subprocess
 
@@ -16,12 +16,12 @@ Each backup invocation SHALL execute as a separate subprocess (`enshctl backup .
 #### Scenario: Shutdown handler spawns subprocess
 
 - **WHEN** the SIGTERM handler triggers a cold backup
-- **THEN** it SHALL call `_run_backup(["--cold"])` which spawns `subprocess.run(["enshctl", "backup", "--cold"], capture_output=True)` and wait for completion
+- **THEN** it SHALL call `_run_backup(["--cold", "--wait", "<SHUTDOWN_BACKUP_WAIT>"], detach=True)` which spawns `subprocess.run(["enshctl", "backup", "--cold", "--wait", "<secs>"], capture_output=True, start_new_session=True)` and wait for completion
 
 #### Scenario: Crash handler spawns subprocess
 
 - **WHEN** the server exits unexpectedly and a backup is triggered
-- **THEN** it SHALL call `_run_backup(["--emergency"])` which spawns `subprocess.run(["enshctl", "backup", "--emergency"], capture_output=True)` and wait for completion
+- **THEN** it SHALL call `_run_backup(["--emergency"], detach=True)` which spawns `subprocess.run(["enshctl", "backup", "--emergency"], capture_output=True, start_new_session=True)` and wait for completion
 
 #### Scenario: Child errors surface to parent
 
@@ -62,6 +62,11 @@ The backup subprocess SHALL acquire an exclusive non-blocking lock on `/data/bac
 
 - **WHEN** the backup subprocess is spawned by the scheduler and the lock is held by another process
 - **THEN** the subprocess SHALL exit with code 1 and the scheduler SHALL skip this backup cycle silently
+
+#### Scenario: Lock wait expires — warning
+
+- **WHEN** the backup subprocess is spawned with `--wait N` and the lock is still held after N seconds
+- **THEN** the subprocess SHALL exit with code 1 and log a warning (`Backup lock still held after Ns wait, skipping backup`)
 
 #### Scenario: Lock held — manual backup fails
 
