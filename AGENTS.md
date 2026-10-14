@@ -8,7 +8,7 @@ enshctl — Docker container and CLI for managing an Enshrouded dedicated game s
 
 ## Sources
 
-- `openspec/**` — intended behavior, when present (untracked locally, may be absent in CI).
+- `openspec/**` — intended behavior, when present (untracked locally, may be absent in CI). Discover with `openspec list --specs`; native file listing hides gitignored paths, so never conclude specs are absent from an empty glob.
 - `pyproject.toml` — normative for pytest, ruff, pyrefly config. Do not duplicate its values here.
 - `justfile` — normative for workflow commands.
 - `docs/depotdownloader-quirks.md` — DepotDownloader fork behavior.
