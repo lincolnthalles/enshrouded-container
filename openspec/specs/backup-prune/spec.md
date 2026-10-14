@@ -20,8 +20,8 @@ The prune system SHALL apply retention rules from smallest to largest time bucke
 
 #### Scenario: BACKUP_KEEP_LAST=0 disables floor
 
-- **WHEN** BACKUP_KEEP_LAST=0 and all BACKUP_KEEP_* are 0
-- **THEN** no snapshots SHALL be retained (all deleted)
+- **WHEN** BACKUP_KEEP_LAST=0 and at least one time-bucket rule is non-zero
+- **THEN** no newest-N floor SHALL apply; only snapshots marked by the time-bucket rules SHALL be retained
 
 ### Requirement: Per-category retention
 
@@ -42,7 +42,7 @@ Each BACKUP_KEEP_* variable controls a time bucket:
 - `BACKUP_KEEP_MONTHLY`: keep the most recent backup per calendar month, for the last N months
 - `BACKUP_KEEP_YEARLY`: keep the most recent backup per calendar year, for the last N years
 
-A value of 0 SHALL skip the bucket. A value of -1 SHALL keep all snapshots in that bucket.
+A value of 0 SHALL skip the bucket. A value of -1 on `BACKUP_KEEP_LAST` SHALL keep all snapshots; on a time bucket, -1 SHALL mark the newest snapshot per distinct time key without a bucket-count limit (snapshots sharing a key with an already-marked snapshot are still pruning candidates).
 
 #### Scenario: Daily retention
 
@@ -66,8 +66,13 @@ A value of 0 SHALL skip the bucket. A value of -1 SHALL keep all snapshots in th
 
 #### Scenario: Bucket value -1 keeps all
 
-- **WHEN** BACKUP_KEEP_DAILY=-1
-- **THEN** all backups SHALL be marked "keep" by the daily bucket (no daily pruning)
+- **WHEN** BACKUP_KEEP_LAST=-1
+- **THEN** all backups SHALL be marked "keep" (no pruning)
+
+#### Scenario: Time-bucket value -1 keeps newest per key
+
+- **WHEN** BACKUP_KEEP_DAILY=-1 and two backups share the same calendar day
+- **THEN** the newest backup from each distinct day SHALL be marked "keep"; the older same-day backup SHALL remain a deletion candidate unless kept by another rule
 
 #### Scenario: Bucket value 0 skips
 
@@ -107,11 +112,11 @@ The `prune` subcommand SHALL apply retention rules to all categories on demand. 
 - **WHEN** `enshrouded-server prune --dry-run` is executed
 - **THEN** a list of backups that would be deleted SHALL be printed, but no files SHALL be removed
 
-### Requirement: Default retention (all zero)
+### Requirement: All-zero configuration is a no-op
 
-When all BACKUP_KEEP_* variables are 0 (the default), prune SHALL be a no-op. Backups SHALL accumulate until the operator configures retention or runs prune manually.
+When all BACKUP_KEEP_* variables are explicitly set to 0, prune SHALL be a no-op as a safety gate. Backups SHALL accumulate until the operator configures retention or runs prune manually. The shipped default is BACKUP_KEEP_LAST=24 with all other buckets 0.
 
-#### Scenario: No pruning with defaults
+#### Scenario: No pruning when all zero
 
 - **WHEN** all BACKUP_KEEP_* are 0 and prune runs
 - **THEN** no backups SHALL be deleted
