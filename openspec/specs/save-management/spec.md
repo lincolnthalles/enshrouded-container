@@ -35,7 +35,7 @@ The container SHALL expose `/data/saves` as a volume for persistent world save d
 
 ### Requirement: Log directory
 
-The container SHALL set `logDirectory` in the generated config to the absolute path `/data/logs` by default. Relative values SHALL be remapped to `/data/logs` with a warning, mirroring the save directory rule. Server logs SHALL be written to `/data/logs/` and SHALL be symlinked to stdout for Docker log collection.
+The container SHALL set `logDirectory` in the generated config to the absolute path `/data/logs` by default. Relative values SHALL be remapped to `/data/logs` with a warning, mirroring the save directory rule. The game writes identical content to its log file and to stdout; the orchestrator relays stdout to the console, so no log-file symlinking or tailing is required for Docker log collection.
 
 #### Scenario: Log directory is configured
 
@@ -49,8 +49,8 @@ The container SHALL set `logDirectory` in the generated config to the absolute p
 
 #### Scenario: Logs are visible in docker logs
 
-- **WHEN** the server writes to its log file
-- **THEN** `docker logs` SHALL display the log output
+- **WHEN** the server runs
+- **THEN** `docker logs` SHALL display the server output via the orchestrator's stdout relay, without any log-file symlink or tail process
 
 ### Requirement: Save directory env var override
 
