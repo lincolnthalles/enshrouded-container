@@ -9,10 +9,9 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from os import chown, environ
+from os import chown
 from typing import TYPE_CHECKING
 
-from enshctl.backup import human_size
 from enshctl.download import DownloadConfig, download_depots
 from enshctl.settings import (
     APP_ID,
@@ -23,48 +22,18 @@ from enshctl.settings import (
     MANIFESTS_DIR,
     STATUS_FILE,
 )
+from enshctl.utils import human_size
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
 DEPOT_KEY_PATTERN = re.compile(r"Got depot key for (\d+) result: OK")
 MANIFEST_PATTERN = re.compile(r"Manifest\s+(\d+)\s+\((\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})\)")
 VDF_SECTION_PATTERN = re.compile(r'"(\d+)"\s*\{[^}]*"DecryptionKey"\s+"([^"]+)"[^}]*\}')
-
-
-def get_version() -> str:
-    return environ.get("VERSION", "latest").strip().lower()
-
-
-def get_force_install() -> bool:
-    return environ.get("FORCE_INSTALL", "").strip().lower() in ("1", "true", "yes")
-
-
-def get_manifesthub_api_token() -> str | None:
-    val = environ.get("MANIFESTHUB_API_TOKEN", "").strip()
-    return val or None
-
-
-def get_manifesthub_api_url() -> str | None:
-    val = environ.get("MANIFESTHUB_API_URL", "").strip().rstrip("/")
-    return val or None
-
-
-def get_depot_keys_repo() -> str | None:
-    val = environ.get("DEPOT_KEYS_REPO", "").strip()
-    return val or None
-
-
-DEFAULT_MIN_FREE_SPACE = 10 * 1024**3
-
-
-def get_min_free_space() -> int:
-    try:
-        return int(environ.get("INSTALL_MIN_FREE_SPACE", str(DEFAULT_MIN_FREE_SPACE)))
-    except ValueError, TypeError:
-        return DEFAULT_MIN_FREE_SPACE
 
 
 def fetch_manifests() -> list[dict[str, str]]:
@@ -350,10 +319,10 @@ def fetch_missing_manifests(
             logger.exception("Failed to fetch manifest %s", mid)
 
 
-def prepare_manifests() -> None:
-    depot_keys_repo = get_depot_keys_repo()
-    manifest_api_token = get_manifesthub_api_token()
-    manifest_api_url = get_manifesthub_api_url()
+def prepare_manifests(settings: AppSettings) -> None:
+    depot_keys_repo = settings.depot_keys_repo
+    manifest_api_token = settings.manifesthub_api_token
+    manifest_api_url = settings.manifesthub_api_url
 
     if not manifest_api_token:
         logger.info("No MANIFESTHUB_API_TOKEN, skipping auth-free setup")
@@ -378,11 +347,11 @@ def prepare_manifests() -> None:
             fetch_missing_manifests(discovered, MANIFESTS_DIR, manifest_api_token, manifest_api_url)
 
 
-def _ensure_manifest_for_version(manifest_id: str) -> Path:
+def _ensure_manifest_for_version(manifest_id: str, settings: AppSettings) -> Path:
     """Ensure the .manifest file exists for the given version, fetching from ManifestHub if possible."""
     manifest_file = MANIFESTS_DIR / f"{DEPOT_ID}_{manifest_id}.manifest"
-    manifest_api_token = get_manifesthub_api_token()
-    api_url = get_manifesthub_api_url()
+    manifest_api_token = settings.manifesthub_api_token
+    api_url = settings.manifesthub_api_url
     has_manifest_support = check_manifestfile_support()
     if not manifest_file.exists() and manifest_api_token and not api_url:
         logger.error(
@@ -405,8 +374,8 @@ def _ensure_manifest_for_version(manifest_id: str) -> Path:
 
 def download_version(
     manifest_id: str,
+    settings: AppSettings,
     *,
-    force: bool = False,
     steam_username: str | None = None,
     steam_password: str | None = None,
 ) -> Path:
@@ -414,14 +383,16 @@ def download_version(
 
     Args:
         manifest_id: The Steam manifest ID to download.
-        force: If True, re-download even if already installed.
-        steam_username: Optional Steam username for authenticated downloads.
-        steam_password: Optional Steam password (paired with username).
+        settings: Process-wide settings; supplies defaults for unset overrides.
+        steam_username: Optional Steam username (defaults to settings).
+        steam_password: Optional Steam password (defaults to settings).
     """
+    effective_username = settings.steam_username if steam_username is None else steam_username
+    effective_password = settings.steam_password if steam_password is None else steam_password
     target_dir = MANIFESTS_DIR / manifest_id
     status_file = target_dir / STATUS_FILE
 
-    if not force and status_file.exists():
+    if not settings.force_install and status_file.exists():
         logger.info("Version %s already installed (status file present) at %s", manifest_id, target_dir)
         return target_dir
 
@@ -431,7 +402,7 @@ def download_version(
         partial_size = sum(f.stat().st_size for f in target_dir.rglob("*") if f.is_file() and not f.is_symlink())
     free = shutil.disk_usage(MANIFESTS_DIR).free
     effective_free = free + partial_size
-    min_free = get_min_free_space()
+    min_free = settings.min_free_space
     if effective_free < min_free:
         logger.error(
             "Insufficient disk space for install. Need %s, have %s effective (%s free + %s from partial download).",
@@ -443,20 +414,18 @@ def download_version(
         sys.exit(1)
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    uid = int(environ.get("PUID", "1000"))
-    gid = int(environ.get("PGID", "1000"))
     try:
-        chown(MANIFESTS_DIR, uid, gid)
-        chown(target_dir, uid, gid)
+        chown(MANIFESTS_DIR, settings.puid, settings.pgid)
+        chown(target_dir, settings.puid, settings.pgid)
     except PermissionError:
         logger.info("Not running as root, skipping chown for %s", target_dir)
 
-    manifest_file = _ensure_manifest_for_version(manifest_id)
+    manifest_file = _ensure_manifest_for_version(manifest_id, settings)
     depot_keys_path = MANIFESTS_DIR / "depot.keys"
     has_manifest_support = check_manifestfile_support()
-    use_auth_free = not steam_username and depot_keys_path.exists() and manifest_file.exists() and has_manifest_support
+    use_auth_free = depot_keys_path.exists() and manifest_file.exists() and has_manifest_support
 
-    if get_version() == "latest":
+    if settings.version == "latest":
         config = DownloadConfig()
     elif use_auth_free:
         config = DownloadConfig(
@@ -464,8 +433,8 @@ def download_version(
             manifest_file=manifest_file,
             depot_keys_path=depot_keys_path,
         )
-    elif steam_username:
-        config = DownloadConfig(username=steam_username, password=steam_password)
+    elif effective_username:
+        config = DownloadConfig(username=effective_username, password=effective_password)
     elif manifest_file.exists():
         logger.error(
             "Manifest file exists for version %s but no depot.keys found. "
@@ -490,16 +459,16 @@ def download_version(
     return target_dir
 
 
-def ensure_install(*, force: bool = False) -> Path:
-    version_spec = get_version()
+def ensure_install(settings: AppSettings) -> Path:
+    version_spec = settings.version
     manifest_id = resolve_manifest(version_spec)
     manifest_file = MANIFESTS_DIR / f"{DEPOT_ID}_{manifest_id}.manifest"
-    has_token = get_manifesthub_api_token() is not None
-    has_password = environ.get("STEAM_PASSWORD") is not None
+    has_token = settings.manifesthub_api_token is not None
+    has_password = settings.steam_password is not None
     if not manifest_file.exists() and not has_password and not has_token:
         logger.info(
             "Version %s not installed and no .manifest file, password, or token available. "
             "Will attempt anonymous download (latest only).",
             manifest_id,
         )
-    return download_version(manifest_id, force=force)
+    return download_version(manifest_id, settings)

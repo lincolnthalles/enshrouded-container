@@ -2,13 +2,15 @@
 
 import logging
 import shutil
-from os import chown, environ
+from os import chown
 from typing import TYPE_CHECKING
 
 from enshctl.settings import CONFIG_DIR, CONFIG_FILENAME, MANIFESTS_DIR, MODS_DIR, MOUNT_POINT
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from enshctl.settings import AppSettings
 
 DEFAULT_DLL_OVERRIDES = "mscoree,mshtml="
 
@@ -48,11 +50,8 @@ def _overlay_mods(mods_dir: Path, target: Path) -> None:
         dest.symlink_to(mod_file)
 
 
-def _setup_persist_files(manifest: Path, target: Path) -> None:
+def _setup_persist_files(manifest: Path, target: Path, persist_files: tuple[str, ...]) -> None:
     """Handle PERSIST_FILES: copy persisted files to config dir and symlink them."""
-    raw = environ.get("PERSIST_FILES", "")
-    persist_files = [f.strip() for f in raw.split(",") if f.strip()]
-
     for filename in persist_files:
         if filename == CONFIG_FILENAME:
             continue  # Already handled separately
@@ -79,7 +78,7 @@ def _setup_persist_files(manifest: Path, target: Path) -> None:
         dest.symlink_to(persist_path)
 
 
-def build_game_tree(version: str, *, puid: int = 1000, pgid: int = 1000) -> None:
+def build_game_tree(version: str, settings: AppSettings) -> None:
     """Build /data/gameserver/ as a symlink tree from manifest + mods.
 
     On every startup:
@@ -132,12 +131,12 @@ def build_game_tree(version: str, *, puid: int = 1000, pgid: int = 1000) -> None
     game_config.symlink_to(CONFIG_DIR / CONFIG_FILENAME)
 
     # PERSIST_FILES
-    _setup_persist_files(manifest, target)
+    _setup_persist_files(manifest, target, settings.persist_files)
 
     # Set ownership (may fail in unprivileged environments like CI)
     try:
-        chown(target, puid, pgid)
+        chown(target, settings.puid, settings.pgid)
     except OSError:
-        logger.debug("Could not chown %s to %d:%d (unprivileged environment?)", target, puid, pgid)
+        logger.debug("Could not chown %s to %d:%d (unprivileged environment?)", target, settings.puid, settings.pgid)
 
     logger.info("Game tree built at %s", target)

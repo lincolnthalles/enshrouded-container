@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import override
 
 from enshctl.commands import COMMANDS
+from enshctl.settings import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,25 +33,6 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(message)s",
         stream=sys.stdout,
     )
-
-    # Optional orchestrator file logging
-    log_file = environ.get("ORCHESTRATOR_LOG_FILE", "").strip()
-    if log_file:
-        if log_file.lower() == "true":
-            log_file = "/data/logs/orchestrator.log"
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            str(log_path),
-            maxBytes=5 * 1024 * 1024,  # 5 MB
-            backupCount=1,
-        )
-        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        file_handler.addFilter(_GameServerFilter())
-        log_level_name = environ.get("ORCHESTRATOR_LOG_LEVEL", "WARNING").strip().upper()
-        log_level = getattr(logging, log_level_name, logging.WARNING)
-        file_handler.setLevel(log_level)
-        logging.getLogger().addHandler(file_handler)
 
     parser = argparse.ArgumentParser(description="Enshrouded server container entrypoint")
     parser.add_argument(
@@ -91,6 +73,24 @@ def main() -> None:
         environ.setdefault("MANIFESTHUB_API_URL", args.api_url)
     if args.depot_keys_repo:
         environ.setdefault("DEPOT_KEYS_REPO", args.depot_keys_repo)
+
+    settings = load_settings()
+    if settings.orchestrator_log_file:
+        log_file = settings.orchestrator_log_file
+        if log_file.lower() == "true":
+            log_file = "/data/logs/orchestrator.log"
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,  # 5 MB
+            backupCount=1,
+        )
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        file_handler.addFilter(_GameServerFilter())
+        log_level = getattr(logging, settings.orchestrator_log_level.strip().upper(), logging.WARNING)
+        file_handler.setLevel(log_level)
+        logging.getLogger().addHandler(file_handler)
 
     try:
         COMMANDS[args.command]()

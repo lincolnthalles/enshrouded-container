@@ -3,9 +3,10 @@
 import argparse
 import logging
 import sys
-from os import environ
+from dataclasses import replace
 
 from enshctl import install
+from enshctl.settings import load_settings, normalize_api_url
 
 logger = logging.getLogger(__name__)
 
@@ -29,26 +30,30 @@ def run() -> None:
     )
     args = parser.parse_args(sys.argv[2:])
 
-    username = args.steam_username or environ.get("STEAM_USERNAME")
-    password = args.steam_password or environ.get("STEAM_PASSWORD")
+    settings = load_settings()
+    settings = replace(
+        settings,
+        steam_username=args.steam_username or settings.steam_username,
+        steam_password=args.steam_password or settings.steam_password,
+        manifesthub_api_token=args.api_token or settings.manifesthub_api_token,
+        manifesthub_api_url=normalize_api_url(args.api_url) or settings.manifesthub_api_url,
+        depot_keys_repo=args.depot_keys_repo or settings.depot_keys_repo,
+    )
 
-    if args.api_token:
-        environ.setdefault("MANIFESTHUB_API_TOKEN", args.api_token)
-    if args.api_url:
-        environ.setdefault("MANIFESTHUB_API_URL", args.api_url)
-    if args.depot_keys_repo:
-        environ.setdefault("DEPOT_KEYS_REPO", args.depot_keys_repo)
+    username = settings.steam_username
+    password = settings.steam_password
 
     logger.info(
         "Downloading manifest %s (auth: %s, token: %s)",
         args.manifest_id,
         "yes" if username else "no",
-        "yes" if args.api_token or environ.get("MANIFESTHUB_API_TOKEN") else "no",
+        "yes" if settings.manifesthub_api_token else "no",
     )
 
-    install.prepare_manifests()
+    install.prepare_manifests(settings)
     target = install.download_version(
         args.manifest_id,
+        settings,
         steam_username=username,
         steam_password=password,
     )

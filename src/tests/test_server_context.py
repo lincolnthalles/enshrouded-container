@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 from enshctl.commands.start import ServerContext, _make_sigterm_handler
+from enshctl.settings import AppSettings
 
 
 def test_server_context_init() -> None:
@@ -27,7 +28,7 @@ def test_server_context_state_isolation() -> None:
 
 def test_sigterm_handler_sets_shutdown_flag() -> None:
     ctx = ServerContext()
-    handler = _make_sigterm_handler(ctx)
+    handler = _make_sigterm_handler(ctx, AppSettings())
 
     assert ctx.shutdown_requested is False
     with pytest.raises(SystemExit):
@@ -41,7 +42,7 @@ def test_sigterm_handler_with_running_process() -> None:
     mock_proc.wait()  # Ensure it exits immediately
     ctx.server_process = mock_proc
 
-    handler = _make_sigterm_handler(ctx)
+    handler = _make_sigterm_handler(ctx, AppSettings())
     with pytest.raises(SystemExit):
         handler(15, None)
     assert ctx.shutdown_requested is True

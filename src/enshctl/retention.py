@@ -2,15 +2,16 @@
 
 import logging
 from dataclasses import dataclass
-from os import environ
 from typing import TYPE_CHECKING
 
-from enshctl.backup import BACKUP_DIRS, BackupInfo, get_backup_dir, parse_backup_filename
+from enshctl.backup import BACKUP_DIRS, BackupInfo, parse_backup_filename
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
+
+    from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -24,22 +25,16 @@ class RetentionConfig:
     monthly: int = 0
     yearly: int = 0
 
-
-def load_retention_config() -> RetentionConfig:
-    def _env_int(key: str, default: int = 0) -> int:
-        try:
-            return int(environ.get(key, str(default)))
-        except ValueError, TypeError:
-            return default
-
-    return RetentionConfig(
-        last=_env_int("BACKUP_KEEP_LAST", 24),
-        hourly=_env_int("BACKUP_KEEP_HOURLY", 0),
-        daily=_env_int("BACKUP_KEEP_DAILY", 0),
-        weekly=_env_int("BACKUP_KEEP_WEEKLY", 0),
-        monthly=_env_int("BACKUP_KEEP_MONTHLY", 0),
-        yearly=_env_int("BACKUP_KEEP_YEARLY", 0),
-    )
+    @classmethod
+    def from_settings(cls, settings: AppSettings) -> RetentionConfig:
+        return cls(
+            last=settings.backup_keep_last,
+            hourly=settings.backup_keep_hourly,
+            daily=settings.backup_keep_daily,
+            weekly=settings.backup_keep_weekly,
+            monthly=settings.backup_keep_monthly,
+            yearly=settings.backup_keep_yearly,
+        )
 
 
 def _apply_keep_last(backups: list[BackupInfo], config: RetentionConfig, keep: set[int]) -> None:
@@ -144,15 +139,11 @@ def prune_category(category_dir: Path, config: RetentionConfig, dry_run: bool = 
     return to_delete
 
 
-def prune_all(config: RetentionConfig | None = None, dry_run: bool = False) -> dict[str, list[Path]]:
+def prune_all(config: RetentionConfig, base_dir: Path, dry_run: bool = False) -> dict[str, list[Path]]:
     """Apply retention to all categories.
 
     Returns dict mapping category name to list of deleted paths.
     """
-    if config is None:
-        config = load_retention_config()
-
-    base_dir = get_backup_dir()
     results: dict[str, list[Path]] = {}
 
     for cat in BACKUP_DIRS:

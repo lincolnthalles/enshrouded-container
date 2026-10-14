@@ -1,6 +1,6 @@
 """Tests for backup module."""
 
-import os
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,13 +11,14 @@ from enshctl.backup import (
     _local_now,
     _local_tz,
     acquire_lock,
-    get_format,
-    get_level,
     list_backups,
     parse_backup_filename,
     release_lock,
+    resolve_format,
+    resolve_level,
     select_backup,
 )
+from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
     import pytest
@@ -92,34 +93,35 @@ def test_parse_invalid_date() -> None:
     assert parse_backup_filename("enshrouded-99999999-999999.tar.zst") is None
 
 
-def test_get_format_default() -> None:
-    if "BACKUP_FORMAT" in os.environ:
-        del os.environ["BACKUP_FORMAT"]
-    assert get_format() == BackupFormat.ZSTD
+def test_resolve_format_default() -> None:
+    # GIVEN default settings
+    # WHEN resolving the configured format
+    # THEN zstd is selected
+    assert resolve_format(AppSettings().backup_format) == BackupFormat.ZSTD
 
 
-def test_get_format_custom() -> None:
-    os.environ["BACKUP_FORMAT"] = "gzip"
-    try:
-        assert get_format() == BackupFormat.GZIP
-    finally:
-        del os.environ["BACKUP_FORMAT"]
+def test_resolve_format_custom() -> None:
+    # GIVEN gzip configured
+    settings = replace(AppSettings(), backup_format="gzip")
+    # WHEN resolving the format
+    # THEN gzip is selected
+    assert resolve_format(settings.backup_format) == BackupFormat.GZIP
 
 
-def test_get_format_invalid_fallback() -> None:
-    os.environ["BACKUP_FORMAT"] = "invalid"
-    try:
-        assert get_format() == BackupFormat.ZSTD
-    finally:
-        del os.environ["BACKUP_FORMAT"]
+def test_resolve_format_invalid_fallback() -> None:
+    # GIVEN an unknown format name
+    # WHEN resolving the format
+    # THEN zstd is selected as the fallback
+    assert resolve_format("invalid") == BackupFormat.ZSTD
 
 
-def test_get_level_default() -> None:
-    if "BACKUP_LEVEL" in os.environ:
-        del os.environ["BACKUP_LEVEL"]
-    assert get_level(BackupFormat.ZSTD) == 9
-    assert get_level(BackupFormat.GZIP) == 6
-    assert get_level(BackupFormat.ZIP) == 6
+def test_resolve_level_defaults() -> None:
+    # GIVEN no explicit level configured
+    # WHEN resolving the level
+    # THEN each format reports its own default
+    assert resolve_level(BackupFormat.ZSTD, "") == 9
+    assert resolve_level(BackupFormat.GZIP, "") == 6
+    assert resolve_level(BackupFormat.ZIP, "") == 6
 
 
 # --- select_backup tests (11.3) ---
@@ -135,27 +137,36 @@ def _make_backup_filename(dt: datetime, suffix: str = "", ext: str = ".tar.zst")
     return f"enshrouded-{ts}{suffix}{ext}"
 
 
+def _settings_with_dir(base: Path) -> AppSettings:
+    return replace(AppSettings(), backup_dir=str(base))
+
+
 def test_select_backup_by_file(tmp_path: Path) -> None:
+    # GIVEN backups present in all categories
     base = tmp_path / "backups"
     for cat in ("live", "cold", "emergency"):
         (base / cat).mkdir(parents=True)
     target = base / "live" / "enshrouded-20260529-120000.tar.zst"
     target.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(file="enshrouded-20260529-120000.tar.zst")
+    # WHEN selecting by filename
+    result = select_backup(file="enshrouded-20260529-120000.tar.zst", settings=_settings_with_dir(base))
+    # THEN the exact path resolves
     assert result == target
 
 
 def test_select_backup_by_file_not_found(tmp_path: Path) -> None:
+    # GIVEN backups present
     base = tmp_path / "backups"
     for cat in ("live", "cold", "emergency"):
         (base / cat).mkdir(parents=True)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(file="nonexistent.tar.zst")
+    # WHEN selecting a nonexistent filename
+    result = select_backup(file="nonexistent.tar.zst", settings=_settings_with_dir(base))
+    # THEN no backup resolves
     assert result is None
 
 
 def test_select_backup_when_last(tmp_path: Path) -> None:
+    # GIVEN two live backups
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
@@ -163,38 +174,43 @@ def test_select_backup_when_last(tmp_path: Path) -> None:
     f2 = live / "enshrouded-20260529-130000.tar.zst"
     f1.write_bytes(b"\x00" * 10)
     f2.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(when="last")
+    # WHEN selecting the last backup
+    result = select_backup(when="last", settings=_settings_with_dir(base))
+    # THEN the newest file resolves
     assert result is not None
     assert result.name == "enshrouded-20260529-130000.tar.zst"
 
 
 def test_select_backup_when_30m(tmp_path: Path) -> None:
+    # GIVEN a backup created now
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
     name = _today_backup("enshrouded-YYYYMMDD-HHMMSS.tar.zst")
     f = live / name
     f.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(when="30m")
+    # WHEN selecting within the last 30 minutes
+    result = select_backup(when="30m", settings=_settings_with_dir(base))
+    # THEN it resolves
     assert result is not None
     assert result.name == name
 
 
 def test_select_backup_when_1h(tmp_path: Path) -> None:
+    # GIVEN a backup created now
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
     name = _today_backup("enshrouded-YYYYMMDD-HHMMSS.tar.zst")
     f = live / name
     f.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(when="1h")
-    assert result is not None
+    # WHEN selecting within the last hour
+    # THEN it resolves
+    assert select_backup(when="1h", settings=_settings_with_dir(base)) is not None
 
 
 def test_select_backup_when_category_qualifier(tmp_path: Path) -> None:
+    # GIVEN live and cold backups
     base = tmp_path / "backups"
     live = base / "live"
     cold = base / "cold"
@@ -204,30 +220,38 @@ def test_select_backup_when_category_qualifier(tmp_path: Path) -> None:
     cold_f = cold / "enshrouded-20260529-130000-cold.tar.zst"
     live_f.write_bytes(b"\x00" * 10)
     cold_f.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(when="last:cold")
+    # WHEN selecting the last cold backup
+    result = select_backup(when="last:cold", settings=_settings_with_dir(base))
+    # THEN the cold file resolves
     assert result is not None
     assert result.name == "enshrouded-20260529-130000-cold.tar.zst"
 
 
 def test_select_backup_no_match(tmp_path: Path) -> None:
+    # GIVEN only a stale backup
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
     f = live / "enshrouded-20260529-120000.tar.zst"
     f.write_bytes(b"\x00" * 10)
-    with patch("enshctl.backup.core.get_backup_dir", return_value=base):
-        result = select_backup(when="30m")
-    assert result is None
+    # WHEN selecting within the last 30 minutes
+    # THEN nothing resolves
+    assert select_backup(when="30m", settings=_settings_with_dir(base)) is None
 
 
 def test_select_backup_invalid_direction() -> None:
-    assert select_backup(when="bogus") is None
-    assert select_backup(when="42x") is None
+    # GIVEN no settings constraint
+    # WHEN selecting with an invalid direction
+    # THEN nothing resolves
+    assert select_backup(when="bogus", settings=AppSettings()) is None
+    assert select_backup(when="42x", settings=AppSettings()) is None
 
 
 def test_select_backup_no_args() -> None:
-    assert select_backup() is None
+    # GIVEN no selection criteria
+    # WHEN selecting
+    # THEN nothing resolves
+    assert select_backup(settings=AppSettings()) is None
 
 
 def test_list_backups_with_when_filter(tmp_path: Path) -> None:
@@ -394,42 +418,6 @@ def test_lower_priority_warns_once_on_ionice_failure(caplog: pytest.LogCaptureFi
 # --- Disk space guard tests ---
 
 
-def test_get_min_free_warn_default() -> None:
-    from enshctl.backup import DEFAULT_MIN_FREE_WARN, get_min_free_warn
-
-    if "BACKUP_MIN_FREE_SPACE_WARN" in os.environ:
-        del os.environ["BACKUP_MIN_FREE_SPACE_WARN"]
-    assert get_min_free_warn() == DEFAULT_MIN_FREE_WARN
-
-
-def test_get_min_free_warn_custom() -> None:
-    from enshctl.backup import get_min_free_warn
-
-    os.environ["BACKUP_MIN_FREE_SPACE_WARN"] = str(3 * 1024**3)
-    try:
-        assert get_min_free_warn() == 3 * 1024**3
-    finally:
-        del os.environ["BACKUP_MIN_FREE_SPACE_WARN"]
-
-
-def test_get_min_free_stop_default() -> None:
-    from enshctl.backup import DEFAULT_MIN_FREE_STOP, get_min_free_stop
-
-    if "BACKUP_MIN_FREE_SPACE_STOP" in os.environ:
-        del os.environ["BACKUP_MIN_FREE_SPACE_STOP"]
-    assert get_min_free_stop() == DEFAULT_MIN_FREE_STOP
-
-
-def test_get_min_free_stop_custom() -> None:
-    from enshctl.backup import get_min_free_stop
-
-    os.environ["BACKUP_MIN_FREE_SPACE_STOP"] = str(512 * 1024**2)
-    try:
-        assert get_min_free_stop() == 512 * 1024**2
-    finally:
-        del os.environ["BACKUP_MIN_FREE_SPACE_STOP"]
-
-
 class TestCreateBackupDiskSpace:
     """Tests for create_backup() disk space checks."""
 
@@ -443,21 +431,22 @@ class TestCreateBackupDiskSpace:
     ) -> None:
         from enshctl.backup import create_backup
 
+        # GIVEN ample free space and saves present
         mock_disk_usage.return_value.free = 5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core.get_backup_dir", return_value=tmp_path / "backups"),
-            patch("enshctl.backup.core.get_format", return_value=BackupFormat.ZSTD),
-            patch("enshctl.backup.core.get_level", return_value=3),
             patch("enshctl.backup.core._local_now") as mock_now,
             patch("enshctl.backup.archive._compress_zstd") as mock_compress,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
-            result = create_backup()
+            # WHEN creating a backup
+            result = create_backup("live", settings)
+            # THEN compression runs and a path returns
             mock_compress.assert_called_once()
             assert result is not None
 
@@ -471,13 +460,13 @@ class TestCreateBackupDiskSpace:
     ) -> None:
         from enshctl.backup import create_backup
 
+        # GIVEN free space below the stop threshold
         mock_disk_usage.return_value.free = 500 * 1024**2
-
-        with (
-            patch("enshctl.backup.core.get_backup_dir", return_value=tmp_path / "backups"),
-        ):
-            result = create_backup()
-            assert result is None
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        # WHEN creating a backup
+        result = create_backup("live", settings)
+        # THEN the backup is skipped
+        assert result is None
 
     @patch("enshctl.backup.core.shutil.disk_usage")
     @patch("enshctl.backup.core.backup_needed", return_value=True)
@@ -490,25 +479,26 @@ class TestCreateBackupDiskSpace:
     ) -> None:
         from enshctl.backup import create_backup
 
+        # GIVEN free space below the warn threshold but above stop
         mock_disk_usage.return_value.free = 1.5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core.get_backup_dir", return_value=tmp_path / "backups"),
-            patch("enshctl.backup.core.get_format", return_value=BackupFormat.ZSTD),
-            patch("enshctl.backup.core.get_level", return_value=3),
             patch("enshctl.backup.core._local_now") as mock_now,
             patch("enshctl.backup.archive._compress_zstd") as mock_compress,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
-            result = create_backup()
+            # WHEN creating a backup
+            result = create_backup("live", settings)
+            # THEN compression still runs
             mock_compress.assert_called_once()
             assert result is not None
 
-        # Verify warning was logged
+        # AND a low-space warning was logged
         warnings = [r for r in caplog.records if r.levelno == 30 and "Disk space low" in r.message]
         assert len(warnings) >= 1
 
@@ -522,10 +512,10 @@ class TestCreateBackupDiskSpace:
     ) -> None:
         from enshctl.backup import create_backup
 
+        # GIVEN a full disk
         mock_disk_usage.return_value.free = 500 * 1024**2
-
-        with (
-            patch("enshctl.backup.core.get_backup_dir", return_value=tmp_path / "backups"),
-        ):
-            result = create_backup(category="emergency")
-            assert result is None
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        # WHEN creating an emergency backup
+        result = create_backup(category="emergency", settings=settings)
+        # THEN it is skipped
+        assert result is None

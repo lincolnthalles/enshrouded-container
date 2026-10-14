@@ -2,7 +2,6 @@
 
 import enum
 import logging
-import os
 import re
 import shutil
 import time
@@ -11,21 +10,19 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import zstandard
 
 from enshctl.settings import (
-    BACKUP_BASE_DIR,
     BACKUP_DIRS,
     SAVE_DIR,
 )
 
+if TYPE_CHECKING:
+    from enshctl.settings import AppSettings
+
 logger = logging.getLogger(__name__)
-
-DEFAULT_FORMAT = "zstd"
-
-DEFAULT_MIN_FREE_WARN = 2 * 1024**3
-DEFAULT_MIN_FREE_STOP = 1 * 1024**3
 
 
 class BackupFormat(enum.Enum):
@@ -93,18 +90,31 @@ class BackupInfo:
     size: int
 
 
-def get_min_free_warn() -> int:
+def backup_needed() -> bool:
+    if not SAVE_DIR.exists():
+        return False
     try:
-        return int(os.environ.get("BACKUP_MIN_FREE_SPACE_WARN", str(DEFAULT_MIN_FREE_WARN)))
-    except ValueError, TypeError:
-        return DEFAULT_MIN_FREE_WARN
+        return any(SAVE_DIR.iterdir())
+    except OSError:
+        return False
 
 
-def get_min_free_stop() -> int:
+def resolve_format(raw: str) -> BackupFormat:
     try:
-        return int(os.environ.get("BACKUP_MIN_FREE_SPACE_STOP", str(DEFAULT_MIN_FREE_STOP)))
-    except ValueError, TypeError:
-        return DEFAULT_MIN_FREE_STOP
+        return BackupFormat(raw.lower())
+    except ValueError:
+        logger.warning("Unknown BACKUP_FORMAT '%s', falling back to zstd", raw)
+        return BackupFormat.ZSTD
+
+
+def resolve_level(fmt: BackupFormat, raw: str) -> int:
+    if raw:
+        try:
+            level = int(raw)
+        except ValueError, TypeError:
+            level = fmt.get_default_level()
+        return fmt.clamp_level(level)
+    return fmt.get_default_level()
 
 
 def _local_tz() -> timezone:
@@ -153,51 +163,18 @@ def human_size(size: float) -> str:
     return f"{size:.1f} TB"
 
 
-def get_backup_dir() -> Path:
-    return Path(os.environ.get("BACKUP_DIR", str(BACKUP_BASE_DIR)))
-
-
-def backup_needed() -> bool:
-    if not SAVE_DIR.exists():
-        return False
-    try:
-        return any(SAVE_DIR.iterdir())
-    except OSError:
-        return False
-
-
-def get_format() -> BackupFormat:
-    raw = os.environ.get("BACKUP_FORMAT", DEFAULT_FORMAT).lower()
-    try:
-        return BackupFormat(raw)
-    except ValueError:
-        logger.warning("Unknown BACKUP_FORMAT '%s', falling back to zstd", raw)
-        return BackupFormat.ZSTD
-
-
-def get_level(fmt: BackupFormat) -> int:
-    raw = os.environ.get("BACKUP_LEVEL", "")
-    if raw:
-        try:
-            level = int(raw)
-        except ValueError, TypeError:
-            level = fmt.get_default_level()
-        return fmt.clamp_level(level)
-    return fmt.get_default_level()
-
-
-def create_backup(category: str = "live") -> Path | None:
+def create_backup(category: str, settings: AppSettings) -> Path | None:
     from enshctl.backup.archive import _compress_gzip, _compress_zip, _compress_zstd  # noqa: PLC0415
 
     if not backup_needed():
         logger.info("Save directory empty or missing, skipping backup")
         return None
 
-    backup_dir = get_backup_dir() / category
+    backup_dir = Path(settings.backup_dir) / category
     backup_dir.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(backup_dir).free
-    min_free_stop = get_min_free_stop()
-    min_free_warn = get_min_free_warn()
+    min_free_stop = settings.backup_min_free_stop
+    min_free_warn = settings.backup_min_free_warn
     if free < min_free_stop:
         logger.warning(
             "Disk space critical: %s free (minimum %s), skipping backup",
@@ -208,8 +185,8 @@ def create_backup(category: str = "live") -> Path | None:
     if free < min_free_warn:
         logger.warning("Disk space low: %s free (warning threshold %s)", human_size(free), human_size(min_free_warn))
 
-    fmt = get_format()
-    level = get_level(fmt)
+    fmt = resolve_format(settings.backup_format)
+    level = resolve_level(fmt, "" if settings.backup_level is None else str(settings.backup_level))
     timestamp = _local_now().strftime("%Y%m%d-%H%M%S")
 
     suffix = ""
@@ -266,8 +243,8 @@ def list_backups(base_dir: Path, category: str | None = None, when: timedelta | 
     return results
 
 
-def select_backup(file: str | None = None, when: str | None = None) -> Path | None:
-    base_dir = get_backup_dir()
+def select_backup(file: str | None = None, when: str | None = None, *, settings: AppSettings) -> Path | None:
+    base_dir = Path(settings.backup_dir)
 
     if file:
         for cat in BACKUP_DIRS:

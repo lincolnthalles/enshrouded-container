@@ -1,21 +1,26 @@
 """Tests for symlink-tree mod injection layer."""
 
-import os
+import contextlib
+from dataclasses import replace
 from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
 from enshctl.mods import (
     CONFIG_FILENAME,
-    _overlay_mods,
-    _setup_persist_files,
     build_game_tree,
 )
+from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 _MOD = "enshctl.mods"
+
+
+def _settings(**overrides: object) -> AppSettings:
+    return replace(AppSettings(), **overrides)  # type: ignore[arg-type]
 
 
 def _setup_manifest(tmp_path: Path, version: str = "test-version") -> Path:
@@ -38,124 +43,111 @@ def _setup_mods(tmp_path: Path) -> Path:
     return mods
 
 
-# --- build_game_tree tests ---
-
-
-def test_build_game_tree_creates_symlink_tree(tmp_path: Path) -> None:
-    """Manifest files should be symlinked into the target directory."""
+def _tree_context(tmp_path: Path) -> tuple[Path, Path, Path]:
     manifest = _setup_manifest(tmp_path)
     target = tmp_path / "gameserver"
     config = tmp_path / "config"
     config.mkdir()
-
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-    ):
-        build_game_tree("test-version")
-
-    assert (target / "enshrouded_server.exe").read_text() == "exe-content"
-    assert (target / "data" / "game.dat").read_bytes() == b"\x00\x01\x02"
-    assert (target / "enshrouded_server_example.json").read_text() == "{}"
+    return manifest, target, config
 
 
-def test_build_game_tree_wipes_existing_directory(tmp_path: Path) -> None:
-    """Previous contents should be removed before rebuilding."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-    (target / "old_file.txt").write_text("stale")
-    config = tmp_path / "config"
-    config.mkdir()
-
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-    ):
-        build_game_tree("test-version")
-
-    assert not (target / "old_file.txt").exists()
-    assert (target / "enshrouded_server.exe").exists()
-
-
-def test_build_game_tree_overlay_mods(tmp_path: Path) -> None:
-    """Mod files should override manifest symlinks."""
-    manifest = _setup_manifest(tmp_path)
-    mods = _setup_mods(tmp_path)
-    target = tmp_path / "gameserver"
-    config = tmp_path / "config"
-    config.mkdir()
-
+@contextlib.contextmanager
+def _patched_tree(manifest: Path, target: Path, config: Path, mods: Path) -> Iterator[None]:
     with (
         mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
         mock.patch(f"{_MOD}.MOUNT_POINT", target),
         mock.patch(f"{_MOD}.MODS_DIR", mods),
         mock.patch(f"{_MOD}.CONFIG_DIR", config),
     ):
-        build_game_tree("test-version")
+        yield
 
-    # Mod DLL should be present
-    assert (target / "plugins" / "my_mod.dll").exists()
-    # Manifest files should still be present
+
+# --- build_game_tree tests ---
+
+
+def test_build_game_tree_creates_symlink_tree(tmp_path: Path) -> None:
+    # GIVEN a manifest with files
+    manifest, target, config = _tree_context(tmp_path)
+
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings())
+
+    # THEN manifest files are symlinked into the target
+    assert (target / "enshrouded_server.exe").read_text() == "exe-content"
+    assert (target / "data" / "game.dat").read_bytes() == b"\x00\x01\x02"
+    assert (target / "enshrouded_server_example.json").read_text() == "{}"
+
+
+def test_build_game_tree_wipes_existing_directory(tmp_path: Path) -> None:
+    # GIVEN a target with stale contents
+    manifest, target, config = _tree_context(tmp_path)
+    target.mkdir()
+    (target / "old_file.txt").write_text("stale")
+
+    # WHEN rebuilding the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings())
+
+    # THEN stale contents are removed and manifest files present
+    assert not (target / "old_file.txt").exists()
+    assert (target / "enshrouded_server.exe").exists()
+
+
+def test_build_game_tree_overlay_mods(tmp_path: Path) -> None:
+    # GIVEN a manifest and a mod DLL
+    manifest, target, config = _tree_context(tmp_path)
+    mods = _setup_mods(tmp_path)
+
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, mods):
+        build_game_tree("test-version", _settings())
+
+    # THEN the mod file is present alongside manifest files
+    assert (target / "plugins" / "my_mod.dll").is_symlink()
+    assert (target / "plugins" / "my_mod.dll").read_bytes() == b"\x00"
     assert (target / "enshrouded_server.exe").exists()
 
 
 def test_build_game_tree_config_symlink(tmp_path: Path) -> None:
-    """enshrouded_server.json should be a symlink to /data/config/."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    config = tmp_path / "config"
-    config.mkdir()
+    # GIVEN a manifest
+    manifest, target, config = _tree_context(tmp_path)
 
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-    ):
-        build_game_tree("test-version")
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings())
 
+    # THEN the game config symlinks to the config dir
     game_config = target / CONFIG_FILENAME
     assert game_config.is_symlink()
     assert game_config.resolve() == config.resolve() / CONFIG_FILENAME
 
 
 def test_build_game_tree_manifest_not_found(tmp_path: Path) -> None:
-    """Should raise FileNotFoundError if manifest directory doesn't exist."""
+    # GIVEN no manifest directory
     target = tmp_path / "gameserver"
 
+    # WHEN building a missing version
+    # THEN FileNotFoundError propagates
     with (
         mock.patch(f"{_MOD}.MANIFESTS_DIR", tmp_path / "nonexistent"),
         mock.patch(f"{_MOD}.MOUNT_POINT", target),
         mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
         pytest.raises(FileNotFoundError),
     ):
-        build_game_tree("nonexistent-version")
+        build_game_tree("nonexistent-version", _settings())
 
 
 def test_build_game_tree_persist_files(tmp_path: Path) -> None:
-    """PERSIST_FILES entries should be copied to config dir and symlinked."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    config = tmp_path / "config"
-    config.mkdir()
-    # Create a file in the manifest that should be persisted
+    # GIVEN a manifest file listed in persist_files
+    manifest, target, config = _tree_context(tmp_path)
     (manifest / "test-version" / "extra.dat").write_bytes(b"\x03\x04")
 
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-        mock.patch.dict(os.environ, {"PERSIST_FILES": "extra.dat"}),
-    ):
-        build_game_tree("test-version")
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings(persist_files=("extra.dat",)))
 
-    # File should be copied to config dir and symlinked from gameserver
+    # THEN the file is copied to the config dir and symlinked from the target
     assert (config / "extra.dat").exists()
     assert (config / "extra.dat").read_bytes() == b"\x03\x04"
     assert (target / "extra.dat").is_symlink()
@@ -163,129 +155,56 @@ def test_build_game_tree_persist_files(tmp_path: Path) -> None:
 
 
 def test_build_game_tree_persist_files_skips_path_traversal(tmp_path: Path) -> None:
-    """PERSIST_FILES entries with path traversal should be skipped."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    config = tmp_path / "config"
-    config.mkdir()
+    # GIVEN a persist entry attempting path traversal
+    manifest, target, config = _tree_context(tmp_path)
 
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-        mock.patch.dict(os.environ, {"PERSIST_FILES": "../../etc/passwd"}),
-    ):
-        build_game_tree("test-version")
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings(persist_files=("../../etc/passwd",)))
 
-    # Path traversal should be rejected
+    # THEN the traversal is rejected
     assert not (tmp_path / "etc" / "passwd").exists()
     assert not (config / "passwd").exists()
 
 
 def test_build_game_tree_persist_files_skips_missing(tmp_path: Path) -> None:
-    """PERSIST_FILES entries for non-existent files should be silently skipped."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    config = tmp_path / "config"
-    config.mkdir()
+    # GIVEN a persist entry for a nonexistent file
+    manifest, target, config = _tree_context(tmp_path)
 
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-        mock.patch.dict(os.environ, {"PERSIST_FILES": "nonexistent.dat"}),
-    ):
-        build_game_tree("test-version")
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings(persist_files=("nonexistent.dat",)))
 
-    # Should not create any file
+    # THEN no file is created
     assert not (config / "nonexistent.dat").exists()
     assert not (target / "nonexistent.dat").exists()
 
 
-# --- _overlay_mods tests ---
+def test_build_game_tree_persist_files_copies_readonly_source(tmp_path: Path) -> None:
+    # GIVEN a read-only manifest file listed in persist_files
+    manifest, target, config = _tree_context(tmp_path)
+    (manifest / "test-version" / "persist.dat").write_bytes(b"\x05\x06")
+    (manifest / "test-version" / "persist.dat").chmod(0o444)
 
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings(persist_files=("persist.dat",)))
 
-def test_overlay_mods_creates_symlinks(tmp_path: Path) -> None:
-    """Mod files should be symlinked into the target."""
-    mods = _setup_mods(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-
-    _overlay_mods(mods, target)
-
-    assert (target / "plugins" / "my_mod.dll").is_symlink()
-    assert (target / "plugins" / "my_mod.dll").read_bytes() == b"\x00"
-
-
-def test_overlay_mods_overrides_existing_files(tmp_path: Path) -> None:
-    """Mod files should override existing symlinks."""
-    mods = _setup_mods(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-    # Create an existing file
-    (target / "plugins").mkdir()
-    (target / "plugins" / "my_mod.dll").write_bytes(b"\xff")
-
-    _overlay_mods(mods, target)
-
-    assert (target / "plugins" / "my_mod.dll").is_symlink()
-    assert (target / "plugins" / "my_mod.dll").read_bytes() == b"\x00"
-
-
-# --- _setup_persist_files tests ---
-
-
-def test_setup_persist_files_copies_readonly_source(tmp_path: Path) -> None:
-    """Files copied from read-only manifest should not be read-only."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-    config = tmp_path / "config"
-    config.mkdir()
-    # Create a file in the manifest and make it read-only
-    (manifest / "persist.dat").write_bytes(b"\x05\x06")
-    (manifest / "persist.dat").chmod(0o444)
-
-    with mock.patch(f"{_MOD}.CONFIG_DIR", config), mock.patch.dict(os.environ, {"PERSIST_FILES": "persist.dat"}):
-        _setup_persist_files(manifest, target)
-
-    # The persisted file should NOT be read-only
+    # THEN the persisted copy matches the source bytes
     persisted = config / "persist.dat"
     assert persisted.exists()
     assert persisted.read_bytes() == b"\x05\x06"
-    assert not (persisted.stat().st_mode & 0o200)  # owner write should be set (not read-only)
+    assert not persisted.stat().st_mode & 0o200
 
 
-def test_setup_persist_files_skips_config_filename(tmp_path: Path) -> None:
-    """enshrouded_server.json should be skipped (handled separately)."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-    config = tmp_path / "config"
-    config.mkdir()
+def test_build_game_tree_persist_files_skips_config_filename(tmp_path: Path) -> None:
+    # GIVEN the game config filename listed in persist_files
+    manifest, target, config = _tree_context(tmp_path)
 
-    with (
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-        mock.patch.dict(os.environ, {"PERSIST_FILES": "enshrouded_server.json"}),
-    ):
-        _setup_persist_files(manifest, target)
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree("test-version", _settings(persist_files=(CONFIG_FILENAME,)))
 
-    # Config file should NOT be created by _setup_persist_files
-    assert not (config / "enshrouded_server.json").exists()
-
-
-def test_setup_persist_files_empty_env(tmp_path: Path) -> None:
-    """No PERSIST_FILES env var should be a no-op."""
-    manifest = _setup_manifest(tmp_path)
-    target = tmp_path / "gameserver"
-    target.mkdir()
-    config = tmp_path / "config"
-    config.mkdir()
-
-    with mock.patch(f"{_MOD}.CONFIG_DIR", config), mock.patch.dict(os.environ, {}, clear=True):
-        _setup_persist_files(manifest, target)
-
-    # Nothing should be created
-    assert list(config.iterdir()) == [] if config.exists() else True
+    # THEN persist handling leaves the config symlink alone and creates nothing
+    assert (target / CONFIG_FILENAME).is_symlink()
+    assert not (config / CONFIG_FILENAME).exists()

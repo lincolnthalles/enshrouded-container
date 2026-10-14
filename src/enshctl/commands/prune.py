@@ -1,8 +1,10 @@
 """Prune subcommand — enforce retention rules."""
 
 import logging
+from pathlib import Path
 
-from enshctl.retention import load_retention_config, prune_all
+from enshctl.retention import RetentionConfig, prune_all
+from enshctl.settings import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,8 @@ def run() -> None:
     )
     args, _ = parser.parse_known_args()
 
-    config = load_retention_config()
+    settings = load_settings()
+    config = RetentionConfig.from_settings(settings)
     logger.info(
         "Pruning with retention: last=%d, hourly=%d, daily=%d, weekly=%d, monthly=%d, yearly=%d",
         config.last,
@@ -27,7 +30,7 @@ def run() -> None:
         config.yearly,
     )
 
-    results = prune_all(config, dry_run=args.dry_run)
+    results = prune_all(config, Path(settings.backup_dir), dry_run=args.dry_run)
 
     total = sum(len(paths) for paths in results.values())
     if total == 0:

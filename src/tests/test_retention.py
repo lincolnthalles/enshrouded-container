@@ -1,6 +1,6 @@
 """Tests for retention engine."""
 
-import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,8 +8,8 @@ from enshctl.backup import BackupFormat, BackupInfo
 from enshctl.retention import (
     RetentionConfig,
     apply_retention,
-    load_retention_config,
 )
+from enshctl.settings import AppSettings
 
 
 def _make_backup(name: str, day: int, hour: int = 12, minute: int = 0) -> BackupInfo:
@@ -130,32 +130,19 @@ def test_hourly_retention() -> None:
     assert kept == 3
 
 
-def test_load_retention_config_defaults() -> None:
-    for key in (
-        "BACKUP_KEEP_LAST",
-        "BACKUP_KEEP_HOURLY",
-        "BACKUP_KEEP_DAILY",
-        "BACKUP_KEEP_WEEKLY",
-        "BACKUP_KEEP_MONTHLY",
-        "BACKUP_KEEP_YEARLY",
-    ):
-        os.environ.pop(key, None)
-    config = load_retention_config()
-    assert config.last == 24
-    assert config.hourly == 0
-    assert config.daily == 0
-    assert config.weekly == 0
-    assert config.monthly == 0
-    assert config.yearly == 0
+def test_retention_config_from_settings_defaults() -> None:
+    # GIVEN default settings
+    # WHEN building a retention config
+    # THEN the documented defaults apply
+    config = RetentionConfig.from_settings(AppSettings())
+    assert config == RetentionConfig(last=24)
 
 
-def test_load_retention_config_custom() -> None:
-    os.environ["BACKUP_KEEP_LAST"] = "5"
-    os.environ["BACKUP_KEEP_DAILY"] = "7"
-    try:
-        config = load_retention_config()
-        assert config.last == 5
-        assert config.daily == 7
-    finally:
-        del os.environ["BACKUP_KEEP_LAST"]
-        del os.environ["BACKUP_KEEP_DAILY"]
+def test_retention_config_from_settings_custom() -> None:
+    # GIVEN custom keep values
+    settings = replace(AppSettings(), backup_keep_last=5, backup_keep_daily=7)
+    # WHEN building a retention config
+    # THEN the values carry over
+    config = RetentionConfig.from_settings(settings)
+    assert config.last == 5
+    assert config.daily == 7

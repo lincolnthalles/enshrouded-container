@@ -4,7 +4,8 @@ import logging
 import shutil
 import sys
 import tarfile
-from typing import TYPE_CHECKING, Any, ClassVar, override
+from pathlib import Path
+from typing import Any, ClassVar, override
 
 from enshctl.backup import (
     LOCK_FILE,
@@ -12,16 +13,12 @@ from enshctl.backup import (
     BackupInfo,
     acquire_lock,
     decompress_archive,
-    get_backup_dir,
     human_size,
     list_backups,
     release_lock,
     select_backup,
 )
-from enshctl.settings import PIDFILE
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from enshctl.settings import PIDFILE, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +60,13 @@ def run() -> None:
     parser.add_argument("--list", action="store_true", default=False, dest="list_mode", help="List available backups")
     args, _ = parser.parse_known_args()
 
+    settings = load_settings()
+    base_dir = Path(settings.backup_dir)
     is_tty = sys.stdout.isatty()
 
     # List mode
     if args.list_mode or (not args.file and not args.when and not is_tty):
-        backups = list_backups(get_backup_dir(), when=None)
+        backups = list_backups(base_dir, when=None)
         if not backups:
             logger.info("No backups found")
             return
@@ -77,11 +76,11 @@ def run() -> None:
     # Resolve backup to restore
     backup_path: Path | None = None
     if args.file:
-        backup_path = select_backup(file=args.file)
+        backup_path = select_backup(file=args.file, settings=settings)
     elif args.when:
-        backup_path = select_backup(when=args.when)
+        backup_path = select_backup(when=args.when, settings=settings)
     elif is_tty:
-        backup_path = _interactive_restore()
+        backup_path = _interactive_restore(base_dir)
 
     if backup_path is None:
         logger.error("No matching backup found")
@@ -98,7 +97,7 @@ def run() -> None:
         return
 
     # Perform restore
-    lock_path = get_backup_dir() / LOCK_FILE
+    lock_path = base_dir / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
         logger.error("Cannot acquire backup lock. Another backup operation is in progress.")
@@ -191,7 +190,7 @@ def _list_backups(backups: list[Any]) -> None:
             print(f"{bi.path.name}  {bi.category}  {human_size(bi.size)}  {bi.timestamp.isoformat()}")
 
 
-def _interactive_restore() -> Path | None:
+def _interactive_restore(base_dir: Path) -> Path | None:
     try:
         from textual.app import App, ComposeResult
         from textual.binding import Binding, BindingType
@@ -208,7 +207,7 @@ def _interactive_restore() -> Path | None:
 
         def __init__(self) -> None:
             super().__init__()
-            self._backups = list_backups(get_backup_dir())
+            self._backups = list_backups(base_dir)
             self.selected: BackupInfo | None = None
 
         @override

@@ -21,9 +21,9 @@ from enshctl.settings import (
     WINE_PREFIX,
     WINE_PREFIX_INIT_MARKER,
     WINE_SERVER_BIN,
+    AppSettings,
     load_settings,
 )
-from enshctl.utils import get_uid_gid, is_truthy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,7 +34,6 @@ BACKUP = 26
 logging.addLevelName(BACKUP, "BACKUP")
 logger = logging.getLogger(__name__)
 
-DEFAULT_CRON = "*/60 * * * *"
 LOG_SEARCH_TIMEOUT = 120
 
 
@@ -57,8 +56,8 @@ class ServerContext:
         self.shutdown_requested = False
 
 
-def _setup_directories() -> None:
-    uid, gid = get_uid_gid()
+def _setup_directories(settings: AppSettings) -> None:
+    uid, gid = settings.puid, settings.pgid
     xdg_dir = f"/var/run/user/{uid}"
     dirs = [
         "/data/saves",
@@ -89,17 +88,16 @@ def _setup_x11_socket() -> None:
     x11_dir.chmod(0o1777)
 
 
-def _resolve_dll_overrides() -> str:
-    user_override = environ.get("WINEDLLOVERRIDES")
-    if user_override is not None:
-        logger.info("Using user-provided WINEDLLOVERRIDES: %s", user_override)
-        return user_override
+def _resolve_dll_overrides(settings: AppSettings) -> str:
+    if settings.winedlloverrides is not None:
+        logger.info("Using user-provided WINEDLLOVERRIDES: %s", settings.winedlloverrides)
+        return settings.winedlloverrides
     generated = mods.generate_dll_overrides()
     logger.info("Generated WINEDLLOVERRIDES: %s", generated)
     return generated
 
 
-def _start_server() -> subprocess.Popen[bytes]:
+def _start_server(settings: AppSettings) -> subprocess.Popen[bytes]:
     cmd = [
         "/usr/bin/runuser",
         "-u",
@@ -113,7 +111,7 @@ def _start_server() -> subprocess.Popen[bytes]:
     ]
     logger.info("Starting server: %s", cmd)
     env = WINEENV.copy()
-    env["WINEDLLOVERRIDES"] = _resolve_dll_overrides()
+    env["WINEDLLOVERRIDES"] = _resolve_dll_overrides(settings)
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd="/data/gameserver", env=env)
 
 
@@ -150,7 +148,7 @@ def _run_backup(extra_args: list[str] | None = None) -> None:
         logger.warning("Failed to spawn backup subprocess: %s", exc)
 
 
-def _make_sigterm_handler(context: ServerContext) -> Callable[[int, object], None]:
+def _make_sigterm_handler(context: ServerContext, settings: AppSettings) -> Callable[[int, object], None]:
     def handler(_signum: int, _frame: object) -> None:
         logger.info("Received SIGTERM, initiating graceful shutdown...")
         context.shutdown_requested = True
@@ -166,7 +164,7 @@ def _make_sigterm_handler(context: ServerContext) -> Callable[[int, object], Non
                 context.server_process.kill()
                 context.server_process.wait()
 
-        if is_truthy("BACKUP_COLD", default=True) and backup.backup_needed():
+        if settings.backup_cold and backup.backup_needed():
             logger.info("Creating cold shutdown backup")
             _run_backup(["--cold"])
 
@@ -310,8 +308,8 @@ def _ensure_wineprefix() -> None:
         WINE_PREFIX_INIT_MARKER.touch()
 
 
-def _setup_timezone() -> None:
-    tz = environ.get("TZ", "UTC")
+def _setup_timezone(settings: AppSettings) -> None:
+    tz = settings.tz
     zone_path = Path(f"/usr/share/zoneinfo/{tz}")
     if zone_path.exists():
         localtime = Path("/etc/localtime")
@@ -355,41 +353,40 @@ def run() -> None:
     if "BACKUP_RETENTION" in environ:
         logger.warning("BACKUP_RETENTION is ignored. Use BACKUP_KEEP_LAST, BACKUP_KEEP_DAILY, etc. instead.")
 
-    _setup_timezone()
-    _setup_directories()
+    _setup_timezone(settings)
+    _setup_directories(settings)
     _setup_x11_socket()
     _ensure_wineprefix()
 
-    install.prepare_manifests()
-    target = install.ensure_install(force=install.get_force_install())
+    install.prepare_manifests(settings)
+    target = install.ensure_install(settings)
 
-    mods.build_game_tree(target.name, puid=settings.puid, pgid=settings.pgid)
+    mods.build_game_tree(target.name, settings)
     new_config = config.generate_config()
     config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
 
-    handler = _make_sigterm_handler(context)
+    handler = _make_sigterm_handler(context, settings)
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
-    cron_expr = environ.get("BACKUP_CRON", DEFAULT_CRON)
-    if is_truthy("BACKUP_LIVE", default=True):
+    if settings.backup_live:
         scheduler_thread = threading.Thread(
             target=_scheduler_loop,
-            args=(cron_expr,),
+            args=(settings.backup_cron,),
             daemon=True,
         )
         scheduler_thread.start()
     else:
-        logger.info("Live backups disabled (BACKUP_LIVE=%s)", environ.get("BACKUP_LIVE", ""))
+        logger.info("Live backups disabled")
 
-    context.server_process = _start_server()
+    context.server_process = _start_server(settings)
 
     pid = context.server_process.pid
     PIDFILE.write_text(str(pid))
     logger.info("Server PID %s written to %s", pid, PIDFILE)
 
     log_thread: threading.Thread | None = None
-    if is_truthy("LOG_TAIL", default=False):
+    if settings.log_tail:
         log_thread = _start_log_tail_thread(stop_event)
 
     _resource_thread = start_resource_poller(pid, stop_event, interval=settings.resource_poll_interval)
@@ -406,7 +403,7 @@ def run() -> None:
     if not context.shutdown_requested:
         logger.error("Server exited unexpectedly (code %d)", exit_code)
         _cleanup_wineserver()
-        if is_truthy("BACKUP_EMERGENCY", default=True) and backup.backup_needed():
+        if settings.backup_emergency and backup.backup_needed():
             logger.info("Creating emergency backup")
             _run_backup(["--emergency"])
         PIDFILE.unlink(missing_ok=True)

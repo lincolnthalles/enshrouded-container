@@ -4,10 +4,12 @@ import argparse
 import logging
 import subprocess
 from os import getpid, nice
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, get_backup_dir, release_lock
-from enshctl.retention import load_retention_config, prune_category
+from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock
+from enshctl.retention import RetentionConfig, prune_category
+from enshctl.settings import load_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,13 +55,12 @@ _lower_priority = _make_priority_lowerer()
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backup subprocess runner")
-    parser.add_argument("--format", default=None)
-    parser.add_argument("--level", type=int, default=None)
     parser.add_argument("--cold", action="store_true", default=False)
     parser.add_argument("--emergency", action="store_true", default=False)
     args, _ = parser.parse_known_args()
 
     _lower_priority()
+    settings = load_settings()
 
     category = "live"
     if args.cold:
@@ -67,17 +68,17 @@ def main() -> int:
     elif args.emergency:
         category = "emergency"
 
-    lock_path = get_backup_dir() / LOCK_FILE
+    lock_path = Path(settings.backup_dir) / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
         logger.info("Lock held by another process, skipping backup")
         return EXIT_LOCK_HELD
 
     try:
-        result = create_backup(category=category)
+        result = create_backup(category, settings)
         if result is not None:
-            config = load_retention_config()
-            cat_dir = get_backup_dir() / category
+            config = RetentionConfig.from_settings(settings)
+            cat_dir = Path(settings.backup_dir) / category
             deleted = prune_category(cat_dir, config, dry_run=False)
             if deleted:
                 logger.info("Pruned %d backup(s) from %s", len(deleted), category)

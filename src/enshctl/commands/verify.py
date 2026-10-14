@@ -2,12 +2,10 @@
 
 import logging
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from enshctl.backup import BACKUP_DIRS, get_backup_dir, human_size, verify_archive
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from enshctl.backup import BACKUP_DIRS, human_size, verify_archive
+from enshctl.settings import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +18,8 @@ def run() -> None:
     parser.add_argument("--all", action="store_true", default=False, dest="all_mode", help="Verify all backups")
     args, _ = parser.parse_known_args()
 
-    base_dir = get_backup_dir()
+    settings = load_settings()
+    base_dir = Path(settings.backup_dir)
     targets: list[Path] = []
 
     if args.file:
