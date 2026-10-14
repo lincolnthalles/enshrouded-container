@@ -23,15 +23,15 @@ The container SHALL accept mod files via a volume at `/data/mods`. The mod volum
 - **WHEN** `/data/mods` contains `.dll` files
 - **THEN** the mod DLLs SHALL be visible at the game path AND the corresponding Wine DLL overrides SHALL be generated and applied to the server process
 
-### Requirement: unionfs-fuse layering
+### Requirement: Symlink-tree layering
 
-At container startup, the entrypoint SHALL construct `/data/gameserver/` as a symlink tree combining the pristine manifest (symlinks) and mods (symlinks overlaying manifest). The config file SHALL be a symlink to `/data/config/enshrouded_server.json`. The symlink tree SHALL be rebuilt from scratch on every start.
+At container startup, the entrypoint SHALL construct `/data/gameserver/` as a symlink tree via `build_game_tree`: wipe the target directory, create per-file symlinks to the pristine manifest, then overlay mod symlinks on top (unlinking existing destinations first). The config file SHALL be a symlink to `/data/config/enshrouded_server.json`. The symlink tree SHALL be rebuilt from scratch on every start. There is no shutdown-time tree cleanup; the next start wipes and rebuilds the directory.
 
 #### Scenario: Symlink tree constructed on startup
 
 - **WHEN** the container starts
-- **THEN** `/data/gameserver/` SHALL be wiped and rebuilt using `cp -as` from `/data/manifests/<manifest_id>/`
-- **AND** mod files from `/data/mods/` SHALL be symlinked on top using `cp -as`
+- **THEN** `/data/gameserver/` SHALL be wiped and rebuilt with per-file symlinks from `/data/manifests/<manifest_id>/`
+- **AND** mod files from `/data/mods/` SHALL be symlinked on top (existing destinations unlinked first)
 - **AND** `/data/gameserver/enshrouded_server.json` SHALL be a symlink to `/data/config/enshrouded_server.json`
 
 #### Scenario: Overlay is cleaned before mount
@@ -42,7 +42,7 @@ At container startup, the entrypoint SHALL construct `/data/gameserver/` as a sy
 #### Scenario: Original files remain accessible
 
 - **WHEN** a mod replaces a file and the mod is removed
-- **THEN** the original file from the manifest branch SHALL be visible again after the next startup
+- **THEN** the original file from the manifest SHALL be visible again after the next startup (the tree is rebuilt from scratch)
 
 #### Scenario: Runtime writes to config persist
 
@@ -55,10 +55,10 @@ At container startup, the entrypoint SHALL construct `/data/gameserver/` as a sy
 - **WHEN** the game process attempts to write to a symlinked manifest file
 - **THEN** the write SHALL fail with a permission error (manifest is read-only)
 
-#### Scenario: unmount_unionfs replaced by cleanup
+#### Scenario: No shutdown-time tree cleanup
 
 - **WHEN** the container receives SIGTERM
-- **THEN** `cleanup_game_tree` SHALL be called (no-op for symlink approach, directory cleanup is implicit on next start)
+- **THEN** no game-tree cleanup SHALL run; directory cleanup is implicit in the wipe at the next startup
 
 ### Requirement: Mod directory structure
 

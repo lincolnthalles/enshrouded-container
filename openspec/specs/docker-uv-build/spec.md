@@ -34,14 +34,14 @@ All dependencies declared in `pyproject.toml` SHALL be installed in the final Do
 
 ### Requirement: Entry point script
 
-The `pyproject.toml` SHALL declare a `[project.scripts]` entry point that maps `enshrouded-server` to the main CLI function. The Dockerfile `ENTRYPOINT` SHALL use this script name instead of `python3 /scripts/entrypoint.py`.
+The `pyproject.toml` SHALL declare a `[project.scripts]` entry point that maps `enshctl` to the main CLI function. The Dockerfile `ENTRYPOINT` SHALL use this script name instead of `python3 /scripts/entrypoint.py`.
 
 #### Scenario: Container entrypoint uses installed script
 
 - **WHEN** the container starts
-- **THEN** the `ENTRYPOINT` SHALL invoke `enshrouded-server` (the installed console script) rather than `python3 /scripts/entrypoint.py`
+- **THEN** the `ENTRYPOINT` SHALL invoke `enshctl` (the installed console script) rather than `python3 /scripts/entrypoint.py`
 
 #### Scenario: Console script resolves to correct function
 
-- **WHEN** `enshrouded-server` is executed
-- **THEN** it SHALL resolve to `enshrouded_server.__main__:main` as declared in `pyproject.toml`
+- **WHEN** `enshctl` is executed
+- **THEN** it SHALL resolve to `enshctl.__main__:main` as declared in `pyproject.toml`

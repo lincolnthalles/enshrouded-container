@@ -43,22 +43,22 @@ The container SHALL accept an `enshrouded_server.json` file mounted at `/data/co
 
 ### Requirement: Env var to JSON conversion
 
-Environment variables with the prefix `ENSHROUDED_` SHALL be converted to nested JSON keys and merged into the base configuration. The conversion SHALL be case-insensitive for the prefix but case-preserving for the key segments.
+Environment variables with the prefix `ENSHROUDED_` SHALL be converted to nested JSON keys and merged into the base configuration. The conversion SHALL be case-insensitive for the prefix. Nesting SHALL use double underscores (`__`) to separate path segments; single underscores (`_`) within a segment SHALL become lowerCamelCase. Each segment SHALL be lowercased before camel-casing, so acronyms are not preserved.
 
 #### Scenario: Simple string setting
 
 - **WHEN** `ENSHROUDED_NAME=My Server` is set
 - **THEN** the generated config SHALL contain `{"name": "My Server"}`
 
-#### Scenario: Nested setting with dot-path segments
+#### Scenario: Nested setting with double-underscore segments
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS_PLAYER_HEALTH_FACTOR=2` is set
+- **WHEN** `ENSHROUDED_GAME_SETTINGS__PLAYER_HEALTH_FACTOR=2` is set
 - **THEN** the generated config SHALL contain `{"gameSettings": {"playerHealthFactor": 2}}`
 
 #### Scenario: Boolean value detection
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS_IS_PVP=true` is set
-- **THEN** the generated config SHALL contain `{"gameSettings": {"isPVP": true}}` (boolean, not string)
+- **WHEN** `ENSHROUDED_GAME_SETTINGS__IS_PVP=true` is set
+- **THEN** the generated config SHALL contain `{"gameSettings": {"isPvp": true}}` (boolean, not string)
 
 #### Scenario: Integer value detection
 
@@ -67,12 +67,12 @@ Environment variables with the prefix `ENSHROUDED_` SHALL be converted to nested
 
 #### Scenario: Float value detection
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS_DAY_TIME_FACTOR=1.5` is set
+- **WHEN** `ENSHROUDED_GAME_SETTINGS__DAY_TIME_FACTOR=1.5` is set
 - **THEN** the generated config SHALL contain `{"gameSettings": {"dayTimeFactor": 1.5}}`
 
 #### Scenario: JSON array value
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS_ALLOWED_ITEMS=["sword","shield"]` is set
+- **WHEN** `ENSHROUDED_GAME_SETTINGS__ALLOWED_ITEMS=["sword","shield"]` is set
 - **THEN** the generated config SHALL contain `{"gameSettings": {"allowedItems": ["sword", "shield"]}}`
 
 #### Scenario: Env var without prefix is ignored
@@ -82,8 +82,13 @@ Environment variables with the prefix `ENSHROUDED_` SHALL be converted to nested
 
 #### Scenario: Config is schema-agnostic
 
-- **WHEN** `ENSHROUDED_FUTURE_SETTING_NEW_FEATURE=enabled` is set
+- **WHEN** `ENSHROUDED_FUTURE_SETTING__NEW_FEATURE=enabled` is set
 - **THEN** the generated config SHALL contain `{"futureSetting": {"newFeature": "enabled"}}` regardless of whether the current game server schema defines that key
+
+#### Scenario: Single underscore stays within one segment
+
+- **WHEN** `ENSHROUDED_GAME_SETTINGS_PLAYER_HEALTH_FACTOR=2` is set (single underscores, no `__`)
+- **THEN** the generated config SHALL contain the flat key `{"gameSettingsPlayerHealthFactor": 2}` and SHALL NOT create a nested `gameSettings` object
 
 ### Requirement: Config file placement
 
@@ -101,22 +106,27 @@ The generated `enshrouded_server.json` SHALL be written to the config directory 
 
 ### Requirement: Naming convention transformation
 
-The segment transformation SHALL convert SCREAMING_SNAKE_CASE to lowerCamelCase using the following rules: split on `_`, lowercase the first segment entirely, then capitalize the first letter of each subsequent segment.
+The segment transformation SHALL convert SCREAMING_SNAKE_CASE to lowerCamelCase using the following rules: split a segment on `_`, lowercase the entire segment, keep the first word as-is, then capitalize the first letter of each subsequent word. Acronyms are not preserved. Nesting across segments requires the `__` separator; a single `_` never creates nesting.
 
 #### Scenario: Single segment
 
 - **WHEN** the key after prefix removal is `NAME`
 - **THEN** the JSON key SHALL be `name`
 
-#### Scenario: Multi-segment
+#### Scenario: Multi-word segment
 
-- **WHEN** the key after prefix removal is `GAME_SETTINGS_PLAYER_HEALTH_FACTOR`
+- **WHEN** the segment after prefix removal is `SLOT_COUNT`
+- **THEN** the JSON key SHALL be `slotCount`
+
+#### Scenario: Multi-segment nesting
+
+- **WHEN** the key after prefix removal is `GAME_SETTINGS__PLAYER_HEALTH_FACTOR`
 - **THEN** the JSON path SHALL be `gameSettings.playerHealthFactor`
 
-#### Scenario: Acronym preservation
+#### Scenario: Acronyms lowercased
 
-- **WHEN** the key after prefix removal is `SERVER_IP`
-- **THEN** the JSON key SHALL be `serverIP`
+- **WHEN** the key after prefix removal is `IP`
+- **THEN** the JSON key SHALL be `ip` (e.g. `ENSHROUDED_IP` maps to the game's `ip` field)
 
 #### Scenario: Lowercase input
 

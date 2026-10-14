@@ -26,7 +26,7 @@ The orchestrator SHALL recursively scan `/data/mods` for files with a `.dll` ext
 #### Scenario: Mixed mod DLLs
 
 - **WHEN** `/data/mods` contains both `winhttp.dll` and `dinput8.dll`
-- **THEN** the generated `WINEDLLOVERRIDES` SHALL include `mscoree,mshtml=,winhttp=n,b,dinput8=n`
+- **THEN** the generated `WINEDLLOVERRIDES` SHALL be `mscoree,mshtml=,dinput8=n,winhttp=n,b` (baseline first, entries sorted alphabetically)
 
 #### Scenario: User-provided WINEDLLOVERRIDES overrides generated value
 

@@ -30,7 +30,7 @@ The system SHALL provide functions to read CPU ticks and memory (RSS) from `/pro
 
 ### Requirement: Resource poller thread
 
-The system SHALL provide a `start_resource_poller(server_pid, stop_event, settings)` function that spawns a daemon thread logging CPU and memory usage for both `enshctl` and the game server process tree at a configurable interval.
+The system SHALL provide a `start_resource_poller(server_pid, stop_event, interval=60)` function that spawns a daemon thread logging CPU and memory usage for both `enshctl` and the game server process tree at the given interval in seconds. The `start` subcommand SHALL pass `settings.resource_poll_interval` as the interval.
 
 #### Scenario: Poller logs resource usage
 

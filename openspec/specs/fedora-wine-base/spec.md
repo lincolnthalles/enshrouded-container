@@ -1,31 +1,31 @@
 ## Purpose
 
-Fedora-based container image providing Wine 11 staging as a dependency for GE-Proton and winetricks.
+Fedora-based container image providing plain Wine as the game execution runtime.
 
 ## Requirements
 
-### Requirement: Wine 11 runtime
+### Requirement: Plain Wine runtime
 
-The container SHALL provide Wine 11 (staging branch) via the WineHQ Fedora repository as a dependency for GE-Proton and winetricks. The Wine prefix at `/wine` SHALL be initialized with `wineboot --init` for winetricks dependency installation. GE-Proton at `/opt/proton/` SHALL be the primary runtime for game execution.
+The container SHALL provide plain Wine from the Fedora repositories (`wine-core`, `wine-common`, `wine-ldap`). The Wine prefix at `/data/wineprefix` SHALL be initialized with `wineboot --init` on first start. The game server SHALL be launched via `wine` (wrapped in `xvfb-run` and `runuser -u steam`), not via Proton.
 
 #### Scenario: Wine prefix is initialized
 
-- **WHEN** the container is built
-- **THEN** a Wine prefix SHALL be created at `/wine` with `winearch=win64` for winetricks operations
+- **WHEN** the container starts and `/data/wineprefix/.wineboot-completed` does not exist
+- **THEN** `wine wineboot --init` SHALL run as the `steam` user under `xvfb-run`
 
-#### Scenario: Winetricks dependencies are installed
+#### Scenario: Wine prefix is reused once initialized
 
-- **WHEN** the container is built
-- **THEN** corefonts, vcrun2019, vcrun2022, and vcrun2026 SHALL be installed in the system Wine prefix at `/wine`
+- **WHEN** the container starts and `/data/wineprefix/.wineboot-completed` exists
+- **THEN** prefix initialization SHALL be skipped
 
-#### Scenario: Proton is the game execution runtime
+#### Scenario: Plain Wine is the game execution runtime
 
 - **WHEN** the game server is started
-- **THEN** the server SHALL be launched via `/opt/proton/proton run` rather than `wine`
+- **THEN** the server SHALL be launched via `wine` (`/usr/bin/runuser -u steam -- xvfb-run … wine <exe>`) rather than Proton
 
 ### Requirement: Image contains required packages
 
-The container image SHALL include: `winehq-staging`, `winetricks`, `zstd`, `python3`, `python3-pip`, `dotnet-runtime-8.0`, `curl`, `unzip`, `procps-ng`, `rsync`, `fuse-libs`, `funionfs`, `xorg-x11-server-Xvfb`, `glibc-langpack-en`, `util-linux`, `cabextract`, `dbus`, `tar`.
+The container image SHALL include: `python3`, `python3-pip` (build only), `procps-ng`, `util-linux`, `xorg-x11-server-Xvfb`, `wine-core`, `wine-common`, `wine-ldap`. The `Dockerfile` SHALL NOT require WineHQ repositories, `winetricks`, GE-Proton, or .NET runtimes in the final stage.
 
 #### Scenario: Image builds successfully
 
@@ -35,11 +35,11 @@ The container image SHALL include: `winehq-staging`, `winetricks`, `zstd`, `pyth
 #### Scenario: Image contains required packages
 
 - **WHEN** the image is inspected
-- **THEN** the following packages SHALL be present: `winehq-staging`, `winetricks`, `zstd`, `python3`, `python3-pip`, `dotnet-runtime-8.0`, `curl`, `unzip`, `procps-ng`, `dbus`, `tar`
+- **THEN** the following packages SHALL be present: `python3`, `procps-ng`, `util-linux`, `xorg-x11-server-Xvfb`, `wine-core`, `wine-common`, `wine-ldap`
 
 ### Requirement: Steam user and directory structure
 
-The container SHALL create a non-root `steam` user (UID/GID configurable via `PUID`/`PGID` env vars, default 1000/1000) and the following directories: `/wine`, `/home/steam/.proton`, `/home/steam/steamcmd`, `/home/steam/.steam`, `/data/game`, `/data/mods`, `/data/saves`, `/data/backups`, `/data/logs`, `/data/.unionfs-work`, `/config`.
+The container SHALL create a non-root `steam` user (UID/GID configurable via `PUID`/`PGID` env vars, default 1000/1000) and the following directories: `/data/backups`, `/data/config`, `/data/logs`, `/data/manifests`, `/data/mods`, `/data/saves`, `/data/wineprefix`. All data directories SHALL be owned by `steam:steam`.
 
 #### Scenario: Steam user exists
 

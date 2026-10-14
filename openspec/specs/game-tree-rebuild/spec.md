@@ -11,13 +11,13 @@ At container startup, the entrypoint SHALL construct `/data/gameserver/` as a sy
 #### Scenario: Fresh start with manifest files
 
 - **WHEN** the container starts and a manifest is installed at `/data/manifests/<version>/`
-- **THEN** all files from the manifest SHALL be symlinked into `/data/gameserver/` using `cp -as`
+- **THEN** all files from the manifest SHALL be symlinked into `/data/gameserver/` using pure-Python `symlink_to` calls (no `cp -as` subprocess)
 - **AND** `/data/gameserver/enshrouded_server.json` SHALL be a symlink to `/data/config/enshrouded_server.json`
 
 #### Scenario: Mods override manifest files
 
 - **WHEN** the container starts and `/data/mods/` contains files
-- **THEN** mod files SHALL be symlinked over the manifest symlinks using `cp -as`
+- **THEN** mod files SHALL be symlinked over the manifest symlinks (existing destinations unlinked first, then `symlink_to`)
 - **AND** files present in both manifest and mods SHALL resolve to the mod version
 
 #### Scenario: Wipe on every start
