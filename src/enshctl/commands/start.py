@@ -132,13 +132,19 @@ def _stream_output(proc: subprocess.Popen[bytes]) -> None:
     proc.stdout.close()
 
 
-def _run_backup(extra_args: list[str] | None = None) -> None:
+def _run_backup(extra_args: list[str] | None = None, *, detach: bool = False) -> None:
     """Run a backup subprocess. Pass extra_args like ["--cold"] or ["--emergency"]."""
     try:
         cmd = ["enshctl", "backup"]
         if extra_args:
             cmd.extend(extra_args)
-        result = subprocess.run(cmd, capture_output=True, check=False, env={**environ, "ORCHESTRATOR_LOG_FILE": ""})
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            check=False,
+            env={**environ, "ORCHESTRATOR_LOG_FILE": ""},
+            start_new_session=detach,
+        )
         output = (result.stdout + result.stderr).decode(errors="replace").strip()
         if result.returncode == 0:
             for line in output.splitlines():
@@ -152,29 +158,37 @@ def _run_backup(extra_args: list[str] | None = None) -> None:
         logger.warning("Failed to spawn backup subprocess: %s", exc)
 
 
-def _make_sigterm_handler(context: ServerContext, settings: AppSettings) -> Callable[[int, object], None]:
+def _make_sigterm_handler(
+    context: ServerContext, settings: AppSettings, stop_event: threading.Event
+) -> Callable[[int, object], None]:
     def handler(_signum: int, _frame: object) -> None:
+        if context.shutdown_requested:
+            return
         logger.info("Received SIGTERM, initiating graceful shutdown...")
         context.shutdown_requested = True
+        stop_event.set()
 
         if context.server_process and context.server_process.poll() is None:
             logger.info("Sending SIGINT to server process")
-            _cleanup_wineserver()
-
             context.server_process.send_signal(signal.SIGINT)
             try:
-                context.server_process.wait(timeout=1)
+                context.server_process.wait(timeout=settings.shutdown_timeout)
             except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout
+                )
                 context.server_process.kill()
                 context.server_process.wait()
 
-        if settings.backup_cold and backup.backup_needed():
-            logger.info("Creating cold shutdown backup")
-            _run_backup(["--cold"])
-
-        PIDFILE.unlink(missing_ok=True)
-        logger.info("Shutdown complete")
-        sys.exit(0)
+        try:
+            if settings.backup_cold and backup.backup_needed():
+                logger.info("Creating cold shutdown backup")
+                _run_backup(["--cold", "--wait", str(settings.shutdown_backup_wait)], detach=True)
+        finally:
+            _cleanup_wineserver()
+            PIDFILE.unlink(missing_ok=True)
+            logger.info("Shutdown complete")
+            sys.exit(0)
 
     return handler
 
@@ -374,14 +388,15 @@ def parse_cron(expr: str) -> float | None:
     return 1200.0
 
 
-def _scheduler_loop(cron_expr: str) -> None:
+def _scheduler_loop(cron_expr: str, stop_event: threading.Event) -> None:
     """Run scheduled backups as subprocesses. First backup runs immediately."""
     _run_backup()
-    while True:
+    while not stop_event.is_set():
         interval = parse_cron(cron_expr)
         if interval is None:
             interval = 1200.0
-        time.sleep(interval)
+        if stop_event.wait(interval):
+            break
         _run_backup()
 
 
@@ -414,14 +429,14 @@ def run() -> None:
     new_config = config.generate_config()
     config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
 
-    handler = _make_sigterm_handler(context, settings)
+    handler = _make_sigterm_handler(context, settings, stop_event)
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
     if settings.backup_live:
         scheduler_thread = threading.Thread(
             target=_scheduler_loop,
-            args=(settings.backup_cron,),
+            args=(settings.backup_cron, stop_event),
             daemon=True,
         )
         scheduler_thread.start()
@@ -454,6 +469,6 @@ def run() -> None:
         _cleanup_wineserver()
         if settings.backup_emergency and backup.backup_needed():
             logger.info("Creating emergency backup")
-            _run_backup(["--emergency"])
+            _run_backup(["--emergency"], detach=True)
         PIDFILE.unlink(missing_ok=True)
         sys.exit(exit_code)

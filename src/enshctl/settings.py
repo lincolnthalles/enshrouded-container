@@ -148,6 +148,10 @@ class AppSettings:
     log_tail: bool = field(default_factory=lambda: _env_bool("LOG_TAIL", default=False))
     resource_poll_interval: int = field(default_factory=lambda: _env_int("RESOURCE_POLL_INTERVAL", 60))
 
+    # Shutdown
+    shutdown_timeout: int = field(default_factory=lambda: _env_int("SHUTDOWN_TIMEOUT", 60))
+    shutdown_backup_wait: int = field(default_factory=lambda: _env_int("SHUTDOWN_BACKUP_WAIT", 120))
+
     # Orchestrator logging
     orchestrator_log_file: str = field(default_factory=lambda: _env_str("ORCHESTRATOR_LOG_FILE", ""))
     orchestrator_log_level: str = field(default_factory=lambda: _env_str("ORCHESTRATOR_LOG_LEVEL", "WARNING"))

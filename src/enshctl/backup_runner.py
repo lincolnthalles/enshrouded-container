@@ -3,6 +3,7 @@
 import argparse
 import logging
 import subprocess
+import time
 from os import getpid, nice
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,6 +60,12 @@ def main() -> int:
     parser.add_argument("--level", type=int, default=None)
     parser.add_argument("--cold", action="store_true", default=False)
     parser.add_argument("--emergency", action="store_true", default=False)
+    parser.add_argument(
+        "--wait",
+        type=int,
+        default=0,
+        help="Seconds to wait for the backup lock before giving up (0 = no wait)",
+    )
     args, _ = parser.parse_known_args()
 
     _lower_priority()
@@ -74,6 +81,11 @@ def main() -> int:
 
     lock_path = Path(settings.backup_dir) / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
+    if fd is None and args.wait > 0:
+        deadline = time.monotonic() + args.wait
+        while fd is None and time.monotonic() < deadline:
+            time.sleep(1)
+            fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
         logger.info("Lock held by another process, skipping backup")
         return EXIT_LOCK_HELD

@@ -16,7 +16,7 @@ The `start` command SHALL orchestrate the full server lifecycle by delegating to
 #### Scenario: Backup spawning unified
 
 - **WHEN** a scheduled backup or a cold/emergency backup is triggered
-- **THEN** the same `_run_backup(extra_args=None|list[str])` function SHALL be used for both
+- **THEN** the same `_run_backup(extra_args=None|list[str], detach=False)` function SHALL be used for all paths, with cold and emergency backups passing `detach=True` so the child survives the parent's process group (`start_new_session=True`)
 
 ### Requirement: Startup sequence
 
@@ -40,22 +40,37 @@ The entrypoint SHALL execute the following startup sequence in order: (1) resolv
 
 ### Requirement: Graceful shutdown
 
-The `start` command SHALL handle `SIGTERM` by sending `SIGINT` to the server process, waiting for in-progress backups, creating a cold backup if configured, and cleaning up. The `_make_sigterm_handler` function SHALL remain in `commands/start.py` as it is tightly coupled to the server lifecycle.
+The `start` command SHALL handle `SIGTERM` by stopping the backup scheduler, sending `SIGINT` to the server process, waiting up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit, waiting up to `SHUTDOWN_BACKUP_WAIT` (default 120s) for any in-progress backup to release the lock, creating a detached cold backup if configured, and cleaning up Wine last. The handler SHALL ignore repeat signals once shutdown is in progress. The `_make_sigterm_handler` function SHALL remain in `commands/start.py` as it is tightly coupled to the server lifecycle.
 
 #### Scenario: SIGTERM triggers cold backup
 
 - **WHEN** `SIGTERM` is received and `BACKUP_COLD=1` and saves exist
-- **THEN** a cold backup subprocess SHALL be spawned via the unified `_run_backup(["--cold"])` function
+- **THEN** a detached cold backup subprocess SHALL be spawned via `_run_backup(["--cold", "--wait", "<SHUTDOWN_BACKUP_WAIT>"], detach=True)`
+
+#### Scenario: Shutdown order is SIGINT, backup, Wine cleanup
+
+- **WHEN** the container receives SIGTERM with a running server and `BACKUP_COLD=1`
+- **THEN** SIGINT SHALL be sent first, the cold backup SHALL complete second, and Wine server cleanup SHALL run last
 
 #### Scenario: Graceful shutdown without cold backup
 
 - **WHEN** the container receives SIGTERM and `BACKUP_COLD=0`
-- **THEN** the game server SHALL receive SIGINT and have up to 60 seconds to shut down, with no backup created
+- **THEN** the game server SHALL receive SIGINT and have up to `SHUTDOWN_TIMEOUT` seconds to shut down, with no backup created
 
 #### Scenario: Force kill after timeout
 
-- **WHEN** the game server does not exit within 60 seconds after SIGINT
-- **THEN** the entrypoint SHALL send SIGKILL to the process, then kill Wine server
+- **WHEN** the game server does not exit within `SHUTDOWN_TIMEOUT` seconds after SIGINT
+- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup and Wine cleanup steps
+
+#### Scenario: Cold backup waits for in-progress backup
+
+- **WHEN** the container receives SIGTERM and a scheduled backup subprocess holds the lock
+- **THEN** the cold backup SHALL wait up to `SHUTDOWN_BACKUP_WAIT` seconds for the lock instead of skipping, and SHALL skip with a warning only if the wait expires
+
+#### Scenario: Repeat signal ignored
+
+- **WHEN** a second SIGTERM or SIGINT arrives while shutdown is already in progress
+- **THEN** the handler SHALL return immediately without restarting the sequence
 
 ### Requirement: Emergency backup on unexpected exit
 

@@ -29,8 +29,10 @@ def test_server_context_state_isolation() -> None:
 
 
 def test_sigterm_handler_sets_shutdown_flag() -> None:
+    import threading
+
     ctx = ServerContext()
-    handler = _make_sigterm_handler(ctx, AppSettings())
+    handler = _make_sigterm_handler(ctx, AppSettings(), threading.Event())
 
     assert ctx.shutdown_requested is False
     with pytest.raises(SystemExit):
@@ -38,13 +40,15 @@ def test_sigterm_handler_sets_shutdown_flag() -> None:
 
 
 def test_sigterm_handler_with_running_process() -> None:
+    import threading
+
     ctx = ServerContext()
     # Create a no-op mock process
     mock_proc = subprocess.Popen(["/usr/bin/sleep", "0"], stdout=subprocess.PIPE)
     mock_proc.wait()  # Ensure it exits immediately
     ctx.server_process = mock_proc
 
-    handler = _make_sigterm_handler(ctx, AppSettings())
+    handler = _make_sigterm_handler(ctx, AppSettings(), threading.Event())
     with pytest.raises(SystemExit):
         handler(15, None)
     assert ctx.shutdown_requested is True

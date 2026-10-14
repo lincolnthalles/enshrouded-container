@@ -112,7 +112,7 @@ When the container receives SIGTERM and `BACKUP_COLD=1`, the entrypoint SHALL sp
 #### Scenario: Cold backup waits for in-progress backup
 
 - **WHEN** the container receives SIGTERM and a scheduled backup subprocess is running
-- **THEN** the handler SHALL wait for the scheduled backup to finish before spawning the cold backup
+- **THEN** the handler SHALL wait up to `SHUTDOWN_BACKUP_WAIT` seconds (default 120s) for the scheduled backup to finish before spawning the cold backup, and SHALL skip the cold backup with a warning if the wait expires
 
 #### Scenario: Cold backup disabled
 

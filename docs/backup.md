@@ -59,6 +59,19 @@ Boolean values: `1`/`true`/`on`/`yes` = enabled, `0`/`false`/`off`/`no` = disabl
 | ------------- | -------------- | ---------------------------------------- |
 | `BACKUP_CRON` | `*/60 * * * *` | Cron expression for live backup interval |
 
+### Graceful shutdown
+
+On SIGTERM the orchestrator sends SIGINT to the game server, waits up to
+`SHUTDOWN_TIMEOUT` for it to exit (SIGKILL after), waits up to
+`SHUTDOWN_BACKUP_WAIT` for any in-progress backup to release the lock, then
+runs the cold backup detached from the parent process group before cleaning
+up Wine. The compose `stop_grace_period` must cover the sum of both waits.
+
+| Env var                | Default | Description                                                     |
+| ---------------------- | ------- | --------------------------------------------------------------- |
+| `SHUTDOWN_TIMEOUT`     | `60`    | Seconds to wait for the game server to exit after SIGINT        |
+| `SHUTDOWN_BACKUP_WAIT` | `120`   | Seconds to wait for the backup lock before skipping cold backup |
+
 ### Format & compression
 
 | Env var         | Default         | Description                                             |

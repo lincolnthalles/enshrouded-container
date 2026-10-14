@@ -3,6 +3,7 @@ services:
     image: ghcr.io/lincolnthalles/enshrouded-container:latest
     container_name: enshrouded-server
     restart: on-failure:5
+    stop_grace_period: 180s
     network_mode: host
     # This likely won't work:
     # ports:
