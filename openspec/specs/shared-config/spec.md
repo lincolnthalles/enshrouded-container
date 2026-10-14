@@ -1,3 +1,7 @@
+## Purpose
+
+Centralized configuration for the enshctl orchestrator: filesystem path constants and environment-derived settings.
+
 ## Requirements
 
 ### Requirement: Centralized path constants
@@ -16,12 +20,12 @@ The system SHALL define all filesystem path constants (`SAVE_DIR`, `MANIFESTS_DI
 
 ### Requirement: Typed settings dataclass
 
-The system SHALL provide a frozen dataclass `AppSettings` that holds all environment-variable-derived configuration. The dataclass SHALL be populated by a `load_settings()` function that reads `os.environ` once. All modules SHALL accept settings via function parameters or import from the settings module rather than calling `os.environ.get()` directly.
+The system SHALL provide a frozen dataclass `AppSettings` that holds all environment-variable-derived configuration. The dataclass SHALL be populated by a `load_settings()` function that reads `os.environ` once per call. All modules SHALL accept settings via function parameters or import from the settings module rather than calling `os.environ.get()` directly.
 
 #### Scenario: Settings loaded once at startup
 
 - **WHEN** the `start` command runs
-- **THEN** `load_settings()` SHALL be called once and the resulting `AppSettings` instance SHALL be passed to subsystems
+- **THEN** `load_settings()` SHALL be called once per process entrypoint and the resulting `AppSettings` instance SHALL be passed to subsystems; the backup subprocess SHALL reload settings from its inherited environment
 
 #### Scenario: Settings are frozen
 
@@ -32,6 +36,20 @@ The system SHALL provide a frozen dataclass `AppSettings` that holds all environ
 
 - **WHEN** a test needs custom settings
 - **THEN** it SHALL construct an `AppSettings` instance directly with test values, without modifying `os.environ`
+
+### Requirement: Settings loaded once per process entrypoint
+
+Each process entrypoint SHALL call `load_settings()` once and pass the resulting `AppSettings` instance to subsystems via function parameters. Across a subprocess seam, the child process SHALL reload settings from its inherited environment rather than receiving them over IPC.
+
+#### Scenario: Start command loads once
+
+- **WHEN** the `start` command runs
+- **THEN** `load_settings()` SHALL be called once in `start.run()` and the resulting `AppSettings` instance SHALL be passed to subsystems
+
+#### Scenario: Reload across the backup subprocess seam
+
+- **WHEN** `start` spawns `enshctl backup` as a subprocess
+- **THEN** the child SHALL call `load_settings()` on its inherited environment, observing the same values the parent configured
 
 ### Requirement: PUID/PGID resolved once
 
