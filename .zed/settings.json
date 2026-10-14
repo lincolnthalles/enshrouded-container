@@ -10,7 +10,8 @@
     "**/.pytest_cache",
     "**/.ruff_cache",
     "**/.venv",
-    "**/__pycache__"
+    "**/__pycache__",
+    "..."
   ],
   "file_types": {
     "GitHub Actions": [
