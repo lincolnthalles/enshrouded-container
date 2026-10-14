@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from enshctl.backup import human_size, verify_archive
-from enshctl.backup.catalog import scan_all, select
+from enshctl.backup.catalog import scan_all, scan_stray, select
 from enshctl.settings import load_settings
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ def run() -> None:
     settings = load_settings()
     base_dir = Path(settings.backup_dir)
     targets: list[Path] = []
+    skipped: list[Path] = []
 
     if args.file:
         found = select(base_dir, file=args.file)
@@ -33,6 +34,12 @@ def run() -> None:
     else:
         for info in scan_all(base_dir):
             targets.append(info.path)
+        skipped = scan_stray(base_dir)
+        for stray in skipped:
+            logger.warning("Skipping non-backup archive (unexpected filename): %s", stray.name)
+
+    if skipped:
+        logger.info("Skipped %d non-backup archive(s)", len(skipped))
 
     if not targets:
         logger.info("No backups to verify")

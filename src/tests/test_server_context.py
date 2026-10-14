@@ -1,11 +1,13 @@
 """Tests for ServerContext and signal handler integration."""
 
 import subprocess
+from dataclasses import replace
 from subprocess import Popen
 from typing import cast
+from unittest.mock import patch
 
 import pytest
-from enshctl.commands.start import ServerContext, _make_sigterm_handler
+from enshctl.commands.start import ServerContext, _make_sigterm_handler, _resolve_dll_overrides
 from enshctl.settings import AppSettings
 
 
@@ -46,3 +48,34 @@ def test_sigterm_handler_with_running_process() -> None:
     with pytest.raises(SystemExit):
         handler(15, None)
     assert ctx.shutdown_requested is True
+
+
+class TestResolveDllOverrides:
+    """Tests for _resolve_dll_overrides() user-provided value handling."""
+
+    def test_empty_env_value_suppresses_generated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # GIVEN WINEDLLOVERRIDES set to an empty string
+        monkeypatch.setenv("WINEDLLOVERRIDES", "")
+        # WHEN resolving overrides
+        # THEN the empty value passes through verbatim instead of generated overrides
+        assert _resolve_dll_overrides(AppSettings()) == ""
+
+    def test_unset_env_value_generates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # GIVEN WINEDLLOVERRIDES unset
+        monkeypatch.delenv("WINEDLLOVERRIDES", raising=False)
+        # WHEN resolving overrides
+        # THEN generated overrides apply
+        with patch("enshctl.commands.start.mods.generate_dll_overrides", return_value="mscoree,mshtml=,mylib=n"):
+            assert _resolve_dll_overrides(AppSettings()) == "mscoree,mshtml=,mylib=n"
+
+    def test_nonempty_env_value_used_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # GIVEN WINEDLLOVERRIDES set to a custom value
+        monkeypatch.setenv("WINEDLLOVERRIDES", "dinput8=n")
+        settings = replace(AppSettings(), winedlloverrides="stale")
+        # WHEN resolving overrides
+        # THEN the raw env value wins verbatim over settings and generation
+        with patch(
+            "enshctl.commands.start.mods.generate_dll_overrides",
+            side_effect=AssertionError("must not generate"),
+        ):
+            assert _resolve_dll_overrides(settings) == "dinput8=n"

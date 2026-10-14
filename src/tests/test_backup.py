@@ -3,9 +3,9 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
 from enshctl.backup import (
     BackupFormat,
     _local_now,
@@ -18,9 +18,6 @@ from enshctl.backup import (
 )
 from enshctl.backup.catalog import scan_all, scan_dir, select, select_backup
 from enshctl.settings import AppSettings
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_backup_format_zstd() -> None:
@@ -638,3 +635,36 @@ class TestCreateBackupOverrides:
             # THEN level 0 reaches the compressor, not the configured 9
             mock_compress.assert_called_once_with(saves, result, 0)
             assert result is not None
+
+
+class TestBackupRunnerFormatFlag:
+    """Tests for backup_runner --format case handling."""
+
+    def test_uppercase_format_accepted(self, tmp_path: Path) -> None:
+        import enshctl.backup_runner as br
+
+        # GIVEN an uppercase --format flag
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        with (
+            patch("sys.argv", ["prog", "--format", "ZSTD"]),
+            patch.object(br, "load_settings", return_value=settings),
+            patch.object(br, "acquire_lock", return_value=None),
+            patch.object(br, "create_backup") as mock_create,
+        ):
+            # WHEN running the backup runner
+            # THEN parsing succeeds and execution reaches the lock check
+            assert br.main() == br.EXIT_LOCK_HELD
+            mock_create.assert_not_called()
+
+    def test_invalid_format_rejected(self) -> None:
+        import enshctl.backup_runner as br
+
+        # GIVEN an unrecognized --format value
+        # WHEN running the backup runner
+        # THEN argparse exits 2
+        with (
+            patch("sys.argv", ["prog", "--format", "lz4"]),
+            pytest.raises(SystemExit) as exc,
+        ):
+            br.main()
+        assert exc.value.code == 2

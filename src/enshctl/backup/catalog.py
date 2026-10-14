@@ -155,6 +155,22 @@ def scan_all(base_dir: Path, category: str | None = None, when: timedelta | None
     return results
 
 
+def scan_stray(base_dir: Path, category: str | None = None) -> list[Path]:
+    """List archive files that do not match the backup filename grammar, sorted by name."""
+    results: list[Path] = []
+    categories = [category] if category else list(BACKUP_DIRS)
+    for cat in categories:
+        cat_dir = base_dir / cat
+        if not cat_dir.exists():
+            continue
+        for p in sorted(cat_dir.iterdir(), key=lambda x: x.name):
+            if not p.is_file() or parse_backup_filename(p.name) is not None:
+                continue
+            if p.suffix in (".zst", ".gz", ".zip"):
+                results.append(p)
+    return results
+
+
 def select(base_dir: Path, file: str | None = None, when: str | None = None) -> Path | None:
     """Select a backup by filename or `--when` direction grammar."""
     if file:

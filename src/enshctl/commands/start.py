@@ -89,6 +89,10 @@ def _setup_x11_socket() -> None:
 
 
 def _resolve_dll_overrides(settings: AppSettings) -> str:
+    user_override = environ.get("WINEDLLOVERRIDES")
+    if user_override is not None:
+        logger.info("Using user-provided WINEDLLOVERRIDES: %s", user_override)
+        return user_override
     if settings.winedlloverrides is not None:
         logger.info("Using user-provided WINEDLLOVERRIDES: %s", settings.winedlloverrides)
         return settings.winedlloverrides

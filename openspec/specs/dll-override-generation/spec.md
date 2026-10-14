@@ -30,8 +30,13 @@ The orchestrator SHALL recursively scan `/data/mods` for files with a `.dll` ext
 
 #### Scenario: User-provided WINEDLLOVERRIDES overrides generated value
 
-- **WHEN** the container receives `WINEDLLOVERRIDES` as an environment variable at runtime
+- **WHEN** the container receives `WINEDLLOVERRIDES` as an environment variable at runtime, including an empty or whitespace-only value
 - **THEN** the user-provided value SHALL be used verbatim and the generated value SHALL NOT be applied
+
+#### Scenario: Empty WINEDLLOVERRIDES suppresses overrides
+
+- **WHEN** `WINEDLLOVERRIDES` is set to an empty string
+- **THEN** the effective `WINEDLLOVERRIDES` SHALL be the empty string and no generated entries SHALL be applied
 
 #### Scenario: Startup logging of overrides
 

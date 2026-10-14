@@ -85,6 +85,16 @@ Backups SHALL support configurable compression formats (zstd, gzip, zip) and com
 - **WHEN** `enshctl backup --format zstd --level 19` is executed
 - **THEN** the backup SHALL use zstd compression at level 19
 
+#### Scenario: Format flag case-insensitive
+
+- **WHEN** `enshctl backup --format ZSTD` is executed
+- **THEN** the backup SHALL use zstd compression instead of exiting with an error
+
+#### Scenario: Invalid format flag rejected
+
+- **WHEN** `enshctl backup --format lz4` is executed
+- **THEN** the command SHALL exit with code 2
+
 ### Requirement: Shutdown-triggered backup
 
 When the container receives SIGTERM and `BACKUP_COLD=1`, the entrypoint SHALL spawn a cold backup subprocess (`enshctl backup --cold`) in its own session (`start_new_session=True`) so it survives the parent's SIGTERM. The cold backup SHALL run after the game server exits and after any in-progress scheduled backup completes, but BEFORE Wine server cleanup.

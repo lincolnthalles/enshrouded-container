@@ -423,7 +423,12 @@ def download_version(
     manifest_file = _ensure_manifest_for_version(manifest_id, settings)
     depot_keys_path = MANIFESTS_DIR / "depot.keys"
     has_manifest_support = check_manifestfile_support()
-    use_auth_free = depot_keys_path.exists() and manifest_file.exists() and has_manifest_support
+    use_auth_free = (
+        not effective_username
+        and depot_keys_path.exists()
+        and manifest_file.exists()
+        and has_manifest_support
+    )
 
     if settings.version == "latest":
         config = DownloadConfig()

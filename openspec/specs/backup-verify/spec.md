@@ -45,3 +45,17 @@ The verify command SHALL exit with code 0 if all backups are OK, or code 1 if at
 
 - **WHEN** at least one backup fails decompression
 - **THEN** exit code SHALL be 1 and the corrupt backup SHALL be listed in the output
+
+### Requirement: Stray archives reported as skipped in verify-all
+
+`verify` without `--file` SHALL verify every archive matching the backup filename grammar and SHALL report non-grammar archive files (suffix `.zst`, `.gz`, `.zip`, or `.tar.zst`/`.tar.gz`) present in category directories as skipped: each skipped filename SHALL be logged at WARNING level, and the command output SHALL include a skipped count. Skipped files SHALL NOT affect the exit code; exit code SHALL remain 0 when all verified archives are OK and 1 when at least one verified archive is CORRUPT.
+
+#### Scenario: Stray archive skipped with warning
+
+- **WHEN** `live/` contains `enshrouded-20260529-120000.tar.zst` (valid) and `manual-copy.zip` (non-grammar)
+- **THEN** the valid archive SHALL be verified and reported OK/CORRUPT, and `manual-copy.zip` SHALL be logged at WARNING as skipped with a skipped count of 1 in the output
+
+#### Scenario: Only stray archives present
+
+- **WHEN** category directories contain only non-grammar archives
+- **THEN** the command SHALL report zero verified backups plus the skipped count, and exit code SHALL be 0

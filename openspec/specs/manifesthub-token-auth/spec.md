@@ -63,12 +63,17 @@ The ManifestHub API base URL SHALL be overridable via the `MANIFESTHUB_API_URL` 
 
 ### Requirement: Auth-free DepotDownloader invocation
 
-When `depot.keys` and the required `.manifest` file exist, DepotDownloader SHALL be invoked with `-depotkeys` and `-manifestfile` flags for auth-free download from Steam's CDN.
+When `depot.keys` and the required `.manifest` file exist and no explicit Steam username was supplied, DepotDownloader SHALL be invoked with `-depotkeys` and `-manifestfile` flags for auth-free download from Steam's CDN. When an explicit Steam username is supplied via `--steam-username` or the `STEAM_USERNAME` env var (non-empty after stripping whitespace), DepotDownloader SHALL be invoked with `-username`/`-password` flags instead, even when `depot.keys` and the manifest file exist.
 
 #### Scenario: Download with depot.keys and manifest file
 
-- **WHEN** `/data/manifests/depot.keys` exists and the `.manifest` file for the requested version exists
+- **WHEN** `/data/manifests/depot.keys` exists and the `.manifest` file for the requested version exists and no Steam username was supplied
 - **THEN** DepotDownloader SHALL be invoked with `-depotkeys /data/manifests/depot.keys -manifestfile /data/manifests/{depotId}_{manifestId}.manifest` instead of `-username`/`-password` flags
+
+#### Scenario: Explicit credentials override auth-free inputs
+
+- **WHEN** `--steam-username user` is supplied (or `STEAM_USERNAME` is set non-empty) and `/data/manifests/depot.keys` plus the `.manifest` file exist
+- **THEN** DepotDownloader SHALL be invoked with `-username`/`-password` flags and the auth-free path SHALL NOT be used
 
 #### Scenario: Fallback to Steam login when keys missing
 

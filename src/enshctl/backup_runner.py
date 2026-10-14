@@ -55,7 +55,7 @@ _lower_priority = _make_priority_lowerer()
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backup subprocess runner")
-    parser.add_argument("--format", default=None, choices=["zstd", "gzip", "zip"])
+    parser.add_argument("--format", default=None, type=str.lower, choices=["zstd", "gzip", "zip"])
     parser.add_argument("--level", type=int, default=None)
     parser.add_argument("--cold", action="store_true", default=False)
     parser.add_argument("--emergency", action="store_true", default=False)

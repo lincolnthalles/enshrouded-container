@@ -15,6 +15,7 @@ from enshctl.backup.catalog import (
     parse_backup_filename,
     scan_all,
     scan_dir,
+    scan_stray,
     select,
     select_backup,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "resolve_level",
     "scan_all",
     "scan_dir",
+    "scan_stray",
     "select",
     "select_backup",
     "verify_archive",
