@@ -145,3 +145,73 @@ class TestRestoreAtomicSwap:
         ):
             mock_du.return_value.free = 10 * 1024**3
             run()
+
+    def test_corrupt_zstd_cleans_tmp_and_aborts(self, tmp_path: Path) -> None:
+        import zstandard
+        from enshctl.commands.restore import run
+
+        # GIVEN a truncated zstd archive and existing saves
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"old")
+
+        backup_path = tmp_path / "backup.tar.zst"
+        cctx = zstandard.ZstdCompressor()
+        backup_path.write_bytes(cctx.compress(b"not a tar stream")[:10])
+
+        tmp_dir = tmp_path / "saves-restore-tmp"
+
+        with (
+            patch("sys.argv", ["prog", "--file", "backup.tar.zst", "--yes"]),
+            patch("enshctl.commands.restore.SAVE_DIR", saves_dir),
+            patch("enshctl.commands.restore.RESTORE_TMP_DIR", tmp_dir),
+            patch("enshctl.commands.restore.select", return_value=backup_path),
+            patch("enshctl.commands.restore._check_server_running", return_value=False),
+            patch("enshctl.commands.restore._confirm_restore", return_value=True),
+            patch("enshctl.commands.restore.acquire_lock", return_value=3),
+            patch("enshctl.commands.restore.shutil.disk_usage") as mock_du,
+            patch("enshctl.commands.restore.release_lock"),
+            patch("enshctl.commands.restore.sys.exit") as mock_exit,
+        ):
+            mock_du.return_value.free = 10 * 1024**3
+            # WHEN restoring the corrupt archive
+            run()
+            # THEN it exits 1 without modifying saves
+            mock_exit.assert_called_once_with(1)
+
+        assert (saves_dir / "old_save.db").read_bytes() == b"old"
+        assert not tmp_dir.exists(), "tmp should be cleaned up on corrupt zstd"
+
+    def test_corrupt_zip_cleans_tmp_and_aborts(self, tmp_path: Path) -> None:
+        from enshctl.commands.restore import run
+
+        # GIVEN a garbage zip archive and existing saves
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"old")
+
+        backup_path = tmp_path / "backup.zip"
+        backup_path.write_bytes(b"this is not a zip file")
+
+        tmp_dir = tmp_path / "saves-restore-tmp"
+
+        with (
+            patch("sys.argv", ["prog", "--file", "backup.zip", "--yes"]),
+            patch("enshctl.commands.restore.SAVE_DIR", saves_dir),
+            patch("enshctl.commands.restore.RESTORE_TMP_DIR", tmp_dir),
+            patch("enshctl.commands.restore.select", return_value=backup_path),
+            patch("enshctl.commands.restore._check_server_running", return_value=False),
+            patch("enshctl.commands.restore._confirm_restore", return_value=True),
+            patch("enshctl.commands.restore.acquire_lock", return_value=3),
+            patch("enshctl.commands.restore.shutil.disk_usage") as mock_du,
+            patch("enshctl.commands.restore.release_lock"),
+            patch("enshctl.commands.restore.sys.exit") as mock_exit,
+        ):
+            mock_du.return_value.free = 10 * 1024**3
+            # WHEN restoring the corrupt archive
+            run()
+            # THEN it exits 1 without modifying saves
+            mock_exit.assert_called_once_with(1)
+
+        assert (saves_dir / "old_save.db").read_bytes() == b"old"
+        assert not tmp_dir.exists(), "tmp should be cleaned up on corrupt zip"

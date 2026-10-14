@@ -3,11 +3,11 @@
 import logging
 import shutil
 import sys
-import tarfile
 from pathlib import Path
 from typing import Any, ClassVar, override
 
 from enshctl.backup import (
+    ARCHIVE_ERRORS,
     LOCK_FILE,
     SAVE_DIR,
     BackupInfo,
@@ -121,7 +121,7 @@ def _perform_restore(backup_path: Path) -> None:
     logger.info("Extracting backup to temporary directory...")
     try:
         decompress_archive(backup_path, RESTORE_TMP_DIR)
-    except OSError, EOFError, tarfile.TarError:
+    except ARCHIVE_ERRORS:
         logger.exception("Restore extraction failed")
         free = shutil.disk_usage(SAVE_DIR).free
         logger.exception(

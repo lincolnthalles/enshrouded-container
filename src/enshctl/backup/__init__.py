@@ -4,6 +4,7 @@ import importlib
 from typing import Any
 
 from enshctl.backup.archive import (
+    ARCHIVE_ERRORS,
     decompress_archive,
     verify_archive,
 )
@@ -41,6 +42,7 @@ from enshctl.settings import (
 from enshctl.utils import human_size
 
 __all__ = [
+    "ARCHIVE_ERRORS",
     "BACKUP_DIRS",
     "BACKUP_DIR_COLD",
     "BACKUP_DIR_EMERGENCY",

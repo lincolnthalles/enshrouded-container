@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 _CHUNK = 65536
 
+ARCHIVE_ERRORS: tuple[type[BaseException], ...] = (
+    OSError,
+    EOFError,
+    tarfile.TarError,
+    zstandard.ZstdError,
+    zipfile.BadZipFile,
+)
+
 
 def _compress_zstd(source_dir: Path, output_path: Path, level: int) -> None:
     cctx = zstandard.ZstdCompressor(level=level)
@@ -119,7 +127,7 @@ def verify_archive(archive_path: Path) -> bool:
                 return _verify_gzip(archive_path)
             case BackupFormat.ZIP:
                 return _verify_zip(archive_path)
-    except (OSError, EOFError, tarfile.TarError, zstandard.ZstdError, zipfile.BadZipFile) as exc:
+    except ARCHIVE_ERRORS as exc:
         logger.warning("Verification failed for %s: %s", archive_path, exc)
         return False
 

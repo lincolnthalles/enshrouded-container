@@ -2,13 +2,11 @@
 
 import logging
 import shutil
-import zipfile
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import zstandard
-
+from enshctl.backup.archive import ARCHIVE_ERRORS
 from enshctl.backup.catalog import BackupFormat, _local_now
 from enshctl.settings import SAVE_DIR
 from enshctl.utils import human_size
@@ -102,7 +100,7 @@ def create_backup(
 
     try:
         compress(SAVE_DIR, output_path, level)
-    except (OSError, zstandard.ZstdError, zipfile.BadZipFile) as exc:
+    except ARCHIVE_ERRORS as exc:
         logger.warning("Backup failed for %s: %s", output_path, exc)
         with suppress(OSError):
             output_path.unlink()
