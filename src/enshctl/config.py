@@ -171,12 +171,33 @@ def set_defaults(config: dict[str, Any]) -> None:
         config["logDirectory"] = str(LOG_DIR)
 
 
+def _resolve_persisted_dir(key: str, value: object, default: str) -> str:
+    """Remap relative save/log directories to the container volume path.
+
+    The game resolves relative paths against its working directory
+    (/data/gameserver), which is wiped and rebuilt on every start — so a
+    relative directory can never point at persistent storage. Remap it to
+    the volume default with a warning naming the discarded value.
+    """
+    if isinstance(value, str) and value and not value.startswith("/"):
+        logger.warning(
+            "Relative %s '%s' would resolve inside the ephemeral game tree; using %s instead",
+            key,
+            value,
+            default,
+        )
+        return default
+    return value if isinstance(value, str) else default
+
+
 def generate_config() -> dict[str, Any]:
     base = load_base_config()
     overrides = env_to_dict()
     config = deep_merge(base, overrides)
     _resolve_array_overrides(base, config)
     set_defaults(config)
+    config["saveDirectory"] = _resolve_persisted_dir("saveDirectory", config["saveDirectory"], str(SAVE_DIR))
+    config["logDirectory"] = _resolve_persisted_dir("logDirectory", config["logDirectory"], str(LOG_DIR))
     return config
 
 

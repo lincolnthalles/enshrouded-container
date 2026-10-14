@@ -32,7 +32,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 ## Rules
 
 - Do NOT circumvent linters or type checkers. A scoped ignore belongs in `pyproject.toml` with a why-comment.
-- Verify runtime command calls inside the container before editing code.
+- Verify runtime command calls inside the dev container before editing code.
 - Prefer correctness and robustness over convenience. Roll back safely and clean up; never leave partial installs, restores, or backups behind.
 
 ## Code Style
@@ -60,7 +60,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 ## Concurrency & State
 
 - Prefer immutable data; scope mutability narrowly.
-- Background work uses threads with explicit stop events. Do not add `asyncio` outside UI callbacks.
+- Background work uses threads with explicit stop events.
 - Backups run subprocess-isolated with `flock` exclusion; signals to the parent do not cancel them. Document stop/lock invariants when non-obvious.
 
 ## Comments

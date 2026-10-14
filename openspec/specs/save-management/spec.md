@@ -6,12 +6,22 @@ Persistent world save data volume and its wiring into the generated server confi
 
 ### Requirement: Saved games volume
 
-The container SHALL expose `/data/saves` as a volume for persistent world save data. The `saveDirectory` field in the generated `enshrouded_server.json` SHALL be set to `/data/saves`.
+The container SHALL expose `/data/saves` as a volume for persistent world save data. The `saveDirectory` field in the generated `enshrouded_server.json` SHALL be an absolute path defaulting to `/data/saves`. Relative values from any source (base config file, `ENSHROUDED_SAVE_DIRECTORY`) SHALL be remapped to `/data/saves` with a warning, since the game resolves them against the ephemeral `/data/gameserver` tree.
 
 #### Scenario: Save directory is configured
 
-- **WHEN** the config is generated
+- **WHEN** the config is generated with no save directory configured
 - **THEN** `saveDirectory` in `enshrouded_server.json` SHALL be set to `/data/saves`
+
+#### Scenario: Relative save directory remapped
+
+- **WHEN** the base config or `ENSHROUDED_SAVE_DIRECTORY` provides `./savegame`
+- **THEN** `saveDirectory` SHALL be `/data/saves` and a warning SHALL name the discarded value
+
+#### Scenario: Absolute save directory preserved
+
+- **WHEN** `ENSHROUDED_SAVE_DIRECTORY=/mnt/nfs/enshrouded` is set
+- **THEN** `saveDirectory` SHALL be `/mnt/nfs/enshrouded` with no warning
 
 #### Scenario: Save directory is writable
 
@@ -25,12 +35,17 @@ The container SHALL expose `/data/saves` as a volume for persistent world save d
 
 ### Requirement: Log directory
 
-The container SHALL set `logDirectory` in the generated config to `/data/logs`. Server logs SHALL be written to `/data/logs/` and SHALL be symlinked to stdout for Docker log collection.
+The container SHALL set `logDirectory` in the generated config to the absolute path `/data/logs` by default. Relative values SHALL be remapped to `/data/logs` with a warning, mirroring the save directory rule. Server logs SHALL be written to `/data/logs/` and SHALL be symlinked to stdout for Docker log collection.
 
 #### Scenario: Log directory is configured
 
-- **WHEN** the config is generated
+- **WHEN** the config is generated with no log directory configured
 - **THEN** `logDirectory` in `enshrouded_server.json` SHALL be set to `/data/logs`
+
+#### Scenario: Relative log directory remapped
+
+- **WHEN** the base config or `ENSHROUDED_LOG_DIRECTORY` provides `./logs`
+- **THEN** `logDirectory` SHALL be `/data/logs` and a warning SHALL name the discarded value
 
 #### Scenario: Logs are visible in docker logs
 
@@ -39,7 +54,7 @@ The container SHALL set `logDirectory` in the generated config to `/data/logs`. 
 
 ### Requirement: Save directory env var override
 
-The `saveDirectory` field SHALL be overridable via `ENSHROUDED_SAVE_DIRECTORY`. If set, it SHALL take precedence over the default `/data/saves`.
+The `saveDirectory` field SHALL be overridable via `ENSHROUDED_SAVE_DIRECTORY` with an absolute path. If set to an absolute path, it SHALL take precedence over the default `/data/saves`. Relative values SHALL be remapped per the saved-games-volume requirement.
 
 #### Scenario: Custom save directory
 

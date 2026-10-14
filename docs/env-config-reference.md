@@ -4,19 +4,19 @@ Set every server option without editing the JSON file.
 
 ## Top-level settings
 
-| Env Var                           | Default               | Valid values / Range                           | Type             | Description                                              | JSON Key             |
-| --------------------------------- | --------------------- | ---------------------------------------------- | ---------------- | -------------------------------------------------------- | -------------------- |
-| `ENSHROUDED_NAME`                 | `"Enshrouded Server"` | —                                              | string           | Name shown in the Join menu server list.                 | `name`               |
-| `ENSHROUDED_IP`                   | `"0.0.0.0"`           | —                                              | string           | Bind address; change only with a specific reason.        | `ip`                 |
-| `ENSHROUDED_QUERY_PORT`           | `15637`               | —                                              | integer          | Server query port; change with caution.                  | `queryPort`          |
-| `ENSHROUDED_SLOT_COUNT`           | `16`                  | `1–16`                                         | integer          | Maximum number of players allowed on the server.         | `slotCount`          |
-| `ENSHROUDED_SAVE_DIRECTORY`       | `"./savegame"`        | —                                              | string           | Directory that stores the world savegame.                | `saveDirectory`      |
-| `ENSHROUDED_LOG_DIRECTORY`        | `"./logs"`            | —                                              | string           | Directory that stores the server logfiles.               | `logDirectory`       |
-| `ENSHROUDED_TAGS`                 | `[]`                  | Any tag from the list below                    | array of strings | Server browser filter tags.                              | `tags`               |
-| `ENSHROUDED_ENABLE_VOICE_CHAT`    | `false`               | `true / false`                                 | bool             | Switch voice chat on or off.                             | `enableVoiceChat`    |
-| `ENSHROUDED_ENABLE_TEXT_CHAT`     | `false`               | `true / false`                                 | bool             | Switch text chat on or off.                              | `enableTextChat`     |
-| `ENSHROUDED_VOICE_CHAT_MODE`      | `"Proximity"`         | `Proximity / Global`                           | string           | Proximity or server-wide voice chat.                     | `voiceChatMode`      |
-| `ENSHROUDED_GAME_SETTINGS_PRESET` | `"Default"`           | `Default / Relaxed / Hard / Survival / Custom` | string           | Difficulty preset; `Custom` enables individual settings. | `gameSettingsPreset` |
+| Env Var                           | Default               | Valid values / Range                                                    | Type             | Description                                              | JSON Key             |
+| --------------------------------- | --------------------- | ----------------------------------------------------------------------- | ---------------- | -------------------------------------------------------- | -------------------- |
+| `ENSHROUDED_NAME`                 | `"Enshrouded Server"` | —                                                                       | string           | Name shown in the Join menu server list.                 | `name`               |
+| `ENSHROUDED_IP`                   | `"0.0.0.0"`           | —                                                                       | string           | Bind address; change only with a specific reason.        | `ip`                 |
+| `ENSHROUDED_QUERY_PORT`           | `15637`               | —                                                                       | integer          | Server query port; change with caution.                  | `queryPort`          |
+| `ENSHROUDED_SLOT_COUNT`           | `16`                  | `1–16`                                                                  | integer          | Maximum number of players allowed on the server.         | `slotCount`          |
+| `ENSHROUDED_SAVE_DIRECTORY`       | `"/data/saves"`       | absolute path only; relative values remap to the default with a warning | string           | Directory that stores the world savegame.                | `saveDirectory`      |
+| `ENSHROUDED_LOG_DIRECTORY`        | `"/data/logs"`        | absolute path only; relative values remap to the default with a warning | string           | Directory that stores the server logfiles.               | `logDirectory`       |
+| `ENSHROUDED_TAGS`                 | `[]`                  | Any tag from the list below                                             | array of strings | Server browser filter tags.                              | `tags`               |
+| `ENSHROUDED_ENABLE_VOICE_CHAT`    | `false`               | `true / false`                                                          | bool             | Switch voice chat on or off.                             | `enableVoiceChat`    |
+| `ENSHROUDED_ENABLE_TEXT_CHAT`     | `false`               | `true / false`                                                          | bool             | Switch text chat on or off.                              | `enableTextChat`     |
+| `ENSHROUDED_VOICE_CHAT_MODE`      | `"Proximity"`         | `Proximity / Global`                                                    | string           | Proximity or server-wide voice chat.                     | `voiceChatMode`      |
+| `ENSHROUDED_GAME_SETTINGS_PRESET` | `"Default"`           | `Default / Relaxed / Hard / Survival / Custom`                          | string           | Difficulty preset; `Custom` enables individual settings. | `gameSettingsPreset` |
 
 `gameSettingsPreset` options:
 

@@ -1,15 +1,19 @@
 """Tests for config module."""
 
 from os import environ
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from enshctl.config import (
     _resolve_array_overrides,
     deep_merge,
     env_to_dict,
+    generate_config,
     parse_value,
     snake_to_camel,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_snake_to_camel_single() -> None:
@@ -144,3 +148,55 @@ def test_resolve_array_overrides_nested() -> None:
     by_name = {i["name"]: i for i in items}
     assert by_name["a"]["value"] == 1
     assert by_name["b"]["value"] == 2
+
+
+def test_generate_config_remaps_relative_save_directory(caplog: pytest.LogCaptureFixture) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a base config with a relative saveDirectory
+    with (
+        patch("enshctl.config.load_base_config", return_value={"saveDirectory": "./savegame"}),
+        caplog.at_level("WARNING", logger="enshctl.config"),
+    ):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN it remaps to the volume path with a warning naming the value
+    assert result["saveDirectory"] == "/data/saves"
+    assert "./savegame" in caplog.text
+
+
+def test_generate_config_remaps_relative_log_directory() -> None:
+    from unittest.mock import patch
+
+    # GIVEN a base config with a relative logDirectory
+    with patch("enshctl.config.load_base_config", return_value={"logDirectory": "logs"}):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN it remaps to the volume path
+    assert result["logDirectory"] == "/data/logs"
+
+
+def test_generate_config_remaps_env_relative_save_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a relative save directory via env var
+    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "./savegame")
+    with patch("enshctl.config.load_base_config", return_value={}):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN the env value is remapped, not passed through
+    assert result["saveDirectory"] == "/data/saves"
+
+
+def test_generate_config_keeps_absolute_custom_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch
+
+    # GIVEN absolute custom paths via env vars
+    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "/mnt/nfs/saves")
+    monkeypatch.setenv("ENSHROUDED_LOG_DIRECTORY", "/mnt/nfs/logs")
+    with patch("enshctl.config.load_base_config", return_value={}):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN they pass through untouched
+    assert result["saveDirectory"] == "/mnt/nfs/saves"
+    assert result["logDirectory"] == "/mnt/nfs/logs"

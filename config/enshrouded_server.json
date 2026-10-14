@@ -1,7 +1,7 @@
 {
   "name": "Enshrouded Server",
-  "saveDirectory": "./savegame",
-  "logDirectory": "./logs",
+  "saveDirectory": "/data/saves",
+  "logDirectory": "/data/logs",
   "ip": "0.0.0.0",
   "queryPort": 15637,
   "slotCount": 16,
