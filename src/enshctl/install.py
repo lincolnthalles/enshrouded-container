@@ -430,15 +430,15 @@ def download_version(
         and has_manifest_support
     )
 
-    if settings.version == "latest":
-        config = DownloadConfig()
-    elif use_auth_free:
+    if use_auth_free:
+        strategy = "auth-free"
         config = DownloadConfig(
             use_manifestfile=True,
             manifest_file=manifest_file,
             depot_keys_path=depot_keys_path,
         )
     elif effective_username:
+        strategy = "Steam auth"
         config = DownloadConfig(username=effective_username, password=effective_password)
     elif manifest_file.exists():
         logger.error(
@@ -447,8 +447,13 @@ def download_version(
             manifest_id,
         )
         sys.exit(1)
+    elif settings.version == "latest":
+        strategy = "anonymous"
+        config = DownloadConfig()
     else:
+        strategy = "QR login"
         config = DownloadConfig(use_qr=True, print_qr_message=True)
+    logger.info("Downloading manifest %s via %s", manifest_id, strategy)
     download_depots(manifest_id, target_dir, config)
 
     exe = target_dir / "enshrouded_server.exe"

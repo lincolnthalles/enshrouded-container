@@ -30,7 +30,7 @@ A `depot.keys` file SHALL be generated at `/data/manifests/depot.keys` containin
 
 ### Requirement: ManifestHub manifest fetching
 
-When a `MANIFESTHUB_API_TOKEN` is provided, the orchestrator SHALL download missing `.manifest` files from the ManifestHub API. The API endpoint is `https://api.manifesthub1.filegear-sg.me/manifest?apikey={token}&depotid={depotId}&manifestid={manifestId}`, overridable via `MANIFESTHUB_API_URL` env var.
+When a `MANIFESTHUB_API_TOKEN` and `MANIFESTHUB_API_URL` are both provided, the orchestrator SHALL download missing `.manifest` files from the ManifestHub API at `{api_url}/manifest?apikey={token}&depotid={depotId}&manifestid={manifestId}`. `MANIFESTHUB_API_URL` has no default and MUST be supplied alongside the token.
 
 #### Scenario: Download manifest for specific version
 
@@ -47,19 +47,19 @@ When a `MANIFESTHUB_API_TOKEN` is provided, the orchestrator SHALL download miss
 - **WHEN** the ManifestHub API returns a non-success HTTP status or JSON error
 - **THEN** the orchestrator SHALL raise an error with the API response details
 
-### Requirement: ManifestHub API URL override
+### Requirement: ManifestHub API URL required
 
-The ManifestHub API base URL SHALL be overridable via the `MANIFESTHUB_API_URL` env var. If not set, the default SHALL be `https://api.manifesthub1.filegear-sg.me`.
+The ManifestHub API base URL SHALL be supplied via the `MANIFESTHUB_API_URL` env var. There is no default. If `MANIFESTHUB_API_TOKEN` is set without `MANIFESTHUB_API_URL`, the orchestrator SHALL exit with an error directing the user to set it.
 
 #### Scenario: Custom API URL
 
 - **WHEN** `MANIFESTHUB_API_URL` is set (e.g., `https://my-mirror.example.com`)
 - **THEN** manifest downloads SHALL use that URL as the base (e.g., `https://my-mirror.example.com/manifest?apikey=...`)
 
-#### Scenario: Default API URL
+#### Scenario: Token without URL exits
 
-- **WHEN** `MANIFESTHUB_API_URL` is not set
-- **THEN** the default `https://api.manifesthub1.filegear-sg.me` SHALL be used
+- **WHEN** `MANIFESTHUB_API_TOKEN` is set and `MANIFESTHUB_API_URL` is not set
+- **THEN** the orchestrator SHALL exit with an error directing the user to set `MANIFESTHUB_API_URL`
 
 ### Requirement: Auth-free DepotDownloader invocation
 
@@ -69,6 +69,16 @@ When `depot.keys` and the required `.manifest` file exist and no explicit Steam 
 
 - **WHEN** `/data/manifests/depot.keys` exists and the `.manifest` file for the requested version exists and no Steam username was supplied
 - **THEN** DepotDownloader SHALL be invoked with `-depotkeys /data/manifests/depot.keys -manifestfile /data/manifests/{depotId}_{manifestId}.manifest` instead of `-username`/`-password` flags
+
+#### Scenario: Latest uses auth-free when set up
+
+- **WHEN** `VERSION=latest`, `/data/manifests/depot.keys` and the resolved `.manifest` file exist, and no Steam username was supplied
+- **THEN** DepotDownloader SHALL be invoked with `-depotkeys`/`-manifestfile` flags, and the selected strategy SHALL be logged
+
+#### Scenario: Latest falls back to anonymous
+
+- **WHEN** `VERSION=latest` and no credentials, keys, or token are configured
+- **THEN** DepotDownloader SHALL be invoked with no auth flags (anonymous download)
 
 #### Scenario: Explicit credentials override auth-free inputs
 

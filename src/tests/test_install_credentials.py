@@ -190,3 +190,67 @@ class TestDownloadVersionCredentials:
         assert "-username" in depot_cmd
         assert "-password" not in depot_cmd
         assert "-remember-password" in depot_cmd
+
+    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
+    @patch("subprocess.run")
+    def test_latest_uses_auth_free_when_set_up(
+        self,
+        mock_run: MagicMock,
+        _mock_discover: MagicMock,
+        tmp_path: MagicMock,
+    ) -> None:
+        # GIVEN depot.keys and a manifest file exist with VERSION=latest
+        mock_run.return_value = MagicMock(returncode=0)
+        manifests_dir = tmp_path / "manifests"
+        target_dir = manifests_dir / "999"
+        target_dir.mkdir(parents=True)
+        (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
+        manifest_file = manifests_dir / f"{DEPOT_ID}_999.manifest"
+        manifest_file.write_bytes(b"manifest")
+
+        with (
+            patch.object(install, "MANIFESTS_DIR", manifests_dir),
+            patch.object(install, "sys"),
+            patch.object(install, "check_manifestfile_support", return_value=True),
+        ):
+            # WHEN downloading latest with auth-free set up
+            install.download_version("999", _settings())
+
+        # THEN auth-free flags are used instead of the anonymous path
+        call_args_list = [call[0][0] for call in mock_run.call_args_list]
+        depot_cmd = None
+        for cmd in call_args_list:
+            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
+                depot_cmd = cmd
+                break
+        assert depot_cmd is not None
+        assert "-manifestfile" in depot_cmd
+        assert "-username" not in depot_cmd
+
+    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
+    @patch("subprocess.run")
+    def test_latest_falls_back_to_anonymous_with_no_credentials(
+        self,
+        mock_run: MagicMock,
+        _mock_discover: MagicMock,
+        tmp_path: MagicMock,
+    ) -> None:
+        # GIVEN no credentials, keys, or manifest with VERSION=latest
+        mock_run.return_value = MagicMock(returncode=0)
+        target_dir = tmp_path / "manifests" / "999"
+        target_dir.mkdir(parents=True)
+
+        with (
+            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
+            patch.object(install, "sys"),
+        ):
+            # WHEN downloading latest with nothing configured
+            install.download_version("999", _settings())
+
+        # THEN the anonymous path is used (no auth flags, no QR prompt)
+        call_args_list = [call[0][0] for call in mock_run.call_args_list]
+        for cmd in call_args_list:
+            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
+                assert "-username" not in cmd
+                assert "-manifestfile" not in cmd
+                assert "-qr" not in cmd
