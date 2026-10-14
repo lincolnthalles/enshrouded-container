@@ -4,7 +4,8 @@ import logging
 import sys
 from pathlib import Path
 
-from enshctl.backup import BACKUP_DIRS, human_size, verify_archive
+from enshctl.backup import human_size, verify_archive
+from enshctl.backup.catalog import scan_all, select
 from enshctl.settings import load_settings
 
 logger = logging.getLogger(__name__)
@@ -23,22 +24,15 @@ def run() -> None:
     targets: list[Path] = []
 
     if args.file:
-        for cat in BACKUP_DIRS:
-            candidate = base_dir / cat / args.file
-            if candidate.exists():
-                targets.append(candidate)
-                break
+        found = select(base_dir, file=args.file)
+        if found is not None:
+            targets.append(found)
         if not targets:
             logger.error("Backup file not found: %s", args.file)
             sys.exit(1)
     else:
-        for cat in BACKUP_DIRS:
-            cat_dir = base_dir / cat
-            if not cat_dir.exists():
-                continue
-            for p in sorted(cat_dir.iterdir()):
-                if p.is_file() and p.suffix in (".zst", ".gz", ".zip"):
-                    targets.append(p)
+        for info in scan_all(base_dir):
+            targets.append(info.path)
 
     if not targets:
         logger.info("No backups to verify")

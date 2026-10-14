@@ -11,13 +11,12 @@ from enshctl.backup import (
     _local_now,
     _local_tz,
     acquire_lock,
-    list_backups,
     parse_backup_filename,
     release_lock,
     resolve_format,
     resolve_level,
-    select_backup,
 )
+from enshctl.backup.catalog import scan_all, scan_dir, select, select_backup
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -124,7 +123,7 @@ def test_resolve_level_defaults() -> None:
     assert resolve_level(BackupFormat.ZIP, "") == 6
 
 
-# --- select_backup tests (11.3) ---
+# --- select tests ---
 
 
 def _today_backup(name: str) -> str:
@@ -137,10 +136,6 @@ def _make_backup_filename(dt: datetime, suffix: str = "", ext: str = ".tar.zst")
     return f"enshrouded-{ts}{suffix}{ext}"
 
 
-def _settings_with_dir(base: Path) -> AppSettings:
-    return replace(AppSettings(), backup_dir=str(base))
-
-
 def test_select_backup_by_file(tmp_path: Path) -> None:
     # GIVEN backups present in all categories
     base = tmp_path / "backups"
@@ -149,7 +144,7 @@ def test_select_backup_by_file(tmp_path: Path) -> None:
     target = base / "live" / "enshrouded-20260529-120000.tar.zst"
     target.write_bytes(b"\x00" * 10)
     # WHEN selecting by filename
-    result = select_backup(file="enshrouded-20260529-120000.tar.zst", settings=_settings_with_dir(base))
+    result = select(base, file="enshrouded-20260529-120000.tar.zst")
     # THEN the exact path resolves
     assert result == target
 
@@ -160,7 +155,7 @@ def test_select_backup_by_file_not_found(tmp_path: Path) -> None:
     for cat in ("live", "cold", "emergency"):
         (base / cat).mkdir(parents=True)
     # WHEN selecting a nonexistent filename
-    result = select_backup(file="nonexistent.tar.zst", settings=_settings_with_dir(base))
+    result = select(base, file="nonexistent.tar.zst")
     # THEN no backup resolves
     assert result is None
 
@@ -175,7 +170,7 @@ def test_select_backup_when_last(tmp_path: Path) -> None:
     f1.write_bytes(b"\x00" * 10)
     f2.write_bytes(b"\x00" * 10)
     # WHEN selecting the last backup
-    result = select_backup(when="last", settings=_settings_with_dir(base))
+    result = select(base, when="last")
     # THEN the newest file resolves
     assert result is not None
     assert result.name == "enshrouded-20260529-130000.tar.zst"
@@ -190,7 +185,7 @@ def test_select_backup_when_30m(tmp_path: Path) -> None:
     f = live / name
     f.write_bytes(b"\x00" * 10)
     # WHEN selecting within the last 30 minutes
-    result = select_backup(when="30m", settings=_settings_with_dir(base))
+    result = select(base, when="30m")
     # THEN it resolves
     assert result is not None
     assert result.name == name
@@ -206,7 +201,7 @@ def test_select_backup_when_1h(tmp_path: Path) -> None:
     f.write_bytes(b"\x00" * 10)
     # WHEN selecting within the last hour
     # THEN it resolves
-    assert select_backup(when="1h", settings=_settings_with_dir(base)) is not None
+    assert select(base, when="1h") is not None
 
 
 def test_select_backup_when_category_qualifier(tmp_path: Path) -> None:
@@ -221,7 +216,7 @@ def test_select_backup_when_category_qualifier(tmp_path: Path) -> None:
     live_f.write_bytes(b"\x00" * 10)
     cold_f.write_bytes(b"\x00" * 10)
     # WHEN selecting the last cold backup
-    result = select_backup(when="last:cold", settings=_settings_with_dir(base))
+    result = select(base, when="last:cold")
     # THEN the cold file resolves
     assert result is not None
     assert result.name == "enshrouded-20260529-130000-cold.tar.zst"
@@ -236,25 +231,65 @@ def test_select_backup_no_match(tmp_path: Path) -> None:
     f.write_bytes(b"\x00" * 10)
     # WHEN selecting within the last 30 minutes
     # THEN nothing resolves
-    assert select_backup(when="30m", settings=_settings_with_dir(base)) is None
+    assert select(base, when="30m") is None
 
 
-def test_select_backup_invalid_direction() -> None:
-    # GIVEN no settings constraint
+def test_select_backup_invalid_direction(tmp_path: Path) -> None:
+    # GIVEN a base directory
+    base = tmp_path / "backups"
+    base.mkdir()
     # WHEN selecting with an invalid direction
     # THEN nothing resolves
-    assert select_backup(when="bogus", settings=AppSettings()) is None
-    assert select_backup(when="42x", settings=AppSettings()) is None
+    assert select(base, when="bogus") is None
+    assert select(base, when="42x") is None
 
 
-def test_select_backup_no_args() -> None:
-    # GIVEN no selection criteria
+def test_select_backup_no_args(tmp_path: Path) -> None:
+    # GIVEN a base directory and no selection criteria
+    base = tmp_path / "backups"
+    base.mkdir()
     # WHEN selecting
     # THEN nothing resolves
-    assert select_backup(settings=AppSettings()) is None
+    assert select(base) is None
 
 
-def test_list_backups_with_when_filter(tmp_path: Path) -> None:
+def test_select_backup_compat_wrapper(tmp_path: Path) -> None:
+    # GIVEN backups present and settings pointing at them
+    base = tmp_path / "backups"
+    live = base / "live"
+    live.mkdir(parents=True)
+    target = live / "enshrouded-20260529-120000.tar.zst"
+    target.write_bytes(b"\x00" * 10)
+    settings = replace(AppSettings(), backup_dir=str(base))
+    # WHEN selecting through the backward-compatible wrapper
+    # THEN it delegates to the catalog
+    assert select_backup(file="enshrouded-20260529-120000.tar.zst", settings=settings) == target
+
+
+def test_scan_dir_lists_newest_first(tmp_path: Path) -> None:
+    # GIVEN one category dir with two backups and a stray file
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "enshrouded-20260529-120000.tar.zst").write_bytes(b"\x00" * 10)
+    (live / "enshrouded-20260529-130000.tar.zst").write_bytes(b"\x00" * 10)
+    (live / "random.zst").write_bytes(b"junk")
+    # WHEN scanning the directory
+    found = scan_dir(live)
+    # THEN grammar-matching backups return newest first, strays excluded
+    assert [b.path.name for b in found] == [
+        "enshrouded-20260529-130000.tar.zst",
+        "enshrouded-20260529-120000.tar.zst",
+    ]
+
+
+def test_scan_dir_missing_dir(tmp_path: Path) -> None:
+    # GIVEN a nonexistent directory
+    # WHEN scanning
+    # THEN the result is empty
+    assert scan_dir(tmp_path / "nonexistent") == []
+
+
+def test_scan_all_with_when_filter(tmp_path: Path) -> None:
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
@@ -265,29 +300,29 @@ def test_list_backups_with_when_filter(tmp_path: Path) -> None:
     f2 = live / name2
     f1.write_bytes(b"\x00" * 10)
     f2.write_bytes(b"\x00" * 10)
-    all_backups = list_backups(base)
+    all_backups = scan_all(base)
     assert len(all_backups) == 2
-    recent = list_backups(base, when=timedelta(hours=1))
+    recent = scan_all(base, when=timedelta(hours=1))
     assert len(recent) == 2
 
 
-def test_list_backups_empty_dir(tmp_path: Path) -> None:
+def test_scan_all_empty_dir(tmp_path: Path) -> None:
     base = tmp_path / "backups"
     for cat in ("live", "cold", "emergency"):
         (base / cat).mkdir(parents=True)
-    assert list_backups(base) == []
+    assert scan_all(base) == []
 
 
-def test_list_backups_ignores_non_backup_files(tmp_path: Path) -> None:
+def test_scan_all_ignores_non_backup_files(tmp_path: Path) -> None:
     base = tmp_path / "backups"
     live = base / "live"
     live.mkdir(parents=True)
     f = live / "not-a-backup.txt"
     f.write_bytes(b"junk")
-    assert list_backups(base) == []
+    assert scan_all(base) == []
 
 
-def test_list_backups_category_filter(tmp_path: Path) -> None:
+def test_scan_all_category_filter(tmp_path: Path) -> None:
     base = tmp_path / "backups"
     live = base / "live"
     cold = base / "cold"
@@ -297,10 +332,10 @@ def test_list_backups_category_filter(tmp_path: Path) -> None:
     cold_f = cold / "enshrouded-20260529-130000-cold.tar.zst"
     live_f.write_bytes(b"\x00" * 10)
     cold_f.write_bytes(b"\x00" * 10)
-    live_only = list_backups(base, category="live")
+    live_only = scan_all(base, category="live")
     assert len(live_only) == 1
     assert live_only[0].category == "live"
-    cold_only = list_backups(base, category="cold")
+    cold_only = scan_all(base, category="cold")
     assert len(cold_only) == 1
     assert cold_only[0].category == "cold"
 
@@ -387,14 +422,33 @@ def test_parse_cron_aligns_to_clock_boundary() -> None:
     import time as _time
     from unittest.mock import patch as _patch
 
-    from enshctl.backup import parse_cron
+    from enshctl.commands.start import parse_cron
 
     struct = _time.struct_time((2026, 5, 30, 14, 37, 0, 4, 150, 0))
-    with _patch("enshctl.backup.core.time.localtime", return_value=struct):
+    with _patch("enshctl.commands.start.time.localtime", return_value=struct):
         result = parse_cron("*/5 * * * *")
     assert result is not None
     # At :37, next */5 boundary is :40 → 3 minutes = 180 seconds
     assert result == 180.0
+
+
+def test_parse_cron_barrel_reexport() -> None:
+    # GIVEN the backward-compat barrel surface
+    # WHEN importing parse_cron through enshctl.backup
+    # THEN the scheduler's implementation resolves
+    import enshctl.backup
+    from enshctl.commands.start import parse_cron as canonical
+
+    assert enshctl.backup.parse_cron is canonical
+
+
+def test_select_empty_direction_returns_none(tmp_path: Path) -> None:
+    # GIVEN a base directory
+    base = tmp_path / "backups"
+    base.mkdir()
+    # WHEN selecting with an empty direction
+    # THEN nothing resolves instead of raising
+    assert select(base, when=":cold") is None
 
 
 def test_lower_priority_warns_once_on_ionice_failure(caplog: pytest.LogCaptureFixture) -> None:
@@ -519,3 +573,68 @@ class TestCreateBackupDiskSpace:
         result = create_backup(category="emergency", settings=settings)
         # THEN it is skipped
         assert result is None
+
+
+class TestCreateBackupOverrides:
+    """Tests for create_backup() explicit format/level overrides."""
+
+    @patch("enshctl.backup.core.shutil.disk_usage")
+    @patch("enshctl.backup.core.backup_needed", return_value=True)
+    def test_explicit_format_wins_over_settings(
+        self,
+        _mock_needed: MagicMock,
+        mock_disk_usage: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from enshctl.backup import BackupFormat, create_backup
+
+        # GIVEN gzip configured but zstd requested explicitly
+        mock_disk_usage.return_value.free = 5 * 1024**3
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_format="gzip", backup_level=6)
+
+        with (
+            patch("enshctl.backup.core.SAVE_DIR", saves),
+            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.archive._compress_zstd") as mock_zstd,
+            patch("enshctl.backup.archive._compress_gzip") as mock_gzip,
+        ):
+            mock_now.return_value.strftime.return_value = "20260531-120000"
+            # WHEN creating a backup with an explicit format
+            result = create_backup("live", settings, fmt=BackupFormat.ZSTD)
+            # THEN the explicit format's compressor runs
+            mock_zstd.assert_called_once()
+            mock_gzip.assert_not_called()
+            assert result is not None
+            assert result.suffixes == [".tar", ".zst"]
+
+    @patch("enshctl.backup.core.shutil.disk_usage")
+    @patch("enshctl.backup.core.backup_needed", return_value=True)
+    def test_explicit_level_zero_honored(
+        self,
+        _mock_needed: MagicMock,
+        mock_disk_usage: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from enshctl.backup import create_backup
+
+        # GIVEN a configured level of 9
+        mock_disk_usage.return_value.free = 5 * 1024**3
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_level=9)
+
+        with (
+            patch("enshctl.backup.core.SAVE_DIR", saves),
+            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.archive._compress_zstd") as mock_compress,
+        ):
+            mock_now.return_value.strftime.return_value = "20260531-120000"
+            # WHEN creating a backup with explicit level 0
+            result = create_backup("live", settings, level=0)
+            # THEN level 0 reaches the compressor, not the configured 9
+            mock_compress.assert_called_once_with(saves, result, 0)
+            assert result is not None

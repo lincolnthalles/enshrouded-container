@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import zstandard
 
-from enshctl.backup.core import _FORMAT_EXTENSION_MAP, BackupFormat
+from enshctl.backup.catalog import _FORMAT_EXTENSION_MAP, BackupFormat
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -14,10 +14,9 @@ from enshctl.backup import (
     acquire_lock,
     decompress_archive,
     human_size,
-    list_backups,
     release_lock,
-    select_backup,
 )
+from enshctl.backup.catalog import scan_all, select
 from enshctl.settings import PIDFILE, load_settings
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,7 @@ def run() -> None:
 
     # List mode
     if args.list_mode or (not args.file and not args.when and not is_tty):
-        backups = list_backups(base_dir, when=None)
+        backups = scan_all(base_dir)
         if not backups:
             logger.info("No backups found")
             return
@@ -76,9 +75,9 @@ def run() -> None:
     # Resolve backup to restore
     backup_path: Path | None = None
     if args.file:
-        backup_path = select_backup(file=args.file, settings=settings)
+        backup_path = select(base_dir, file=args.file)
     elif args.when:
-        backup_path = select_backup(when=args.when, settings=settings)
+        backup_path = select(base_dir, when=args.when)
     elif is_tty:
         backup_path = _interactive_restore(base_dir)
 
@@ -207,7 +206,7 @@ def _interactive_restore(base_dir: Path) -> Path | None:
 
         def __init__(self) -> None:
             super().__init__()
-            self._backups = list_backups(base_dir)
+            self._backups = scan_all(base_dir)
             self.selected: BackupInfo | None = None
 
         @override

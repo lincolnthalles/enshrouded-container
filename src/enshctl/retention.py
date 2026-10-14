@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from enshctl.backup import BACKUP_DIRS, BackupInfo, parse_backup_filename
+from enshctl.backup import BACKUP_DIRS
+from enshctl.backup.catalog import BackupInfo, scan_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -111,21 +112,7 @@ def prune_category(category_dir: Path, config: RetentionConfig, dry_run: bool = 
 
     Returns list of paths that were (or would be) deleted.
     """
-    if not category_dir.exists():
-        return []
-
-    backups: list[BackupInfo] = []
-    for p in sorted(category_dir.iterdir(), key=lambda x: x.name):
-        if not p.is_file():
-            continue
-        parsed = parse_backup_filename(p.name)
-        if parsed is None:
-            continue
-        ts, cat, fmt = parsed
-        backups.append(BackupInfo(path=p, timestamp=ts, category=cat, fmt=fmt, size=p.stat().st_size))
-
-    backups.sort(key=lambda bi: bi.timestamp, reverse=True)
-
+    backups = scan_dir(category_dir)
     to_delete = apply_retention(backups, config)
 
     if not dry_run:

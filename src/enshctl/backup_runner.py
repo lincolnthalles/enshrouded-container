@@ -7,7 +7,7 @@ from os import getpid, nice
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock
+from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock, resolve_format
 from enshctl.retention import RetentionConfig, prune_category
 from enshctl.settings import load_settings
 
@@ -55,6 +55,8 @@ _lower_priority = _make_priority_lowerer()
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backup subprocess runner")
+    parser.add_argument("--format", default=None, choices=["zstd", "gzip", "zip"])
+    parser.add_argument("--level", type=int, default=None)
     parser.add_argument("--cold", action="store_true", default=False)
     parser.add_argument("--emergency", action="store_true", default=False)
     args, _ = parser.parse_known_args()
@@ -68,6 +70,8 @@ def main() -> int:
     elif args.emergency:
         category = "emergency"
 
+    fmt = resolve_format(args.format) if args.format is not None else None
+
     lock_path = Path(settings.backup_dir) / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
@@ -75,7 +79,7 @@ def main() -> int:
         return EXIT_LOCK_HELD
 
     try:
-        result = create_backup(category, settings)
+        result = create_backup(category, settings, fmt=fmt, level=args.level)
         if result is not None:
             config = RetentionConfig.from_settings(settings)
             cat_dir = Path(settings.backup_dir) / category
