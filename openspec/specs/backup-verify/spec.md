@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Integrity verification of backup archives without extracting them to disk.
+
+## Requirements
 
 ### Requirement: Verify backup integrity
 

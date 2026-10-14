@@ -1,3 +1,9 @@
+## Purpose
+
+Restore of world save data from a selected backup archive.
+
+## Requirements
+
 ### Requirement: Restore safety check
 
 Before restoring, the system SHALL check if the game server process is running. If running, the system SHALL refuse to restore and exit with an error.

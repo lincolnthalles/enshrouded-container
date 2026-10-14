@@ -1,3 +1,9 @@
+## Purpose
+
+Dispatch of CLI subcommands to dedicated modules under the commands package.
+
+## Requirements
+
 ### Requirement: Subcommand dispatch via cmd package
 
 The entrypoint SHALL dispatch CLI subcommands to dedicated modules under `enshrouded_server.commands`. Each subcommand (`start`, `install`, `backup`, `restore`, `verify`, `prune`, `download`, `version-info`, `debug-config`) SHALL be implemented in its own module under `commands/` exposing a `run()` function.

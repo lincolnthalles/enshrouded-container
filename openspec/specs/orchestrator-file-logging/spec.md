@@ -1,3 +1,7 @@
+## Purpose
+
+Opt-in orchestrator file logging with game server output filtered out.
+
 ## Requirements
 
 ### Requirement: Orchestrator file logging

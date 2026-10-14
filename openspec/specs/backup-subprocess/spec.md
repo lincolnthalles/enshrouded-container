@@ -1,3 +1,7 @@
+## Purpose
+
+Subprocess-isolated backup execution with lowered priority and exclusive file locking.
+
 ## Requirements
 
 ### Requirement: Backup runs in subprocess

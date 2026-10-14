@@ -1,3 +1,9 @@
+## Purpose
+
+Mod file overlay onto the pristine game install via the mods volume.
+
+## Requirements
+
 ### Requirement: Mod volume mount
 
 The container SHALL accept mod files via a volume at `/data/mods`. The mod volume SHALL be empty by default. Users SHALL place mod files (replacement or additional game assets) into this directory. Mod DLL files SHALL be detected and used to generate Wine DLL overrides at startup.

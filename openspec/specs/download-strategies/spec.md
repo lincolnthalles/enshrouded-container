@@ -1,3 +1,7 @@
+## Purpose
+
+Shared depot download loop with strategy-specific behavior controlled by configuration.
+
 ## Requirements
 
 ### Requirement: Shared depot download loop

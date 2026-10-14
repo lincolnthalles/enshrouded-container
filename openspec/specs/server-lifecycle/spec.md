@@ -1,3 +1,7 @@
+## Purpose
+
+Full server lifecycle orchestration from startup through shutdown.
+
 ## Requirements
 
 ### Requirement: Server lifecycle orchestration

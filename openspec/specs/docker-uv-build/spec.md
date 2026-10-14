@@ -1,3 +1,9 @@
+## Purpose
+
+Multi-stage Docker build producing and installing the project wheel via uv.
+
+## Requirements
+
 ### Requirement: Multi-stage Docker build with uv
 
 The Dockerfile SHALL use a multi-stage build. A builder stage SHALL use `uv build` to produce a Python wheel from the project source. The final stage SHALL install the wheel into the runtime Python environment.

@@ -1,4 +1,8 @@
-## MODIFIED Requirements
+## Purpose
+
+Fedora-based container image providing Wine 11 staging as a dependency for GE-Proton and winetricks.
+
+## Requirements
 
 ### Requirement: Wine 11 runtime
 
@@ -46,7 +50,3 @@ The container SHALL create a non-root `steam` user (UID/GID configurable via `PU
 
 - **WHEN** the container starts
 - **THEN** all data directories SHALL exist and be owned by `steam:steam`
-
-## REMOVED Requirements
-
-None — all existing requirements are modified, not removed.

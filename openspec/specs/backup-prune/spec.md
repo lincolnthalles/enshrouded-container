@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Time-based retention pruning of backup snapshots across the live, cold, and emergency categories.
+
+## Requirements
 
 ### Requirement: Time-based retention cascade
 

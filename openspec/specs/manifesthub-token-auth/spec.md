@@ -1,3 +1,9 @@
+## Purpose
+
+Auth-free game downloads using depot decryption keys from an external source.
+
+## Requirements
+
 ### Requirement: Depot keys generation from external source
 
 A `depot.keys` file SHALL be generated at `/data/manifests/depot.keys` containing depot decryption keys in the format `depotId;hexKey` per line. The file SHALL be generated from a user-supplied git repository URL or fallback to archive.org mirrors. Generation SHALL only occur if the file does not already exist.

@@ -1,3 +1,7 @@
+## Purpose
+
+Non-mutating generation and merging of the game server configuration.
+
 ## Requirements
 
 ### Requirement: Non-mutating config merge

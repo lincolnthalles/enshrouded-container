@@ -1,3 +1,7 @@
+## Purpose
+
+Scheduled, shutdown-triggered, and crash-triggered backups of the saves directory with configurable compression.
+
 ## Requirements
 
 ### Requirement: Backup module structure

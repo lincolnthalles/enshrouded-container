@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Pinned GE-Proton runtime as the primary game execution environment.
+
+## Requirements
 
 ### Requirement: GE-Proton download and installation
 

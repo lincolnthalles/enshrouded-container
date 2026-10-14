@@ -1,3 +1,7 @@
+## Purpose
+
+CPU and memory monitoring of the server process tree via /proc.
+
 ## Requirements
 
 ### Requirement: Process tree CPU and memory monitoring

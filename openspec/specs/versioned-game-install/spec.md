@@ -1,3 +1,7 @@
+## Purpose
+
+Pinned, manifest-driven game installs via a self-contained DepotDownloader binary.
+
 ## Requirements
 
 ### Requirement: DepotDownloader is installed

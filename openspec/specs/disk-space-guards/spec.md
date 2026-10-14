@@ -1,3 +1,7 @@
+## Purpose
+
+Free-space guards that gate game installs and backups before they run.
+
 ## Requirements
 
 ### Requirement: Install disk space check

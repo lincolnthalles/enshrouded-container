@@ -1,3 +1,7 @@
+## Purpose
+
+Persistent world save data volume and its wiring into the generated server config.
+
 ## Requirements
 
 ### Requirement: Saved games volume

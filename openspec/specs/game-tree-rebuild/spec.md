@@ -1,3 +1,9 @@
+## Purpose
+
+Rebuild of the game directory as a symlink tree from the installed manifest and mods on every start.
+
+## Requirements
+
 ### Requirement: Game tree rebuild on startup
 
 At container startup, the entrypoint SHALL construct `/data/gameserver/` as a symlink tree pointing to manifest and mod files. The directory SHALL be wiped and rebuilt from scratch on every start.

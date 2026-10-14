@@ -1,3 +1,9 @@
+## Purpose
+
+Generation of Wine DLL overrides from mod DLL files at startup.
+
+## Requirements
+
 ### Requirement: DLL override generation
 
 The orchestrator SHALL recursively scan `/data/mods` for files with a `.dll` extension (case-insensitive) and generate `WINEDLLOVERRIDES` entries for each DLL found. DLLs whose filename (without extension) starts with `win` (case-insensitive) SHALL receive the `n,b` override (native then builtin). All other DLLs SHALL receive the `n` override (native only). The standard baseline `mscoree,mshtml=` SHALL always be included.
