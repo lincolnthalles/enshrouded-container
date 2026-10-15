@@ -53,12 +53,12 @@ The `restore` subcommand SHALL select the best-matching backup when given a `--w
 
 ### Requirement: Interactive restore picker
 
-When neither `--file` nor `--when` is provided and stdout is a TTY, the `restore` subcommand SHALL present an interactive Textual TUI picker. The picker SHALL display backup categories with counts, allow drilling into each category, browsing backups with sizes and timestamps, selecting one, and confirming the restore.
+When neither `--file` nor `--when` is provided and stdout is a TTY, the `restore` subcommand SHALL present an interactive Textual TUI picker. The picker SHALL display a flat list of available backups as `name (size)` entries and return the selected backup's path.
 
 #### Scenario: Interactive restore on TTY
 
 - **WHEN** `enshrouded-server restore` is executed in a TTY without `--file` or `--when`
-- **THEN** an interactive picker SHALL be displayed showing backup categories (live, cold, emergency) with backup counts
+- **THEN** an interactive picker SHALL be displayed showing each backup as `name (size)`; category drill-in, counts, and timestamps are not shown
 
 #### Scenario: Interactive restore falls back on non-TTY
 
@@ -67,17 +67,12 @@ When neither `--file` nor `--when` is provided and stdout is a TTY, the `restore
 
 ### Requirement: List backups
 
-The `restore --list` flag SHALL list all backups as a Rich table (TTY) or plain text (non-TTY) and exit. The `--when` flag MAY be combined with `--list` to filter results.
+The `restore --list` flag SHALL list all backups as a Rich table (TTY) or plain text (non-TTY) and exit. The `--when` flag is accepted by the parser but SHALL be ignored in list mode; all backups are listed unfiltered.
 
 #### Scenario: List all backups
 
 - **WHEN** `enshrouded-server restore --list` is executed
 - **THEN** a table SHALL be printed showing all backups across all categories with filename, category, size, and timestamp
-
-#### Scenario: List with filter
-
-- **WHEN** `enshrouded-server restore --list --when 30d` is executed
-- **THEN** only backups within the last 30 days SHALL be listed
 
 ### Requirement: Restore confirmation prompt
 

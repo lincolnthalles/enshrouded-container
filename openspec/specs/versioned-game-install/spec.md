@@ -6,7 +6,7 @@ Pinned, manifest-driven game installs via a self-contained DepotDownloader binar
 
 ### Requirement: DepotDownloader is installed
 
-The container SHALL include DepotDownloader (either the dd fork or upstream) built as a self-contained trimmed single-file binary at `/opt/depotdownloader/DepotDownloader`. The binary SHALL be built from source in a Docker builder stage. The repository URL SHALL be configurable via the `DD_REPO_URL` build argument. The builder stage SHALL produce a binary named `DepotDownloader` regardless of which repository is used.
+The container SHALL include DepotDownloader built as a self-contained single-file binary at `/opt/depotdownloader/DepotDownloader`. The binary SHALL be built from the vendored source in `vendor/DepotDownloader/` in a Docker builder stage (`dotnet publish` with `--self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false`). The vendored tree is the only source; no `DD_REPO_URL` build argument is supported.
 
 #### Scenario: DepotDownloader binary is present
 
@@ -18,10 +18,10 @@ The container SHALL include DepotDownloader (either the dd fork or upstream) bui
 - **WHEN** DepotDownloader is invoked with `-app 2278520`
 - **THEN** it SHALL authenticate anonymously with Steam's CDN and list depot information
 
-#### Scenario: dd repository URL is configurable
+#### Scenario: DepotDownloader source is vendored
 
-- **WHEN** the image is built with `--build-arg DD_REPO_URL=https://github.com/example/dd-fork.git`
-- **THEN** the binary SHALL be built from that repository instead of the default
+- **WHEN** the image is built
+- **THEN** the binary SHALL be built from `vendor/DepotDownloader/`; there is no build argument to substitute a different repository
 
 #### Scenario: No .NET runtime in final image
 
@@ -88,17 +88,22 @@ The game server SHALL be downloaded to `/data/manifests/<manifest_id>/` where `<
 
 ### Requirement: Manifest resolution
 
-The entrypoint SHALL support resolving versions via three methods: explicit manifest ID, Steam build ID with `build:` prefix, and `latest` keyword. Manifest metadata SHALL be persisted in `/data/manifests/versions.json` for audit.
+The entrypoint SHALL support resolving versions via three methods: explicit manifest ID, Steam build ID with `build:` prefix, and `latest` keyword. The resolved latest manifest SHALL be persisted in the `/data/manifests/.latest-manifest` control file (`<manifest_id>-<timestamp>`) for offline fallback. No `versions.json` metadata file is written.
 
 #### Scenario: Resolve build ID to manifest
 
 - **WHEN** `VERSION=build:16789000` is set
-- **THEN** the entrypoint SHALL query DepotDownloader for manifests matching build 16789000 and download the corresponding depot
+- **THEN** the entrypoint SHALL list manifests via DepotDownloader (each tagged `branch: "public"`) and return the first whose manifest ID ends with `16789000`; if none matches, it SHALL warn and treat `16789000` itself as the manifest ID
 
-#### Scenario: Persist version metadata
+#### Scenario: Persist latest manifest control file
 
-- **WHEN** a game version is downloaded
-- **THEN** `/data/manifests/versions.json` SHALL be updated with an entry containing manifest ID, build ID, download timestamp, and branch name
+- **WHEN** `VERSION=latest` is resolved to a manifest
+- **THEN** `/data/manifests/.latest-manifest` SHALL be written with `<manifest_id>-<timestamp>`
+
+#### Scenario: Offline fallback to cached latest manifest
+
+- **WHEN** `VERSION=latest` is set and DepotDownloader returns no manifests but `.latest-manifest` contains a cached manifest ID
+- **THEN** the cached manifest ID SHALL be used with a warning; if no cache exists, the entrypoint SHALL exit with code 1
 
 ### Requirement: install.py size reduction
 

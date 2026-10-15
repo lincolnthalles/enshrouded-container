@@ -13,19 +13,19 @@ The `deep_merge` function in `enshctl.config` SHALL return a new dictionary with
 - **WHEN** `generate_config()` is called with a base config loaded from file
 - **THEN** the original base config dict SHALL not be modified by the merge operation
 
-### Requirement: Settings integration
+### Requirement: UID/GID passed explicitly
 
-The `generate_config` and `write_config` functions SHALL accept an optional `AppSettings` parameter for accessing `PUID`/`PGID` values instead of reading `os.environ` directly. If not provided, they SHALL fall back to loading settings from the environment.
+The `write_config` function SHALL accept `puid`/`pgid` as keyword integers (`write_config(config, *, puid=..., pgid=...)`) for config file ownership. The `generate_config` function takes no settings argument; callers that need configured ownership SHALL read `settings.puid`/`settings.pgid` and pass them to `write_config`. Neither function SHALL read `os.environ` directly for ownership.
 
-#### Scenario: Settings passed explicitly
+#### Scenario: Ownership passed explicitly
 
-- **WHEN** `write_config(config, settings=AppSettings(puid=1001, pgid=1002))` is called
+- **WHEN** `write_config(config, puid=1001, pgid=1002)` is called
 - **THEN** the config file SHALL be owned by uid 1001, gid 1002
 
-#### Scenario: Settings loaded from env when not provided
+#### Scenario: Start passes configured ownership
 
-- **WHEN** `write_config(config)` is called with `PUID=1000` in environment
-- **THEN** the config file SHALL be owned by uid 1000
+- **WHEN** the `start` command generates and writes the config
+- **THEN** it SHALL call `write_config(new_config, puid=settings.puid, pgid=settings.pgid)`
 
 ### Requirement: Config file injection
 

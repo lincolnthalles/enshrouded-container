@@ -58,12 +58,17 @@ The `parse_cron` function SHALL log a WARNING when hours, days, months, or weekd
 
 ### Requirement: Backup compression
 
-Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The `BACKUP_FORMAT` env var SHALL set the default format (default: `zstd`). The `BACKUP_LEVEL` env var SHALL set the default level (default: `9`). Levels SHALL be clamped to the format's maximum with a warning log if exceeded.
+Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The `BACKUP_FORMAT` env var SHALL set the default format (default: `zstd`). The `BACKUP_LEVEL` env var SHALL set the default level. Default levels are per-format: zstd `9`, gzip `6`, zip `6`. Levels SHALL be clamped to the format's maximum with a warning log if exceeded.
 
 #### Scenario: Default compression
 
 - **WHEN** `BACKUP_FORMAT` and `BACKUP_LEVEL` are not set and a backup is triggered
 - **THEN** the output file SHALL be a valid zstd-compressed tar archive at level 9
+
+#### Scenario: Per-format default levels
+
+- **WHEN** `BACKUP_FORMAT=gzip` (or `zip`) is set without `BACKUP_LEVEL` and a backup is triggered
+- **THEN** the backup SHALL use level 6
 
 #### Scenario: Gzip compression
 

@@ -8,7 +8,7 @@ enshctl — Docker container and CLI for managing an Enshrouded dedicated game s
 
 ## Sources
 
-- `openspec/**` — intended behavior, when present (untracked locally, may be absent in CI). Discover with `openspec list --specs`; native file listing hides gitignored paths, so never conclude specs are absent from an empty glob.
+- `openspec/specs/**/spec.md` — intended behavior. Discover with `openspec list --specs`; root-scoped glob may hide gitignored `openspec/*`, so retry with glob `path` inside `openspec/specs` (or use `read`) and never conclude specs are absent from an empty root glob.
 - `pyproject.toml` — normative for pytest, ruff, pyrefly config. Do not duplicate its values here.
 - `justfile` — normative for workflow commands.
 - `docs/depotdownloader-quirks.md` — DepotDownloader fork behavior.
@@ -87,7 +87,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 Behavioral only; current thresholds and paths live in settings/config, not here.
 
 - Backup isolation: child-process execution, `flock` exclusion. Lock-held exit is expected, distinct from error exit.
-- Game tree at `/data/gameserver/` is rebuilt from scratch each start via `cp -as`. No FUSE or `SYS_ADMIN`.
+- Game tree at `/data/gameserver/` is rebuilt from scratch each start via pure-Python symlinks (not `cp -as` — avoids EPERM in CI). No FUSE or `SYS_ADMIN`.
 - DepotDownloader `-manifestfile`/`-depotkeys` require the Mod fork — see `docs/depotdownloader-quirks.md`.
 - Free-space guards gate installs and backups; see settings for current thresholds.
 - `PERSIST_FILES`: relative paths persisted to `/data/config/` and symlinked in; traversal entries skipped.
