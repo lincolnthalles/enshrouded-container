@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock, resolve_format
 from enshctl.retention import RetentionConfig, prune_category
-from enshctl.settings import load_settings
+from enshctl.settings import BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY, BACKUP_DIR_LIVE, load_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -71,11 +71,11 @@ def main() -> int:
     _lower_priority()
     settings = load_settings()
 
-    category = "live"
+    category = BACKUP_DIR_LIVE
     if args.cold:
-        category = "cold"
+        category = BACKUP_DIR_COLD
     elif args.emergency:
-        category = "emergency"
+        category = BACKUP_DIR_EMERGENCY
 
     fmt = resolve_format(args.format) if args.format is not None else None
 

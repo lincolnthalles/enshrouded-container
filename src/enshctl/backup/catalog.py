@@ -10,68 +10,15 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 from pathlib import Path
 
+from enshctl.backup.format import BackupFormat, detect_format, suffix_category
 from enshctl.settings import BACKUP_DIRS
 
 logger = logging.getLogger(__name__)
 
 
-class BackupFormat(Enum):
-    ZSTD = "zstd"
-    GZIP = "gzip"
-    ZIP = "zip"
-
-    def get_extension(self) -> str:
-        match self:
-            case BackupFormat.ZSTD:
-                return ".tar.zst"
-            case BackupFormat.GZIP:
-                return ".tar.gz"
-            case BackupFormat.ZIP:
-                return ".zip"
-
-    def get_max_level(self) -> int:
-        match self:
-            case BackupFormat.ZSTD:
-                return 22
-            case BackupFormat.GZIP:
-                return 9
-            case BackupFormat.ZIP:
-                return 9
-
-    def clamp_level(self, level: int) -> int:
-        max_level = self.get_max_level()
-        if level > max_level:
-            logger.warning(
-                "Compression level %d exceeds %s max (%d), clamping to %d", level, self.value, max_level, max_level
-            )
-            return max_level
-        return level
-
-    def get_default_level(self) -> int:
-        match self:
-            case BackupFormat.ZSTD:
-                return 9
-            case BackupFormat.GZIP:
-                return 6
-            case BackupFormat.ZIP:
-                return 6
-
-
 _FILENAME_RE = re.compile(r"^enshrouded-(\d{8})-(\d{6})(-cold|-emergency)?\.(tar\.zst|tar\.gz|zip)$")
-
-_CATEGORY_SUFFIX_MAP: dict[str, str] = {
-    "-cold": "cold",
-    "-emergency": "emergency",
-}
-
-_FORMAT_EXTENSION_MAP: dict[str, BackupFormat] = {
-    ".tar.zst": BackupFormat.ZSTD,
-    ".tar.gz": BackupFormat.GZIP,
-    ".zip": BackupFormat.ZIP,
-}
 
 
 @dataclass
@@ -115,8 +62,8 @@ def parse_backup_filename(filename: str) -> tuple[datetime, str, BackupFormat] |
         )
     except ValueError:
         return None
-    category = _CATEGORY_SUFFIX_MAP.get(suffix or "", "live")
-    fmt = _FORMAT_EXTENSION_MAP[f".{ext}"]
+    category = suffix_category(suffix or "")
+    fmt = detect_format(Path(f"dummy.{ext}"))
     return ts, category, fmt
 
 

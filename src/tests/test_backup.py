@@ -489,7 +489,7 @@ class TestCreateBackupDiskSpace:
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.core._local_now") as mock_now,
-            patch("enshctl.backup.archive._compress_zstd") as mock_compress,
+            patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
@@ -537,7 +537,7 @@ class TestCreateBackupDiskSpace:
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.core._local_now") as mock_now,
-            patch("enshctl.backup.archive._compress_zstd") as mock_compress,
+            patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
@@ -592,8 +592,8 @@ class TestCreateBackupOverrides:
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.core._local_now") as mock_now,
-            patch("enshctl.backup.archive._compress_zstd") as mock_zstd,
-            patch("enshctl.backup.archive._compress_gzip") as mock_gzip,
+            patch("enshctl.backup.format._compress_zstd") as mock_zstd,
+            patch("enshctl.backup.format._compress_gzip") as mock_gzip,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with an explicit format
@@ -624,7 +624,7 @@ class TestCreateBackupOverrides:
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.core._local_now") as mock_now,
-            patch("enshctl.backup.archive._compress_zstd") as mock_compress,
+            patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with explicit level 0

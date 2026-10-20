@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup.archive import ARCHIVE_ERRORS
-from enshctl.backup.catalog import BackupFormat, _local_now
+from enshctl.backup.catalog import _local_now
+from enshctl.backup.format import BackupFormat, category_suffix
 from enshctl.settings import SAVE_DIR
 from enshctl.utils import human_size
 
@@ -51,8 +52,6 @@ def create_backup(
     fmt: BackupFormat | None = None,
     level: int | None = None,
 ) -> Path | None:
-    from enshctl.backup.archive import _compress_gzip, _compress_zip, _compress_zstd  # noqa: PLC0415
-
     if not backup_needed():
         logger.info("Save directory empty or missing, skipping backup")
         return None
@@ -80,23 +79,13 @@ def create_backup(
         level = fmt.clamp_level(level)
     timestamp = _local_now().strftime("%Y%m%d-%H%M%S")
 
-    suffix = ""
-    if category == "cold":
-        suffix = "-cold"
-    elif category == "emergency":
-        suffix = "-emergency"
+    suffix = category_suffix(category)
 
     ext = fmt.get_extension()
     filename = f"enshrouded-{timestamp}{suffix}{ext}"
     output_path = backup_dir / filename
 
-    compressors = {
-        BackupFormat.ZSTD: _compress_zstd,
-        BackupFormat.GZIP: _compress_gzip,
-        BackupFormat.ZIP: _compress_zip,
-    }
-
-    compress = compressors[fmt]
+    compress = fmt.compress()
 
     try:
         compress(SAVE_DIR, output_path, level)
