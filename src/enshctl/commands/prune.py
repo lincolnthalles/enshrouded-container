@@ -4,12 +4,12 @@ import logging
 from pathlib import Path
 
 from enshctl.retention import RetentionConfig, prune_all
-from enshctl.settings import load_settings
+from enshctl.settings import AppSettings, load_settings
 
 logger = logging.getLogger(__name__)
 
 
-def run() -> None:
+def run(settings: AppSettings | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Prune old backups according to retention rules")
@@ -18,7 +18,7 @@ def run() -> None:
     )
     args, _ = parser.parse_known_args()
 
-    settings = load_settings()
+    settings = settings or load_settings()
     config = RetentionConfig.from_settings(settings)
     logger.info(
         "Pruning with retention: last=%d, hourly=%d, daily=%d, weekly=%d, monthly=%d, yearly=%d",

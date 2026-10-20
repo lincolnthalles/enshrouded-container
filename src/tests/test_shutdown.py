@@ -38,7 +38,7 @@ def test_shutdown_orders_sigint_before_cold_before_wineserver() -> None:
     with (
         patch.object(st.backup, "backup_needed", return_value=True),
         patch.object(st, "_run_backup", side_effect=record_cold) as mock_backup,
-        patch.object(st, "_cleanup_wineserver", side_effect=lambda: order.append("wine")),
+        patch.object(st, "_cleanup_wineserver", side_effect=lambda _s: order.append("wine")),
         patch("pathlib.Path.unlink"),
     ):
         # WHEN SIGTERM is handled
@@ -48,7 +48,11 @@ def test_shutdown_orders_sigint_before_cold_before_wineserver() -> None:
     # THEN SIGINT precedes the cold backup, which precedes Wine cleanup
     assert order == ["sigint", "cold", "wine"]
     # AND the cold backup waits on the lock with the configured bound
-    mock_backup.assert_called_once_with(["--cold", "--wait", "5"], detach=True)
+    from enshctl.backup_protocol import BackupRequest
+
+    mock_backup.assert_called_once_with(
+        BackupRequest(category="cold", wait_seconds=5, detach=True),
+    )
 
 
 def test_shutdown_sigkills_stubborn_server_after_grace() -> None:
@@ -76,12 +80,13 @@ def test_shutdown_sigkills_stubborn_server_after_grace() -> None:
 
 def test_cold_and_emergency_backups_detached() -> None:
     import enshctl.commands.start as st
+    from enshctl.backup_protocol import BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY, BackupRequest
 
     # GIVEN shutdown and emergency paths
     with patch.object(st.subprocess, "run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
         # WHEN a detached cold backup runs
-        st._run_backup(["--cold"], detach=True)
+        st._run_backup(BackupRequest(category=BACKUP_DIR_COLD, detach=True))
         # THEN it survives the parent's process group
         assert mock_run.call_args.kwargs["start_new_session"] is True
 
@@ -95,13 +100,14 @@ def test_cold_and_emergency_backups_detached() -> None:
     with patch.object(st.subprocess, "run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
         # WHEN a detached emergency backup runs
-        st._run_backup(["--emergency"], detach=True)
+        st._run_backup(BackupRequest(category=BACKUP_DIR_EMERGENCY, detach=True))
         # THEN it survives the parent's process group
         assert mock_run.call_args.kwargs["start_new_session"] is True
 
 
 def test_wait_expiry_warns() -> None:
     import enshctl.backup_runner as br
+    from enshctl.backup_protocol import BackupOutcome
 
     # GIVEN a lock held past the wait bound
     with (
@@ -113,7 +119,7 @@ def test_wait_expiry_warns() -> None:
         # WHEN the runner gives up waiting
         code = br.main()
     # THEN it exits lock-held (skip is reported via warning log)
-    assert code == br.EXIT_LOCK_HELD
+    assert code == BackupOutcome.LOCK_HELD
 
 
 def test_signal_game_uses_pkill() -> None:

@@ -7,7 +7,7 @@ from contextlib import suppress
 from os import chown, environ
 from typing import Any
 
-from enshctl.settings import CONFIG_FILE, GAME_CONFIG_EXAMPLE, LOG_DIR, OUTPUT_CONFIG, SAVE_DIR
+from enshctl.paths import CONFIG_FILE, GAME_CONFIG_EXAMPLE, LOG_DIR, OUTPUT_CONFIG, SAVE_DIR
 
 logger = logging.getLogger(__name__)
 

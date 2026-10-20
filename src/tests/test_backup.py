@@ -478,6 +478,7 @@ class TestCreateBackupDiskSpace:
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN ample free space and saves present
         mock_disk_usage.return_value.free = 5 * 1024**3
@@ -493,7 +494,7 @@ class TestCreateBackupDiskSpace:
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
-            result = create_backup("live", settings)
+            result = create_backup("live", BackupPlan.from_settings(settings))
             # THEN compression runs and a path returns
             mock_compress.assert_called_once()
             assert result is not None
@@ -507,12 +508,13 @@ class TestCreateBackupDiskSpace:
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN free space below the stop threshold
         mock_disk_usage.return_value.free = 500 * 1024**2
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating a backup
-        result = create_backup("live", settings)
+        result = create_backup("live", BackupPlan.from_settings(settings))
         # THEN the backup is skipped
         assert result is None
 
@@ -526,6 +528,7 @@ class TestCreateBackupDiskSpace:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN free space below the warn threshold but above stop
         mock_disk_usage.return_value.free = 1.5 * 1024**3
@@ -541,7 +544,7 @@ class TestCreateBackupDiskSpace:
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
-            result = create_backup("live", settings)
+            result = create_backup("live", BackupPlan.from_settings(settings))
             # THEN compression still runs
             mock_compress.assert_called_once()
             assert result is not None
@@ -559,12 +562,13 @@ class TestCreateBackupDiskSpace:
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN a full disk
         mock_disk_usage.return_value.free = 500 * 1024**2
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating an emergency backup
-        result = create_backup(category="emergency", settings=settings)
+        result = create_backup("emergency", BackupPlan.from_settings(settings))
         # THEN it is skipped
         assert result is None
 
@@ -581,6 +585,7 @@ class TestCreateBackupOverrides:
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import BackupFormat, create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN gzip configured but zstd requested explicitly
         mock_disk_usage.return_value.free = 5 * 1024**3
@@ -597,7 +602,7 @@ class TestCreateBackupOverrides:
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with an explicit format
-            result = create_backup("live", settings, fmt=BackupFormat.ZSTD)
+            result = create_backup("live", BackupPlan.from_settings(settings, fmt=BackupFormat.ZSTD))
             # THEN the explicit format's compressor runs
             mock_zstd.assert_called_once()
             mock_gzip.assert_not_called()
@@ -613,6 +618,7 @@ class TestCreateBackupOverrides:
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
 
         # GIVEN a configured level of 9
         mock_disk_usage.return_value.free = 5 * 1024**3
@@ -628,7 +634,7 @@ class TestCreateBackupOverrides:
         ):
             mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with explicit level 0
-            result = create_backup("live", settings, level=0)
+            result = create_backup("live", BackupPlan.from_settings(settings, level=0))
             # THEN level 0 reaches the compressor, not the configured 9
             mock_compress.assert_called_once_with(saves, result, 0)
             assert result is not None
@@ -639,6 +645,7 @@ class TestBackupRunnerFormatFlag:
 
     def test_uppercase_format_accepted(self, tmp_path: Path) -> None:
         import enshctl.backup_runner as br
+        from enshctl.backup_protocol import BackupOutcome
 
         # GIVEN an uppercase --format flag
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
@@ -650,7 +657,7 @@ class TestBackupRunnerFormatFlag:
         ):
             # WHEN running the backup runner
             # THEN parsing succeeds and execution reaches the lock check
-            assert br.main() == br.EXIT_LOCK_HELD
+            assert br.main() == BackupOutcome.LOCK_HELD
             mock_create.assert_not_called()
 
     def test_invalid_format_rejected(self) -> None:

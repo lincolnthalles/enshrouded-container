@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 from enshctl import install
 from enshctl.download import DownloadConfig
 from enshctl.install import DownloadDeps, InstallEnv
-from enshctl.settings import DEPOT_ID, AppSettings
+from enshctl.paths import DEPOT_ID
+from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
     from pathlib import Path

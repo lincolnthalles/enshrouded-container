@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import BackupInfo, scan_dir
-from enshctl.settings import BACKUP_DIRS
+from enshctl.paths import BACKUP_DIRS
 
 if TYPE_CHECKING:
     from collections.abc import Callable

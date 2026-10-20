@@ -1,6 +1,8 @@
 """Subcommand registry for the enshctl CLI."""
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+
+from enshctl.settings import AppSettings
 
 from .backup import run as cmd_backup
 from .debug_config import run as cmd_debug_config
@@ -12,10 +14,9 @@ from .start import run as cmd_start
 from .verify import run as cmd_verify
 from .version_info import run as cmd_version_info
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+RunCommand = Callable[[AppSettings | None], None]
 
-COMMANDS: dict[str, Callable[[], None]] = {
+COMMANDS: dict[str, RunCommand] = {
     "backup": cmd_backup,
     "debug-config": cmd_debug_config,
     "download": cmd_download,

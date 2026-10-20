@@ -7,7 +7,7 @@ import urllib.request
 from typing import TYPE_CHECKING
 
 from enshctl.download import InstallError
-from enshctl.settings import APP_ID
+from enshctl.paths import APP_ID
 
 if TYPE_CHECKING:
     from pathlib import Path

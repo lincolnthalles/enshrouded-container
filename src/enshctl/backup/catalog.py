@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from enshctl.backup.format import BackupFormat, detect_format, suffix_category
-from enshctl.settings import BACKUP_DIRS
+from enshctl.paths import BACKUP_DIRS
 
 logger = logging.getLogger(__name__)
 

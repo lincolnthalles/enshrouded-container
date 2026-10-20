@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 from enshctl.mods import (
     CONFIG_FILENAME,
+    GameTreePlan,
     build_game_tree,
 )
 from enshctl.settings import AppSettings
@@ -71,7 +72,7 @@ def test_build_game_tree_creates_symlink_tree(tmp_path: Path) -> None:
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings())
+        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
 
     # THEN manifest files are symlinked into the target
     assert (target / "enshrouded_server.exe").read_text() == "exe-content"
@@ -87,7 +88,7 @@ def test_build_game_tree_wipes_existing_directory(tmp_path: Path) -> None:
 
     # WHEN rebuilding the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings())
+        build_game_tree(GameTreePlan(version="test-version", persist_files=(), puid=1000, pgid=1000))
 
     # THEN stale contents are removed and manifest files present
     assert not (target / "old_file.txt").exists()
@@ -101,7 +102,7 @@ def test_build_game_tree_overlay_mods(tmp_path: Path) -> None:
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, mods):
-        build_game_tree("test-version", _settings())
+        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
 
     # THEN the mod file is present alongside manifest files
     assert (target / "plugins" / "my_mod.dll").is_symlink()
@@ -115,7 +116,7 @@ def test_build_game_tree_config_symlink(tmp_path: Path) -> None:
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings())
+        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
 
     # THEN the game config symlinks to the config dir
     game_config = target / CONFIG_FILENAME
@@ -135,7 +136,7 @@ def test_build_game_tree_manifest_not_found(tmp_path: Path) -> None:
         mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
         pytest.raises(FileNotFoundError),
     ):
-        build_game_tree("nonexistent-version", _settings())
+        build_game_tree(GameTreePlan("nonexistent-version", (), 1000, 1000))
 
 
 def test_build_game_tree_persist_files(tmp_path: Path) -> None:
@@ -145,7 +146,7 @@ def test_build_game_tree_persist_files(tmp_path: Path) -> None:
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings(persist_files=("extra.dat",)))
+        build_game_tree(GameTreePlan("test-version", ("extra.dat",), 1000, 1000))
 
     # THEN the file is copied to the config dir and symlinked from the target
     assert (config / "extra.dat").exists()
@@ -160,7 +161,7 @@ def test_build_game_tree_persist_files_skips_path_traversal(tmp_path: Path) -> N
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings(persist_files=("../../etc/passwd",)))
+        build_game_tree(GameTreePlan("test-version", ("../../etc/passwd",), 1000, 1000))
 
     # THEN the traversal is rejected
     assert not (tmp_path / "etc" / "passwd").exists()
@@ -173,7 +174,7 @@ def test_build_game_tree_persist_files_skips_missing(tmp_path: Path) -> None:
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings(persist_files=("nonexistent.dat",)))
+        build_game_tree(GameTreePlan("test-version", ("nonexistent.dat",), 1000, 1000))
 
     # THEN no file is created
     assert not (config / "nonexistent.dat").exists()
@@ -188,7 +189,7 @@ def test_build_game_tree_persist_files_copies_readonly_source(tmp_path: Path) ->
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings(persist_files=("persist.dat",)))
+        build_game_tree(GameTreePlan("test-version", ("persist.dat",), 1000, 1000))
 
     # THEN the persisted copy matches the source bytes
     persisted = config / "persist.dat"
@@ -203,7 +204,7 @@ def test_build_game_tree_persist_files_skips_config_filename(tmp_path: Path) -> 
 
     # WHEN building the game tree
     with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree("test-version", _settings(persist_files=(CONFIG_FILENAME,)))
+        build_game_tree(GameTreePlan("test-version", (CONFIG_FILENAME,), 1000, 1000))
 
     # THEN persist handling leaves the config symlink alone and creates nothing
     assert (target / CONFIG_FILENAME).is_symlink()

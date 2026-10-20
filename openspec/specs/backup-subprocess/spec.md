@@ -6,7 +6,7 @@ Subprocess-isolated backup execution with lowered priority and exclusive file lo
 
 ### Requirement: Backup runs in subprocess
 
-Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(extra_args=None, detach=False)` function. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at WARNING level.
+Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(request=None)` function taking a `BackupRequest`. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at WARNING level.
 
 #### Scenario: Scheduler spawns subprocess
 
@@ -16,12 +16,12 @@ Each backup invocation SHALL execute as a separate subprocess (`enshctl backup .
 #### Scenario: Shutdown handler spawns subprocess
 
 - **WHEN** the SIGTERM handler triggers a cold backup
-- **THEN** it SHALL call `_run_backup(["--cold", "--wait", "<SHUTDOWN_BACKUP_WAIT>"], detach=True)` which spawns `subprocess.run(["enshctl", "backup", "--cold", "--wait", "<secs>"], capture_output=True, start_new_session=True)` and wait for completion
+- **THEN** it SHALL call `_run_backup(BackupRequest(category="cold", wait_seconds=<SHUTDOWN_BACKUP_WAIT>, detach=True))` which spawns `subprocess.run(["enshctl", "backup", "--cold", "--wait", "<secs>"], capture_output=True, start_new_session=True)` and wait for completion
 
 #### Scenario: Crash handler spawns subprocess
 
 - **WHEN** the server exits unexpectedly and a backup is triggered
-- **THEN** it SHALL call `_run_backup(["--emergency"], detach=True)` which spawns `subprocess.run(["enshctl", "backup", "--emergency"], capture_output=True, start_new_session=True)` and wait for completion
+- **THEN** it SHALL call `_run_backup(BackupRequest(category="emergency", detach=True))` which spawns `subprocess.run(["enshctl", "backup", "--emergency"], capture_output=True, start_new_session=True)` and wait for completion
 
 #### Scenario: Child errors surface to parent
 
@@ -80,22 +80,22 @@ The backup subprocess SHALL acquire an exclusive non-blocking lock on `/data/bac
 
 ### Requirement: Backup subprocess runner
 
-The `backup_runner.main()` function SHALL return an integer exit code (`0` for success, `1` for lock held, `2` for error) instead of calling `sys.exit()`. The `commands/backup.py` wrapper SHALL call `sys.exit()` with the returned code. The exit code constants (`EXIT_SUCCESS`, `EXIT_LOCK_HELD`, `EXIT_ERROR`) SHALL be preserved.
+The `backup_runner.main()` function SHALL return a `BackupOutcome` enum value (`SUCCESS=0` for success, `LOCK_HELD=1` for lock held, `ERROR=2` for error) instead of calling `sys.exit()`. The `commands/backup.py` wrapper SHALL call `sys.exit()` with the returned code. The numeric exit-code contract (0/1/2) SHALL be preserved.
 
 #### Scenario: Successful backup returns 0
 
 - **WHEN** `backup_runner.main()` completes a backup successfully
-- **THEN** it SHALL return `0`
+- **THEN** it SHALL return `BackupOutcome.SUCCESS` (value `0`)
 
 #### Scenario: Lock held returns 1
 
 - **WHEN** `backup_runner.main()` cannot acquire the lock
-- **THEN** it SHALL return `1`
+- **THEN** it SHALL return `BackupOutcome.LOCK_HELD` (value `1`)
 
 #### Scenario: Error returns 2
 
 - **WHEN** `backup_runner.main()` encounters an OSError during backup
-- **THEN** it SHALL return `2`
+- **THEN** it SHALL return `BackupOutcome.ERROR` (value `2`)
 
 #### Scenario: commands/backup.py handles exit
 

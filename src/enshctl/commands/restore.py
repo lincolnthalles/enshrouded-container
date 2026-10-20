@@ -13,8 +13,9 @@ from enshctl.backup import (
     release_lock,
 )
 from enshctl.backup.catalog import scan_all, select
+from enshctl.paths import PIDFILE, RESTORE_TMP_DIR
 from enshctl.restore import RestoreError, restore_backup
-from enshctl.settings import PIDFILE, RESTORE_TMP_DIR, load_settings
+from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def _confirm_restore(filename: str, size: int) -> bool:
         return response.strip().lower() == "y"
 
 
-def run() -> None:
+def run(settings: AppSettings | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Restore a backup to /data/saves/")
@@ -50,7 +51,7 @@ def run() -> None:
     parser.add_argument("--list", action="store_true", default=False, dest="list_mode", help="List available backups")
     args, _ = parser.parse_known_args()
 
-    settings = load_settings()
+    settings = settings or load_settings()
     base_dir = Path(settings.backup_dir)
     is_tty = sys.stdout.isatty()
 

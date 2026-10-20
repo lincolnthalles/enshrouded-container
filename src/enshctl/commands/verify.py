@@ -6,13 +6,13 @@ from pathlib import Path
 
 from enshctl.backup import verify_archive
 from enshctl.backup.catalog import scan_all, scan_stray, select
-from enshctl.settings import load_settings
+from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
 
 logger = logging.getLogger(__name__)
 
 
-def run() -> None:
+def run(settings: AppSettings | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Verify backup archive integrity")
@@ -20,7 +20,7 @@ def run() -> None:
     parser.add_argument("--all", action="store_true", default=False, dest="all_mode", help="Verify all backups")
     args, _ = parser.parse_known_args()
 
-    settings = load_settings()
+    settings = settings or load_settings()
     base_dir = Path(settings.backup_dir)
     targets: list[Path] = []
     skipped: list[Path] = []

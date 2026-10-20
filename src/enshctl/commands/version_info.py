@@ -2,7 +2,8 @@
 
 from datetime import UTC, datetime
 
-from enshctl.settings import MANIFESTS_DIR, STATUS_FILE
+from enshctl.paths import MANIFESTS_DIR, STATUS_FILE
+from enshctl.settings import AppSettings  # noqa: TC001 — runtime annotation for registry test
 
 
 def _list_versions() -> list[dict[str, str]]:
@@ -23,8 +24,9 @@ def _list_versions() -> list[dict[str, str]]:
     return versions
 
 
-def run() -> None:
+def run(settings: AppSettings | None = None) -> None:
     """Run the version-info subcommand."""
+    _ = settings
     print()
 
     versions = _list_versions()

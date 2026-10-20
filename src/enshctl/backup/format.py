@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import zstandard
 
-from enshctl.settings import (
+from enshctl.paths import (
     BACKUP_DIR_COLD,
     BACKUP_DIR_EMERGENCY,
     BACKUP_DIR_LIVE,

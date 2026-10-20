@@ -6,7 +6,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from enshctl.download import MANIFEST_PATTERN, InstallError
-from enshctl.settings import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, LATEST_MANIFEST_FILE, MANIFEST_TMP_DIR
+from enshctl.paths import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, LATEST_MANIFEST_FILE, MANIFEST_TMP_DIR
 
 if TYPE_CHECKING:
     from collections.abc import Callable

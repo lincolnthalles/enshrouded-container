@@ -16,7 +16,7 @@ The `start` command SHALL orchestrate the full server lifecycle by delegating to
 #### Scenario: Backup spawning unified
 
 - **WHEN** a scheduled backup or a cold/emergency backup is triggered
-- **THEN** the same `_run_backup(extra_args=None|list[str], detach=False)` function SHALL be used for all paths, with cold and emergency backups passing `detach=True` so the child survives the parent's process group (`start_new_session=True`)
+- **THEN** the same `_run_backup(request=None)` function taking a `BackupRequest` SHALL be used for all paths, with cold and emergency backups passing `detach=True` so the child survives the parent's process group (`start_new_session=True`)
 
 ### Requirement: Startup sequence
 
@@ -43,7 +43,7 @@ The `start` command SHALL handle `SIGTERM` by stopping the backup scheduler, sen
 #### Scenario: SIGTERM triggers cold backup
 
 - **WHEN** `SIGTERM` is received and `BACKUP_COLD=1` and saves exist
-- **THEN** a detached cold backup subprocess SHALL be spawned via `_run_backup(["--cold", "--wait", "<SHUTDOWN_BACKUP_WAIT>"], detach=True)`
+- **THEN** a detached cold backup subprocess SHALL be spawned via `_run_backup(BackupRequest(category="cold", wait_seconds=<SHUTDOWN_BACKUP_WAIT>, detach=True))`
 
 #### Scenario: Shutdown order is SIGINT, backup, Wine cleanup
 
@@ -77,7 +77,7 @@ When the game server exits unexpectedly (not SIGTERM-initiated) and `BACKUP_EMER
 #### Scenario: Emergency backup spawned
 
 - **WHEN** the game server exits with a non-zero code and `context.shutdown_requested` is false and `BACKUP_EMERGENCY=1`
-- **THEN** `_run_backup(["--emergency"], detach=True)` SHALL be executed before `sys.exit()`
+- **THEN** `_run_backup(BackupRequest(category="emergency", detach=True))` SHALL be executed before `sys.exit()`
 
 #### Scenario: Emergency backup skipped when disabled
 

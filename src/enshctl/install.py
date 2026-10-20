@@ -20,7 +20,7 @@ from enshctl.manifests import (
     list_manifests_via_depotdownloader,
     resolve_manifest,
 )
-from enshctl.settings import DEPOT_ID, MANIFESTS_DIR, STATUS_FILE
+from enshctl.paths import DEPOT_ID, MANIFESTS_DIR, STATUS_FILE
 from enshctl.utils import human_size
 
 if TYPE_CHECKING:

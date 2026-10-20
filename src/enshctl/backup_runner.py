@@ -9,17 +9,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock, resolve_format
+from enshctl.backup.core import BackupPlan
+from enshctl.backup_protocol import BackupOutcome, BackupRequest, add_arguments
 from enshctl.retention import RetentionConfig, prune_category
-from enshctl.settings import BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY, BACKUP_DIR_LIVE, load_settings
+from enshctl.settings import AppSettings, load_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
-
-EXIT_SUCCESS = 0
-EXIT_LOCK_HELD = 1
-EXIT_ERROR = 2
 
 _priority_state = {"warned": False}
 
@@ -54,62 +52,51 @@ def _make_priority_lowerer() -> Callable[[], None]:
 _lower_priority = _make_priority_lowerer()
 
 
-def main() -> int:
+def main(settings: AppSettings | None = None) -> int:
     parser = argparse.ArgumentParser(description="Backup subprocess runner")
-    parser.add_argument("--format", default=None, type=str.lower, choices=["zstd", "gzip", "zip"])
-    parser.add_argument("--level", type=int, default=None)
-    parser.add_argument("--cold", action="store_true", default=False)
-    parser.add_argument("--emergency", action="store_true", default=False)
-    parser.add_argument(
-        "--wait",
-        type=int,
-        default=0,
-        help="Seconds to wait for the backup lock before giving up (0 = no wait)",
-    )
+    add_arguments(parser)
     args, _ = parser.parse_known_args()
+    request = BackupRequest.from_argv(args)
 
     _lower_priority()
-    settings = load_settings()
+    resolved = settings or load_settings()
 
-    category = BACKUP_DIR_LIVE
-    if args.cold:
-        category = BACKUP_DIR_COLD
-    elif args.emergency:
-        category = BACKUP_DIR_EMERGENCY
+    category = request.category
 
     fmt = resolve_format(args.format) if args.format is not None else None
 
-    lock_path = Path(settings.backup_dir) / LOCK_FILE
+    lock_path = Path(resolved.backup_dir) / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
     waited = False
-    if fd is None and args.wait > 0:
+    if fd is None and request.wait_seconds > 0:
         waited = True
-        deadline = time.monotonic() + args.wait
+        deadline = time.monotonic() + request.wait_seconds
         while fd is None and time.monotonic() < deadline:
             time.sleep(1)
             fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
         if waited:
-            logger.warning("Backup lock still held after %ds wait, skipping backup", args.wait)
+            logger.warning("Backup lock still held after %ds wait, skipping backup", request.wait_seconds)
         else:
             logger.info("Lock held by another process, skipping backup")
-        return EXIT_LOCK_HELD
+        return BackupOutcome.LOCK_HELD
 
     try:
-        result = create_backup(category, settings, fmt=fmt, level=args.level)
+        plan = BackupPlan.from_settings(resolved, fmt=fmt, level=args.level)
+        result = create_backup(category, plan)
         if result is not None:
-            config = RetentionConfig.from_settings(settings)
-            cat_dir = Path(settings.backup_dir) / category
+            config = RetentionConfig.from_settings(resolved)
+            cat_dir = Path(resolved.backup_dir) / category
             deleted = prune_category(cat_dir, config, dry_run=False)
             if deleted:
                 logger.info("Pruned %d backup(s) from %s", len(deleted), category)
     except OSError, ValueError:
         logger.exception("Backup failed")
-        return EXIT_ERROR
+        return BackupOutcome.ERROR
     finally:
         release_lock(fd)
 
-    return EXIT_SUCCESS
+    return BackupOutcome.SUCCESS
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import urllib.request
 from typing import TYPE_CHECKING
 
 from enshctl.download import InstallError
-from enshctl.settings import DEPOT_ID
+from enshctl.paths import DEPOT_ID
 
 if TYPE_CHECKING:
     from collections.abc import Callable

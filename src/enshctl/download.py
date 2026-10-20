@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from enshctl.settings import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, MANIFEST_TMP_DIR
+from enshctl.paths import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, MANIFEST_TMP_DIR
 
 if TYPE_CHECKING:
     from pathlib import Path

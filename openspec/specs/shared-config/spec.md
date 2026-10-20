@@ -6,17 +6,17 @@ Centralized configuration for the enshctl orchestrator: filesystem path constant
 
 ### Requirement: Centralized path constants
 
-The system SHALL define all filesystem path constants (`SAVE_DIR`, `MANIFESTS_DIR`, `CONFIG_DIR`, `MOUNT_POINT`, `WINE_PREFIX`, `BACKUP_BASE_DIR`) in a single `settings.py` module. All other modules SHALL import paths from this module rather than defining their own.
+The system SHALL define all filesystem path constants (`SAVE_DIR`, `MANIFESTS_DIR`, `CONFIG_DIR`, `MOUNT_POINT`, `WINE_PREFIX`, `BACKUP_BASE_DIR`) in a single `paths.py` module. All other modules SHALL import paths from this module rather than defining their own.
 
 #### Scenario: Single source of truth for SAVE_DIR
 
 - **WHEN** any module needs the saves directory path
-- **THEN** it SHALL import `SAVE_DIR` from `enshctl.settings` rather than defining `Path("/data/saves")` locally
+- **THEN** it SHALL import `SAVE_DIR` from `enshctl.paths` rather than defining `Path("/data/saves")` locally
 
 #### Scenario: No duplicated path definitions
 
 - **WHEN** the codebase is scanned for `Path("/data/manifests")`
-- **THEN** it SHALL appear only in `enshctl/settings.py`
+- **THEN** it SHALL appear only in `enshctl/paths.py`
 
 ### Requirement: Typed settings dataclass
 
@@ -39,7 +39,7 @@ The system SHALL provide a frozen dataclass `AppSettings` that holds all environ
 
 ### Requirement: Settings loaded once per process entrypoint
 
-Each process entrypoint SHALL call `load_settings()` once and pass the resulting `AppSettings` instance to subsystems via function parameters. Across a subprocess seam, the child process SHALL reload settings from its inherited environment rather than receiving them over IPC.
+Each process entrypoint SHALL call `load_settings()` once and pass the resulting `AppSettings` instance to subsystems via function parameters. Across a subprocess seam, the child process SHALL reload settings from its inherited environment rather than receiving them over IPC. The parent SHALL forward the settings-bearing environment keys (all `BACKUP_*`, `PUID`, `PGID`, plus the base allowlist) so the child observes the same configured values.
 
 #### Scenario: Start command loads once
 

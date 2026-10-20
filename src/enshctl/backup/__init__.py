@@ -25,7 +25,7 @@ from enshctl.backup.locking import (
     acquire_lock,
     release_lock,
 )
-from enshctl.settings import (
+from enshctl.paths import (
     BACKUP_DIR_COLD,
     BACKUP_DIR_EMERGENCY,
     BACKUP_DIR_LIVE,

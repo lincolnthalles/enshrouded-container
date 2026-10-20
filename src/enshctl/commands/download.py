@@ -7,12 +7,12 @@ from dataclasses import replace
 
 from enshctl import install
 from enshctl.download import InstallError
-from enshctl.settings import load_settings, normalize_api_url
+from enshctl.settings import AppSettings, load_settings, normalize_api_url
 
 logger = logging.getLogger(__name__)
 
 
-def run() -> None:
+def run(settings: AppSettings | None = None) -> None:
     """Run the download subcommand."""
     parser = argparse.ArgumentParser(description="Download a specific game manifest with optional authentication")
     parser.add_argument("manifest_id", help="Steam manifest ID to download")
@@ -31,14 +31,14 @@ def run() -> None:
     )
     args = parser.parse_args(sys.argv[2:])
 
-    settings = load_settings()
+    base = settings or load_settings()
     settings = replace(
-        settings,
-        steam_username=args.steam_username or settings.steam_username,
-        steam_password=args.steam_password or settings.steam_password,
-        manifesthub_api_token=args.api_token or settings.manifesthub_api_token,
-        manifesthub_api_url=normalize_api_url(args.api_url) or settings.manifesthub_api_url,
-        depot_keys_repo=args.depot_keys_repo or settings.depot_keys_repo,
+        base,
+        steam_username=args.steam_username or base.steam_username,
+        steam_password=args.steam_password or base.steam_password,
+        manifesthub_api_token=args.api_token or base.manifesthub_api_token,
+        manifesthub_api_url=normalize_api_url(args.api_url) or base.manifesthub_api_url,
+        depot_keys_repo=args.depot_keys_repo or base.depot_keys_repo,
     )
 
     username = settings.steam_username

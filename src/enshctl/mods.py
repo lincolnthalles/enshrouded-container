@@ -2,10 +2,11 @@
 
 import logging
 import shutil
+from dataclasses import dataclass
 from os import chown
 from typing import TYPE_CHECKING
 
-from enshctl.settings import CONFIG_DIR, CONFIG_FILENAME, MANIFESTS_DIR, MODS_DIR, MOUNT_POINT
+from enshctl.paths import CONFIG_DIR, CONFIG_FILENAME, MANIFESTS_DIR, MODS_DIR, MOUNT_POINT
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -15,6 +16,18 @@ if TYPE_CHECKING:
 DEFAULT_DLL_OVERRIDES = "mscoree,mshtml="
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GameTreePlan:
+    version: str
+    persist_files: tuple[str, ...]
+    puid: int
+    pgid: int
+
+    @classmethod
+    def from_settings(cls, version: str, settings: AppSettings) -> GameTreePlan:
+        return cls(version=version, persist_files=settings.persist_files, puid=settings.puid, pgid=settings.pgid)
 
 
 def generate_dll_overrides(mods_dir: Path = MODS_DIR) -> str:
@@ -78,7 +91,7 @@ def _setup_persist_files(manifest: Path, target: Path, persist_files: tuple[str,
         dest.symlink_to(persist_path)
 
 
-def build_game_tree(version: str, settings: AppSettings) -> None:
+def build_game_tree(plan: GameTreePlan) -> None:
     """Build /data/gameserver/ as a symlink tree from manifest + mods.
 
     On every startup:
@@ -88,7 +101,7 @@ def build_game_tree(version: str, settings: AppSettings) -> None:
     4. Config symlink to /data/config/enshrouded_server.json
     5. Handle PERSIST_FILES for additional writable files
     """
-    manifest = MANIFESTS_DIR / version
+    manifest = MANIFESTS_DIR / plan.version
     target = MOUNT_POINT
 
     if not manifest.exists():
@@ -131,12 +144,12 @@ def build_game_tree(version: str, settings: AppSettings) -> None:
     game_config.symlink_to(CONFIG_DIR / CONFIG_FILENAME)
 
     # PERSIST_FILES
-    _setup_persist_files(manifest, target, settings.persist_files)
+    _setup_persist_files(manifest, target, plan.persist_files)
 
     # Set ownership (may fail in unprivileged environments like CI)
     try:
-        chown(target, settings.puid, settings.pgid)
+        chown(target, plan.puid, plan.pgid)
     except OSError:
-        logger.debug("Could not chown %s to %d:%d (unprivileged environment?)", target, settings.puid, settings.pgid)
+        logger.debug("Could not chown %s to %d:%d (unprivileged environment?)", target, plan.puid, plan.pgid)
 
     logger.info("Game tree built at %s", target)

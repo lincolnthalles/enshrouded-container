@@ -31,7 +31,7 @@ The orchestrator SHALL recursively scan `/data/mods` for files with a `.dll` ext
 #### Scenario: User-provided WINEDLLOVERRIDES overrides generated value
 
 - **WHEN** the container receives `WINEDLLOVERRIDES` as an environment variable at runtime, including an empty or whitespace-only value
-- **THEN** the user-provided value SHALL be used verbatim and the generated value SHALL NOT be applied
+- **THEN** the raw environment value SHALL be used verbatim and the generated value SHALL NOT be applied. `AppSettings.winedlloverrides` SHALL preserve the raw value without stripping so that empty and whitespace-only values remain distinguishable from unset.
 
 #### Scenario: Empty WINEDLLOVERRIDES suppresses overrides
 

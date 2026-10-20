@@ -7,13 +7,16 @@ import argparse
 import logging
 import subprocess
 import sys
+from dataclasses import replace
 from logging.handlers import RotatingFileHandler
-from os import environ
 from pathlib import Path
-from typing import override
+from typing import TYPE_CHECKING, override
 
 from enshctl.commands import COMMANDS
-from enshctl.settings import load_settings
+from enshctl.settings import load_settings, normalize_api_url
+
+if TYPE_CHECKING:
+    from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -65,16 +68,14 @@ def main() -> None:
     )
     args = parser.parse_known_args()[0]
 
-    if args.log_tail:
-        environ.setdefault("LOG_TAIL", "true")
-    if args.api_token:
-        environ.setdefault("MANIFESTHUB_API_TOKEN", args.api_token)
-    if args.api_url:
-        environ.setdefault("MANIFESTHUB_API_URL", args.api_url)
-    if args.depot_keys_repo:
-        environ.setdefault("DEPOT_KEYS_REPO", args.depot_keys_repo)
-
-    settings = load_settings()
+    base = load_settings()
+    settings: AppSettings = replace(
+        base,
+        log_tail=args.log_tail or base.log_tail,
+        manifesthub_api_token=args.api_token or base.manifesthub_api_token,
+        manifesthub_api_url=normalize_api_url(args.api_url) or base.manifesthub_api_url,
+        depot_keys_repo=args.depot_keys_repo or base.depot_keys_repo,
+    )
     if settings.orchestrator_log_file:
         log_file = settings.orchestrator_log_file
         if log_file.lower() == "true":
@@ -93,7 +94,7 @@ def main() -> None:
         logging.getLogger().addHandler(file_handler)
 
     try:
-        COMMANDS[args.command]()
+        COMMANDS[args.command](settings)
     except OSError, RuntimeError, subprocess.SubprocessError, ValueError:
         logger.exception("Fatal error during %s", args.command)
         sys.exit(1)
