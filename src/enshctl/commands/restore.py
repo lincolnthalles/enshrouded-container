@@ -1,32 +1,23 @@
 """Restore subcommand — restore backup to /data/saves/."""
 
 import logging
-import shutil
 import sys
 from pathlib import Path
 from typing import Any, ClassVar, override
 
 from enshctl.backup import (
-    ARCHIVE_ERRORS,
     LOCK_FILE,
     SAVE_DIR,
     BackupInfo,
     acquire_lock,
-    decompress_archive,
     human_size,
     release_lock,
 )
 from enshctl.backup.catalog import scan_all, select
-from enshctl.settings import PIDFILE, load_settings
+from enshctl.restore import RestoreError, restore_backup
+from enshctl.settings import PIDFILE, RESTORE_TMP_DIR, load_settings
 
 logger = logging.getLogger(__name__)
-
-
-class RestoreError(Exception):
-    """Raised when a restore operation cannot be completed."""
-
-
-RESTORE_TMP_DIR = SAVE_DIR.parent / "saves-restore-tmp"
 
 
 def _check_server_running() -> bool:
@@ -103,71 +94,11 @@ def run() -> None:
         sys.exit(1)
 
     try:
-        _perform_restore(backup_path)
+        restore_backup(backup_path, saves_dir=SAVE_DIR, tmp_dir=RESTORE_TMP_DIR)
     except RestoreError:
         sys.exit(1)
     finally:
         release_lock(fd)
-
-
-def _perform_restore(backup_path: Path) -> None:
-    """Extract to temp, verify space, clear saves, move, cleanup."""
-    # Clean up any pre-existing temp directory
-    if RESTORE_TMP_DIR.exists():
-        shutil.rmtree(RESTORE_TMP_DIR)
-    RESTORE_TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Extract to temp directory first (saves untouched until extraction succeeds)
-    logger.info("Extracting backup to temporary directory...")
-    try:
-        decompress_archive(backup_path, RESTORE_TMP_DIR)
-    except ARCHIVE_ERRORS:
-        logger.exception("Restore extraction failed")
-        free = shutil.disk_usage(SAVE_DIR).free
-        logger.exception(
-            "Disk may be full. Free space: %s. Free up space (e.g., prune backups) and retry.",
-            human_size(free),
-        )
-        shutil.rmtree(RESTORE_TMP_DIR, ignore_errors=True)
-        raise RestoreError from None
-
-    # Compute sizes for the space check
-    tmp_size = sum(f.stat().st_size for f in RESTORE_TMP_DIR.rglob("*") if f.is_file())
-    saves_size = sum(f.stat().st_size for f in SAVE_DIR.rglob("*") if f.is_file()) if SAVE_DIR.exists() else 0
-    free_now = shutil.disk_usage(SAVE_DIR).free
-
-    # Verify space after clearing saves
-    if free_now + saves_size < tmp_size:
-        shortfall = tmp_size - free_now - saves_size
-        logger.error(
-            "Not enough disk space to complete restore. "
-            "Extracted data: %s. Current saves: %s. Free space: %s. "
-            "Need at least %s more. Free up space (e.g., prune backups).",
-            human_size(tmp_size),
-            human_size(saves_size),
-            human_size(free_now),
-            human_size(shortfall),
-        )
-        shutil.rmtree(RESTORE_TMP_DIR, ignore_errors=True)
-        raise RestoreError from None
-
-    # Clear saves contents (don't rmtree the mount point itself)
-    logger.info("Clearing current saves...")
-    if SAVE_DIR.exists():
-        for item in SAVE_DIR.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-
-    # Move extracted data from tmp to saves
-    logger.info("Moving restored data to saves directory...")
-    for item in RESTORE_TMP_DIR.iterdir():
-        shutil.move(str(item), str(SAVE_DIR / item.name))
-
-    # Cleanup tmp directory
-    shutil.rmtree(RESTORE_TMP_DIR, ignore_errors=True)
-    logger.info("Restore complete")
 
 
 def _list_backups(backups: list[Any]) -> None:
