@@ -73,9 +73,11 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 
 - Location: `src/tests`, full-package imports (`from enshctl.config import ...`). No conftest, no fixtures.
 - Test public contracts and behavior only, with deep equality over whole objects. Do not test private helpers directly or duplicate implementation logic in the test.
+- Do not change tests merely to match a wrong implementation.
+- Do not weaken existing assertions unless the expected behavior has genuinely changed and the reason is clear.
 - Deterministic: no wall-clock, network, or environment coupling unless the behavior under test requires it.
 - Isolation: inject env-derived values as arguments; do not mutate `os.environ`. Mock only at the system boundary (subprocess, filesystem, network), never domain logic.
-- Mark with `# GIVEN` / `# WHEN` / `# THEN` (`# AND` as needed).
+- Inline BDD-style comments `# GIVEN` / `# WHEN` / `# THEN` (`# AND` as needed) + high-signal description, splitting each test into logical blocks whenever it doesn't get redundant and improves readability.
 - Only high-value regression tests covering success, failure, and edge cases. No tests for statically defined values, no negative tests for removed logic.
 
 ## Docker
