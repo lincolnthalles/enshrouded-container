@@ -8,15 +8,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from enshctl.backup import (
     BackupFormat,
-    _local_now,
-    _local_tz,
     acquire_lock,
     parse_backup_filename,
     release_lock,
     resolve_format,
     resolve_level,
 )
-from enshctl.backup.catalog import scan_all, scan_dir, select, select_backup
+from enshctl.backup.catalog import _local_now, _local_tz, scan_all, scan_dir, select
 from enshctl.settings import AppSettings
 
 
@@ -258,9 +256,9 @@ def test_select_backup_compat_wrapper(tmp_path: Path) -> None:
     target = live / "enshrouded-20260529-120000.tar.zst"
     target.write_bytes(b"\x00" * 10)
     settings = replace(AppSettings(), backup_dir=str(base))
-    # WHEN selecting through the backward-compatible wrapper
-    # THEN it delegates to the catalog
-    assert select_backup(file="enshrouded-20260529-120000.tar.zst", settings=settings) == target
+    # WHEN selecting through the catalog directly
+    # THEN the file resolves
+    assert select(Path(settings.backup_dir), file="enshrouded-20260529-120000.tar.zst") == target
 
 
 def test_scan_dir_lists_newest_first(tmp_path: Path) -> None:
@@ -419,24 +417,23 @@ def test_parse_cron_aligns_to_clock_boundary() -> None:
     import time as _time
     from unittest.mock import patch as _patch
 
-    from enshctl.commands.start import parse_cron
+    from enshctl.scheduling import parse_cron
 
     struct = _time.struct_time((2026, 5, 30, 14, 37, 0, 4, 150, 0))
-    with _patch("enshctl.commands.start.time.localtime", return_value=struct):
+    with _patch("enshctl.scheduling.time.localtime", return_value=struct):
         result = parse_cron("*/5 * * * *")
     assert result is not None
     # At :37, next */5 boundary is :40 → 3 minutes = 180 seconds
     assert result == 180.0
 
 
-def test_parse_cron_barrel_reexport() -> None:
-    # GIVEN the backward-compat barrel surface
-    # WHEN importing parse_cron through enshctl.backup
-    # THEN the scheduler's implementation resolves
-    import enshctl.backup
-    from enshctl.commands.start import parse_cron as canonical
+def test_parse_cron_invalid_expression() -> None:
+    # GIVEN a malformed cron expression
+    from enshctl.scheduling import parse_cron
 
-    assert enshctl.backup.parse_cron is canonical
+    # WHEN parsing
+    # THEN no interval resolves
+    assert parse_cron("not a cron") is None
 
 
 def test_select_empty_direction_returns_none(tmp_path: Path) -> None:

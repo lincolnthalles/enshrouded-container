@@ -4,7 +4,8 @@ import logging
 import shutil
 from typing import TYPE_CHECKING
 
-from enshctl.backup import ARCHIVE_ERRORS, decompress_archive, human_size
+from enshctl.backup import ARCHIVE_ERRORS, decompress_archive
+from enshctl.utils import human_size
 
 if TYPE_CHECKING:
     from collections.abc import Callable

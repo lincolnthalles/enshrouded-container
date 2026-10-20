@@ -10,12 +10,12 @@ from enshctl.backup import (
     SAVE_DIR,
     BackupInfo,
     acquire_lock,
-    human_size,
     release_lock,
 )
 from enshctl.backup.catalog import scan_all, select
 from enshctl.restore import RestoreError, restore_backup
 from enshctl.settings import PIDFILE, RESTORE_TMP_DIR, load_settings
+from enshctl.utils import human_size
 
 logger = logging.getLogger(__name__)
 

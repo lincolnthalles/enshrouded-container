@@ -4,9 +4,10 @@ import logging
 import sys
 from pathlib import Path
 
-from enshctl.backup import human_size, verify_archive
+from enshctl.backup import verify_archive
 from enshctl.backup.catalog import scan_all, scan_stray, select
 from enshctl.settings import load_settings
+from enshctl.utils import human_size
 
 logger = logging.getLogger(__name__)
 

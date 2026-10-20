@@ -12,12 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from enshctl.settings import BACKUP_DIRS
-
-if TYPE_CHECKING:
-    from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -216,10 +212,3 @@ def select(base_dir: Path, file: str | None = None, when: str | None = None) -> 
             return backups[0].path
 
     return None
-
-
-list_backups = scan_all
-
-
-def select_backup(file: str | None = None, when: str | None = None, *, settings: AppSettings) -> Path | None:
-    return select(Path(settings.backup_dir), file=file, when=when)
