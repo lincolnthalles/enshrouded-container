@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl import backup, config, install, mods
+from enshctl.download import InstallError
 from enshctl.resources import start_resource_poller
 from enshctl.settings import (
     GAME_EXE,
@@ -463,7 +464,10 @@ def run() -> None:
     _ensure_wineprefix()
 
     install.prepare_manifests(settings)
-    target = install.ensure_install(settings)
+    try:
+        target = install.ensure_install(settings)
+    except InstallError:
+        sys.exit(1)
 
     mods.build_game_tree(target.name, settings)
     new_config = config.generate_config()

@@ -53,6 +53,7 @@ ignore = [
     'S607',
     'PLR0911', # Too many return statements.
     'PLR0912',
+    'PLR0913', # install.download_version groups auth/env/deps overrides; splitting would scatter the strategy.
     'PLR2004', # Magic value used in comparison.
     'S108', # Probable insecure usage of temporary file or directory.
     'S310', # Audit URL open for permitted schemes. Allowing use of `file:` or custom schemes is often unexpected.

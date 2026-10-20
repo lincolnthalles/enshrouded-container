@@ -15,8 +15,8 @@ def _assert_download_call(mock_install: MagicMock, username: str | None, passwor
     mock_install.download_version.assert_called_once()
     _args, kwargs = mock_install.download_version.call_args
     assert _args[0] == "999"
-    assert kwargs["steam_username"] == username
-    assert kwargs["steam_password"] == password
+    assert kwargs["auth"].username == username
+    assert kwargs["auth"].password == password
 
 
 class TestDownloadCredentialResolution:

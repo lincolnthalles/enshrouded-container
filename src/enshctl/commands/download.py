@@ -6,6 +6,7 @@ import sys
 from dataclasses import replace
 
 from enshctl import install
+from enshctl.download import InstallError
 from enshctl.settings import load_settings, normalize_api_url
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,14 @@ def run() -> None:
     )
 
     install.prepare_manifests(settings)
-    target = install.download_version(
-        args.manifest_id,
-        settings,
-        steam_username=username,
-        steam_password=password,
-    )
+    try:
+        from enshctl.install import DownloadAuth as _DownloadAuth
+
+        target = install.download_version(
+            args.manifest_id,
+            settings,
+            auth=_DownloadAuth(username=username, password=password),
+        )
+    except InstallError:
+        sys.exit(1)
     logger.info("Manifest %s downloaded at: %s", args.manifest_id, target)

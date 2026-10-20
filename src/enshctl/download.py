@@ -3,7 +3,6 @@
 import logging
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -13,6 +12,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class InstallError(Exception):
+    """Raised when game installation cannot be completed."""
 
 DEPOT_KEY_PATTERN = re.compile(r"Got depot key for (\d+) result: OK")
 MANIFEST_PATTERN = re.compile(r"Manifest\s+(\d+)\s+\((\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})\)")
@@ -82,6 +85,16 @@ def discover_depots() -> list[tuple[str, str]]:
     return depot_manifests
 
 
+def _with_manifest_override(
+    depot_manifests: list[tuple[str, str]],
+    manifest_id: str,
+) -> list[tuple[str, str]]:
+    """Override the target depot's manifest while leaving other depots at discovered IDs."""
+    return [
+        (depot, manifest_id if depot == DEPOT_ID else discovered_mid) for depot, discovered_mid in depot_manifests
+    ]
+
+
 def download_depots(
     manifest_id: str,
     target_dir: Path,
@@ -99,10 +112,7 @@ def download_depots(
             flush=True,
         )
 
-    depot_manifests = discover_depots()
-    depot_manifests = [
-        (depot, manifest_id if depot == DEPOT_ID else discovered_mid) for depot, discovered_mid in depot_manifests
-    ]
+    depot_manifests = _with_manifest_override(discover_depots(), manifest_id)
 
     strategy_label = (
         "QR login"
@@ -147,10 +157,10 @@ def download_depots(
 
         try:
             result = subprocess.run(depot_cmd, check=False, timeout=config.timeout)
-        except subprocess.TimeoutExpired:
-            logger.exception("DepotDownloader timed out (%ds) for depot %s", config.timeout, depot_id)
-            sys.exit(1)
+        except subprocess.TimeoutExpired as e:
+            msg = f"DepotDownloader timed out ({config.timeout}s) for depot {depot_id}"
+            raise InstallError(msg) from e
         else:
             if result.returncode != 0:
-                logger.error("DepotDownloader exited with code %d for depot %s", result.returncode, depot_id)
-                sys.exit(1)
+                msg = f"DepotDownloader exited with code {result.returncode} for depot {depot_id}"
+                raise InstallError(msg)

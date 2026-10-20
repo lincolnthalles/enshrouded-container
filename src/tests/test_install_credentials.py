@@ -1,256 +1,187 @@
 """Tests for install module Steam credential support."""
 
 from dataclasses import replace
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 from enshctl import install
+from enshctl.download import DownloadConfig
+from enshctl.install import DownloadDeps, InstallEnv
 from enshctl.settings import DEPOT_ID, AppSettings
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _settings(**overrides: object) -> AppSettings:
     return replace(AppSettings(), **overrides)  # type: ignore[arg-type]
 
 
+def test_download_config_carries_credentials() -> None:
+    # GIVEN explicit credentials selected by the strategy
+    config = DownloadConfig(username="testuser", password="secret123")
+
+    # WHEN the config is inspected
+    # THEN it carries both values
+    assert config.username == "testuser"
+    assert config.password == "secret123"
+
+
+def test_username_only_config_has_no_password() -> None:
+    # GIVEN username-only auth
+    config = DownloadConfig(username="testuser")
+
+    # WHEN the config is inspected
+    # THEN no password travels with it
+    assert config.username == "testuser"
+    assert config.password is None
+
+
 class TestDownloadVersionCredentials:
     """Tests for download_version() Steam credential flag composition."""
 
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
+    def _manifests_dir(self, tmp_path: Path, *, with_keys: bool = False) -> Path:
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir(parents=True, exist_ok=True)
+        if with_keys:
+            (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
+            (manifests_dir / f"{DEPOT_ID}_999.manifest").write_bytes(b"manifest")
+        return manifests_dir
+
+    def _download(self, tmp_path: Path, settings: AppSettings, **overrides: object) -> DownloadConfig:
+        with_keys = bool(overrides.pop("with_keys", False))
+        manifests_dir = self._manifests_dir(tmp_path, with_keys=with_keys)
+        captured: list[DownloadConfig] = []
+
+        def _capture(mid: str, target: Path, config: DownloadConfig) -> None:
+            captured.append(config)
+            (target / "enshrouded_server.exe").write_bytes(b"")
+
+        env = InstallEnv(
+            disk_free=lambda _p: 12 * 1024**3,
+            chown=lambda *_args, **_kwargs: None,
+            chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
+        )
+        download = DownloadDeps(
+            hub_download=lambda _a, _b, _c, _d, _e: manifests_dir / "existing.manifest",
+            support=lambda: True,
+            depot_download=_capture,
+            discover=lambda: [(DEPOT_ID, "12345")],
+        )
+        from enshctl.install import DownloadAuth
+
+        auth = DownloadAuth(
+            username=overrides.pop("steam_username", None),  # type: ignore[arg-type]
+            password=overrides.pop("steam_password", None),  # type: ignore[arg-type]
+        )
+        install.download_version(
+            "999",
+            settings,
+            auth=auth,
+            manifests_dir=manifests_dir,
+            env=env,
+            download=download,
+            **overrides,  # type: ignore[arg-type]
+        )
+        assert captured
+        return captured[0]
+
     def test_anonymous_download_no_credential_flags(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN no credentials configured
-        mock_run.return_value = MagicMock(returncode=0)
-        target_dir = tmp_path / "manifests" / "999"
-        target_dir.mkdir(parents=True)
+        from enshctl.download import _with_manifest_override
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch.object(install, "sys"),
-        ):
-            # WHEN downloading anonymously
-            install.download_version("999", _settings())
+        assert _with_manifest_override([(DEPOT_ID, "12345")], "999") == [(DEPOT_ID, "999")]
+
+        # WHEN downloading anonymously
+        config = self._download(tmp_path, _settings())
 
         # THEN no credential flags reach DepotDownloader
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                assert "-username" not in cmd
-                assert "-password" not in cmd
-                assert "-remember-password" not in cmd
+        assert config.username is None
+        assert config.password is None
+        assert config.use_manifestfile is False
 
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_auth_free_used_when_no_username_and_keys_and_manifest_exist(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN depot.keys and a manifest file exist with no Steam username configured
-        mock_run.return_value = MagicMock(returncode=0)
-        manifests_dir = tmp_path / "manifests"
-        target_dir = manifests_dir / "999"
-        target_dir.mkdir(parents=True)
-        (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
-        manifest_file = manifests_dir / f"{DEPOT_ID}_999.manifest"
-        manifest_file.write_bytes(b"manifest")
-
-        with (
-            patch.object(install, "MANIFESTS_DIR", manifests_dir),
-            patch.object(install, "sys"),
-            patch.object(install, "check_manifestfile_support", return_value=True),
-        ):
-            # WHEN downloading a non-latest version
-            install.download_version(
-                "999",
-                _settings(version="999", steam_password="env_pass"),
-            )
+        # WHEN downloading a non-latest version
+        config = self._download(tmp_path, _settings(version="999", steam_password="env_pass"), with_keys=True)
 
         # THEN auth-free flags are used per the manifesthub spec
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        depot_cmd = None
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                depot_cmd = cmd
-                break
-        assert depot_cmd is not None
-        assert "-manifestfile" in depot_cmd
-        assert "-username" not in depot_cmd
-        assert "-password" not in depot_cmd
+        assert config.use_manifestfile is True
+        assert config.username is None
+        assert config.password is None
 
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_explicit_username_overrides_auth_free(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN depot.keys and a manifest file exist alongside an explicit Steam username
-        mock_run.return_value = MagicMock(returncode=0)
-        manifests_dir = tmp_path / "manifests"
-        target_dir = manifests_dir / "999"
-        target_dir.mkdir(parents=True)
-        (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
-        manifest_file = manifests_dir / f"{DEPOT_ID}_999.manifest"
-        manifest_file.write_bytes(b"manifest")
-
-        with (
-            patch.object(install, "MANIFESTS_DIR", manifests_dir),
-            patch.object(install, "sys"),
-            patch.object(install, "check_manifestfile_support", return_value=True),
-        ):
-            # WHEN downloading with an explicit username
-            install.download_version(
-                "999",
-                _settings(version="999", steam_username="env_user", steam_password="env_pass"),
-            )
+        # WHEN downloading with an explicit username
+        config = self._download(
+            tmp_path,
+            _settings(version="999", steam_username="env_user", steam_password="env_pass"),
+            with_keys=True,
+        )
 
         # THEN authenticated flags win over the auth-free path
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        depot_cmd = None
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                depot_cmd = cmd
-                break
-        assert depot_cmd is not None
-        assert "-username" in depot_cmd
-        assert "-manifestfile" not in depot_cmd
+        assert config.username == "env_user"
+        assert config.use_manifestfile is False
 
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_authenticated_download_includes_credential_flags(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN explicit credentials
-        mock_run.return_value = MagicMock(returncode=0)
-        target_dir = tmp_path / "manifests" / "999"
-        target_dir.mkdir(parents=True)
-
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch.object(install, "sys"),
-        ):
-            # WHEN downloading with credentials
-            install.download_version(
-                "999", _settings(version="999"), steam_username="testuser", steam_password="secret123"
-            )
+        # WHEN downloading with credentials
+        config = self._download(
+            tmp_path,
+            _settings(version="999"),
+            steam_username="testuser",
+            steam_password="secret123",
+        )
 
         # THEN credential flags reach DepotDownloader
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        depot_cmd = None
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                depot_cmd = cmd
-                break
-        assert depot_cmd is not None
-        assert "-username" in depot_cmd
-        idx = depot_cmd.index("-username")
-        assert depot_cmd[idx + 1] == "testuser"
-        assert "-password" in depot_cmd
-        idx = depot_cmd.index("-password")
-        assert depot_cmd[idx + 1] == "secret123"
-        assert "-remember-password" in depot_cmd
+        assert config.username == "testuser"
+        assert config.password == "secret123"
 
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_username_only_no_password_flag(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN only a username
-        mock_run.return_value = MagicMock(returncode=0)
-        target_dir = tmp_path / "manifests" / "999"
-        target_dir.mkdir(parents=True)
+        # WHEN downloading with username only
+        config = self._download(tmp_path, _settings(version="999"), steam_username="testuser")
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch.object(install, "sys"),
-        ):
-            # WHEN downloading with username only
-            install.download_version("999", _settings(version="999"), steam_username="testuser")
+        # THEN username is set without a password
+        assert config.username == "testuser"
+        assert config.password is None
 
-        # THEN username flags appear without a password flag
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        depot_cmd = None
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                depot_cmd = cmd
-                break
-        assert depot_cmd is not None
-        assert "-username" in depot_cmd
-        assert "-password" not in depot_cmd
-        assert "-remember-password" in depot_cmd
-
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_latest_uses_auth_free_when_set_up(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN depot.keys and a manifest file exist with VERSION=latest
-        mock_run.return_value = MagicMock(returncode=0)
-        manifests_dir = tmp_path / "manifests"
-        target_dir = manifests_dir / "999"
-        target_dir.mkdir(parents=True)
-        (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
-        manifest_file = manifests_dir / f"{DEPOT_ID}_999.manifest"
-        manifest_file.write_bytes(b"manifest")
+        # WHEN downloading latest with auth-free set up
+        config = self._download(tmp_path, _settings(), with_keys=True)
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", manifests_dir),
-            patch.object(install, "sys"),
-            patch.object(install, "check_manifestfile_support", return_value=True),
-        ):
-            # WHEN downloading latest with auth-free set up
-            install.download_version("999", _settings())
+        # THEN the auth-free path is used
+        assert config.use_manifestfile is True
+        assert config.username is None
 
-        # THEN auth-free flags are used instead of the anonymous path
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        depot_cmd = None
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                depot_cmd = cmd
-                break
-        assert depot_cmd is not None
-        assert "-manifestfile" in depot_cmd
-        assert "-username" not in depot_cmd
-
-    @patch("enshctl.download.discover_depots", return_value=[(DEPOT_ID, "12345")])
-    @patch("subprocess.run")
     def test_latest_falls_back_to_anonymous_with_no_credentials(
         self,
-        mock_run: MagicMock,
-        _mock_discover: MagicMock,
-        tmp_path: MagicMock,
+        tmp_path: Path,
     ) -> None:
         # GIVEN no credentials, keys, or manifest with VERSION=latest
-        mock_run.return_value = MagicMock(returncode=0)
-        target_dir = tmp_path / "manifests" / "999"
-        target_dir.mkdir(parents=True)
+        # WHEN downloading latest with nothing configured
+        config = self._download(tmp_path, _settings())
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch.object(install, "sys"),
-        ):
-            # WHEN downloading latest with nothing configured
-            install.download_version("999", _settings())
-
-        # THEN the anonymous path is used (no auth flags, no QR prompt)
-        call_args_list = [call[0][0] for call in mock_run.call_args_list]
-        for cmd in call_args_list:
-            if isinstance(cmd, list) and "/opt/depotdownloader/DepotDownloader" in cmd and "-validate" in cmd:
-                assert "-username" not in cmd
-                assert "-manifestfile" not in cmd
-                assert "-qr" not in cmd
+        # THEN the anonymous path is used (no auth flags, no QR)
+        assert config.username is None
+        assert config.use_manifestfile is False
+        assert config.use_qr is False

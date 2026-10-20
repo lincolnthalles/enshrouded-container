@@ -2,9 +2,12 @@
 
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+from enshctl import install
+from enshctl.download import InstallError
+from enshctl.install import DownloadDeps, InstallEnv
 from enshctl.settings import AppSettings
 
 
@@ -15,62 +18,71 @@ def _settings(**overrides: object) -> AppSettings:
 class TestDownloadVersionQuota:
     """Tests for download_version() disk space checks."""
 
+    def _env(self, free: int) -> InstallEnv:
+        return InstallEnv(
+            disk_free=lambda _p: free,
+            chown=lambda *_args, **_kwargs: None,
+            chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
+        )
+
+    def _deps(self, **overrides: object) -> DownloadDeps:
+        base: dict[str, object] = {
+            "hub_download": lambda _a, _b, _c, _d, _e: Path("/nonexistent"),
+            "support": lambda: False,
+            "depot_download": lambda _mid, _target, _config: None,
+            "discover": lambda: [("2278521", "12345")],
+        }
+        base.update(overrides)
+        return DownloadDeps(**base)  # type: ignore[arg-type]
+
     def test_install_quota_sufficient_space(
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl import install
-
         # GIVEN a partially installed manifest and ample free space
         manifests_dir = tmp_path / "manifests"
         target_dir = manifests_dir / "999"
         target_dir.mkdir(parents=True)
         (target_dir / "enshrouded_server.exe").write_bytes(b"")
 
-        mock_disk = MagicMock()
-        mock_disk.free = 12 * 1024**3
+        def _fake_hub_download(_a: str, _b: str, _c: Path, _d: str, _e: str) -> Path:
+            path = manifests_dir / "existing.manifest"
+            path.write_bytes(b"")
+            return path
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", manifests_dir),
-            patch("enshctl.install.shutil.disk_usage", return_value=mock_disk),
-            patch("os.chown"),
-            patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
-            patch.object(install, "check_manifestfile_support", return_value=False),
-            patch.object(install, "download_depots"),
-        ):
-            # WHEN downloading with sufficient space
-            install.download_version("999", _settings(version="999", force_install=True))
+        # WHEN downloading with sufficient space
+        result = install.download_version(
+            "999",
+            _settings(version="999", force_install=True),
+            manifests_dir=manifests_dir,
+            env=self._env(12 * 1024**3),
+            download=self._deps(hub_download=_fake_hub_download),
+        )
 
-        assert True
+        # THEN the install completes
+        assert result == target_dir
 
     def test_install_quota_insufficient_space_aborts(
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl import install
-
         # GIVEN free space below the install threshold
-        mock_disk = MagicMock()
-        mock_disk.free = 8 * 1024**3
+        manifests_dir = tmp_path / "manifests"
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch("enshctl.install.shutil.disk_usage", return_value=mock_disk),
-            patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
-            patch.object(install, "check_manifestfile_support", return_value=False),
-            patch.object(install, "download_depots"),
-            pytest.raises(SystemExit),
-        ):
-            # WHEN downloading without enough space
-            # THEN the install aborts
-            install.download_version("999", _settings(version="999", force_install=True))
+        # WHEN downloading without enough space
+        # THEN the install aborts
+        with pytest.raises(InstallError):
+            install.download_version(
+                "999",
+                _settings(version="999", force_install=True),
+                manifests_dir=manifests_dir,
+                env=self._env(8 * 1024**3),
+            )
 
     def test_install_quota_same_manifest_partial_counts(
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl import install
-
         # GIVEN a partial download of the same manifest counting toward free space
         manifests_dir = tmp_path / "manifests"
         target_dir = manifests_dir / "999"
@@ -78,31 +90,23 @@ class TestDownloadVersionQuota:
         (target_dir / "partial_chunk.dat").write_bytes(b"data")
         (target_dir / "enshrouded_server.exe").write_bytes(b"")
 
-        mock_disk = MagicMock()
-        mock_disk.free = 9 * 1024**3
+        # WHEN the threshold sits just above free but below free+partial
+        # THEN the download proceeds
+        result = install.download_version(
+            "999",
+            _settings(version="999", force_install=True, min_free_space=9 * 1024**3 + 1),
+            manifests_dir=manifests_dir,
+            env=self._env(9 * 1024**3),
+            download=self._deps(),
+        )
 
-        with (
-            patch.object(install, "MANIFESTS_DIR", manifests_dir),
-            patch("enshctl.install.shutil.disk_usage", return_value=mock_disk),
-            patch("os.chown"),
-            patch.object(install, "_ensure_manifest_for_version", return_value=Path("/nonexistent")),
-            patch.object(install, "check_manifestfile_support", return_value=False),
-            patch.object(install, "download_depots"),
-        ):
-            # WHEN the threshold sits just above free but below free+partial
-            # THEN the download proceeds
-            install.download_version(
-                "999", _settings(version="999", force_install=True, min_free_space=9 * 1024**3 + 1)
-            )
-
-        assert True
+        # THEN the partial data counted toward the quota
+        assert result == target_dir
 
     def test_install_quota_different_manifest_partial_ignored(
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl import install
-
         # GIVEN partial data belonging to a different manifest
         manifests_dir = tmp_path / "manifests"
         manifests_dir.mkdir(parents=True)
@@ -110,14 +114,12 @@ class TestDownloadVersionQuota:
         partial_dir.mkdir()
         (partial_dir / "partial_chunk.dat").write_bytes(b"data")
 
-        mock_disk = MagicMock()
-        mock_disk.free = 7 * 1024**3
-
-        with (
-            patch.object(install, "MANIFESTS_DIR", tmp_path / "manifests"),
-            patch("enshctl.install.shutil.disk_usage", return_value=mock_disk),
-            pytest.raises(SystemExit),
-        ):
-            # WHEN downloading with insufficient space
-            # THEN the install aborts
-            install.download_version("999", _settings(version="999", force_install=True))
+        # WHEN downloading with insufficient space
+        # THEN the install aborts
+        with pytest.raises(InstallError):
+            install.download_version(
+                "999",
+                _settings(version="999", force_install=True),
+                manifests_dir=manifests_dir,
+                env=self._env(7 * 1024**3),
+            )
