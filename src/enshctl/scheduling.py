@@ -34,6 +34,9 @@ def parse_cron(expr: str) -> float | None:
     if minute_part.startswith("*/"):
         with suppress(ValueError):
             interval = int(minute_part[2:])
+            if interval < 1:
+                msg = f"Non-positive interval in cron expression: {expr}"
+                raise ValueError(msg)
             now = time.localtime()
             remaining = (interval - now.tm_min % interval) * 60 - now.tm_sec
             return float(max(remaining, 60))

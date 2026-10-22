@@ -4,195 +4,179 @@ Scheduled, shutdown-triggered, and crash-triggered backups of the saves director
 
 ## Requirements
 
-### Requirement: Backup module structure
+### Requirement: Scheduled live backups
 
-The backup system SHALL be organized as a `backup/` subpackage with the following modules: `__init__.py` (re-exports public API), `locking.py` (file lock management), `archive.py` (compression/decompression/verification facade over `format.py`), `format.py` (compression formats, level resolution, verification internals), `catalog.py` (filename grammar, `BackupInfo`, discovery via `scan_dir`/`scan_all`, selection via `select`), `core.py` (backup plans, disk space checks, backup creation). Minute-level cron parsing lives in `enshctl.scheduling` as `parse_cron`; `BackupOutcome` and `BackupRequest` live in `enshctl.backup_protocol`. The public API SHALL remain backward compatible — all existing imports from `enshctl.backup` SHALL continue to work.
+The container SHALL run periodic Backups of `/data/saves` in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup.
 
-#### Scenario: Backward compatible imports
+#### Scenario: Default backup schedule
 
-- **WHEN** code imports `from enshctl.backup import create_backup, acquire_lock` or `from enshctl.scheduling import parse_cron` or `from enshctl.backup_protocol import BackupOutcome, BackupRequest`
-- **THEN** the imports SHALL succeed without changes
+- **WHEN** no schedule is configured, live backups are enabled, and save data exists
+- **THEN** a live Backup SHALL be triggered every 60 minutes, starting at container start
 
-#### Scenario: Locking isolated
+#### Scenario: Custom backup schedule
 
-- **WHEN** `acquire_lock` and `release_lock` are needed
-- **THEN** they SHALL be defined in `enshctl/backup/locking.py` and re-exported from `__init__.py`
+- **WHEN** `BACKUP_CRON` requests every 5 minutes
+- **THEN** a live Backup SHALL be triggered every 5 minutes
 
-#### Scenario: Catalog owns discovery
+#### Scenario: Live backups disabled
 
-- **WHEN** a caller needs to list or select backups
-- **THEN** it SHALL use `enshctl.backup.catalog` (`scan_dir`, `scan_all`, `select`) rather than re-implementing directory scans
+- **WHEN** `BACKUP_LIVE` disables live backups
+- **THEN** no scheduler SHALL run and no scheduled backups SHALL be triggered
 
-### Requirement: Cron-driven backups
+#### Scenario: No save data skips scheduled backup
 
-The container SHALL run periodic backups of `/data/saves` on a configurable cron schedule. The default interval SHALL be every 60 minutes (`*/60 * * * *`). The `BACKUP_CRON` env var SHALL override the schedule. Each backup SHALL be spawned as a subprocess with lowered priority.
+- **WHEN** a scheduled backup triggers with `/data/saves` missing or empty
+- **THEN** that backup SHALL be skipped and the scheduler SHALL continue
 
-#### Scenario: Default backup interval
+#### Scenario: Shutdown stops scheduler
 
-- **WHEN** `BACKUP_CRON` is not set and the container is running
-- **THEN** a backup subprocess SHALL be spawned every 60 minutes
+- **WHEN** the container receives SIGTERM
+- **THEN** no further scheduled backups SHALL be triggered
 
-#### Scenario: Custom backup interval
+### Requirement: Minute-level schedule parsing
 
-- **WHEN** `BACKUP_CRON=*/5 * * * *` is set
-- **THEN** a backup subprocess SHALL be spawned every 5 minutes
+Backup scheduling SHALL support minute-level cron expressions only. Non-minute fields SHALL be ignored with a warning naming the ignored fields. An unsupported minute field SHALL warn and fall back to a default interval. A malformed schedule expression SHALL log an error and also fall back to the default interval so scheduled backups continue.
 
-### Requirement: Cron parser warns on unsupported fields
+#### Scenario: Hour field ignored with warning
 
-The `parse_cron` function in `enshctl.scheduling` SHALL log a WARNING when hours, days, months, or weekday fields contain non-`*` values (excluding `*/N` patterns in the minute field). The function SHALL return seconds until the next trigger based on the minute field, but the warning SHALL inform the user that other fields are ignored.
+- **WHEN** `BACKUP_CRON` includes an hour field value
+- **THEN** a warning SHALL name the ignored hour field and the trigger SHALL follow the minute field
 
-#### Scenario: Standard cron expression with hour field
+#### Scenario: Minute-only schedule accepted
 
-- **WHEN** `parse_cron("0 2 * * *")` is called
-- **THEN** it SHALL log a warning that the hour field (`2`) is ignored and return an interval based on minute `0`
+- **WHEN** `BACKUP_CRON` has a `*/30` minute field and no other fields set
+- **THEN** no warning SHALL be logged
 
-#### Scenario: Minute-only cron expression
+#### Scenario: Unsupported minute field falls back (including degenerate divisors)
 
-- **WHEN** `parse_cron("*/30 * * * *")` is called
-- **THEN** it SHALL NOT log a warning and SHALL return the seconds until the next 30-minute boundary
+- **WHEN** `BACKUP_CRON` has a comma-separated minute field, or any minute value the scheduler cannot divide by (e.g. `*/0`)
+- **THEN** a warning SHALL be logged and the default fallback interval SHALL apply
 
-#### Scenario: Unsupported minute field
+#### Scenario: Malformed expression falls back
 
-- **WHEN** `parse_cron("15,45 * * * *")` is called (comma-separated list)
-- **THEN** it SHALL log a warning about unsupported cron syntax and return `1200.0` (default fallback)
+- **WHEN** `BACKUP_CRON` is not a five-field expression
+- **THEN** an error SHALL be logged and scheduled backups SHALL continue at the default fallback interval
 
 ### Requirement: Backup compression
 
-Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The `BACKUP_FORMAT` env var SHALL set the default format (default: `zstd`). The `BACKUP_LEVEL` env var SHALL set the default level. Level clamping is per-format with a warning log if exceeded. The CLI accepts `--format` (case-insensitive) and `--level`; the child resolves them via `format.py`/`core.py` (`BackupPlan.from_settings`).
+Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The format and level SHALL be configurable via `BACKUP_FORMAT` and `BACKUP_LEVEL` env vars (defaults: zstd at format-default level) and per-invocation `--format`/`--level` CLI flags accepting any letter case. An unrecognized format in an env var SHALL fall back to zstd with a warning. Level clamping is per-format with a warning log if exceeded. An unrecognized CLI format flag SHALL reject the command.
 
 #### Scenario: Default compression
 
-- **WHEN** `BACKUP_FORMAT` and `BACKUP_LEVEL` are not set and a backup is triggered
-- **THEN** the output file SHALL be a valid zstd-compressed tar archive at level 9
+- **WHEN** no format or level is configured and a backup is triggered
+- **THEN** the output SHALL be a valid zstd-compressed tar archive at the format-default level
 
 #### Scenario: Per-format default levels
 
-- **WHEN** `BACKUP_FORMAT=gzip` (or `zip`) is set without `BACKUP_LEVEL` and a backup is triggered
-- **THEN** the backup SHALL use level 6
-
-#### Scenario: Gzip compression
-
-- **WHEN** `BACKUP_FORMAT=gzip` is set and a backup is triggered
-- **THEN** the output file SHALL be a valid gzip-compressed tar archive with `.tar.gz` extension
-
-#### Scenario: Zip compression
-
-- **WHEN** `BACKUP_FORMAT=zip` is set and a backup is triggered
-- **THEN** the output file SHALL be a valid zip archive with `.zip` extension
+- **WHEN** gzip (or zip) format is configured without a level and a backup is triggered
+- **THEN** the backup SHALL use that format's default level
 
 #### Scenario: Compression level clamped
 
-- **WHEN** `BACKUP_FORMAT=gzip` and `BACKUP_LEVEL=15` are set
-- **THEN** the level SHALL be clamped to 9 (gzip max) with a warning log
+- **WHEN** gzip format with an above-maximum level is configured
+- **THEN** the level SHALL be clamped to the gzip maximum with a warning log
 
 #### Scenario: Level via CLI flag
 
-- **WHEN** `enshctl backup --format zstd --level 19` is executed
+- **WHEN** a backup is invoked with zstd format and level 19
 - **THEN** the backup SHALL use zstd compression at level 19
-
-#### Scenario: Format flag case-insensitive
-
-- **WHEN** `enshctl backup --format ZSTD` is executed
-- **THEN** the backup SHALL use zstd compression instead of exiting with an error
 
 #### Scenario: Invalid format flag rejected
 
-- **WHEN** `enshctl backup --format lz4` is executed
+- **WHEN** a backup is invoked with an unrecognized `--format` value
 - **THEN** the command SHALL exit with code 2
 
-### Requirement: Shutdown-triggered backup
+### Requirement: Shutdown-triggered cold backup
 
-When the container receives SIGTERM and `BACKUP_COLD=1`, the entrypoint SHALL spawn a cold backup subprocess (`enshctl backup --cold`) in its own session (`start_new_session=True`) so it survives the parent's SIGTERM. The cold backup SHALL run after the game server exits and after any in-progress scheduled backup completes, but BEFORE Wine server cleanup.
+When the container receives SIGTERM or SIGINT and cold backups are enabled (`BACKUP_COLD=1`), the shutdown sequence SHALL be: stop the scheduler, send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit (force-killing after the timeout), create a detached cold backup after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s; see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, unless saves are absent.
 
 #### Scenario: Cold backup on shutdown
 
-- **WHEN** the container receives SIGTERM and `BACKUP_COLD=1` and `/data/saves` has data
-- **THEN** a cold backup subprocess SHALL be spawned with `start_new_session=True` and SHALL complete even if Docker sends SIGKILL to the parent's process group
+- **WHEN** the container receives SIGTERM with `BACKUP_COLD=1` and save data present
+- **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup, surviving the parent's process group
 
-#### Scenario: Cold backup runs before Wine cleanup
+#### Scenario: Cold backup disabled or no saves
 
-- **WHEN** the container receives SIGTERM and the game server has exited
-- **THEN** the cold backup SHALL complete before Wine server cleanup runs, ensuring save data is captured in a clean state
+- **WHEN** the container receives SIGTERM with `BACKUP_COLD=0`, or with no save data present
+- **THEN** no cold Backup SHALL be created and the entrypoint SHALL exit cleanly
+
+#### Scenario: Force kill after timeout
+
+- **WHEN** the game server does not exit within the shutdown timeout after SIGINT
+- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup and Wine cleanup steps
 
 #### Scenario: Cold backup waits for in-progress backup
 
-- **WHEN** the container receives SIGTERM and a scheduled backup subprocess is running
-- **THEN** the cold backup child SHALL wait up to `SHUTDOWN_BACKUP_WAIT` seconds (default 120s) for the scheduled backup to finish before starting, and SHALL skip the cold backup with a warning if the wait expires
+- **WHEN** the container receives SIGTERM and a Backup is already running
+- **THEN** the cold Backup SHALL wait up to `SHUTDOWN_BACKUP_WAIT` for it to finish (see `backup-subprocess` for lock-wait and skip behavior)
 
-#### Scenario: Cold backup disabled
+#### Scenario: Repeat signal ignored
 
-- **WHEN** the container receives SIGTERM and `BACKUP_COLD=0`
-- **THEN** no cold backup SHALL be created
+- **WHEN** a second SIGTERM or SIGINT arrives while shutdown is already in progress
+- **THEN** the handler SHALL return immediately without restarting the sequence
 
-#### Scenario: Shutdown backup with no save data
+### Requirement: Obsolete BACKUP_RETENTION setting ignored
 
-- **WHEN** the container receives SIGTERM and `/data/saves` is empty or does not exist
-- **THEN** no backup SHALL be created and the container SHALL exit cleanly
+When `BACKUP_RETENTION` is set in the environment, the value SHALL be ignored and a warning SHALL name the time-based retention alternatives.
 
-### Requirement: Backup retention
-
-**Reason**: Replaced by time-based retention system (see `backup-prune` capability).
-
-**Migration**: `BACKUP_RETENTION` env var is removed. Use `BACKUP_KEEP_LAST`, `BACKUP_KEEP_HOURLY`, `BACKUP_KEEP_DAILY`, `BACKUP_KEEP_WEEKLY`, `BACKUP_KEEP_MONTHLY`, `BACKUP_KEEP_YEARLY` instead. Set `BACKUP_KEEP_LAST=<N>` to replicate the old count-based behavior.
-
-#### Scenario: BACKUP_RETENTION removed
+#### Scenario: Stale BACKUP_RETENTION set
 
 - **WHEN** `BACKUP_RETENTION` is set in the environment
-- **THEN** the value SHALL be ignored and a warning SHALL be logged indicating the migration path
+- **THEN** the value SHALL be ignored and a warning SHALL name the time-based alternatives
 
-### Requirement: Backup directory
+### Requirement: Backup storage layout
 
-Backups SHALL be stored in category subdirectories under `/data/backups/`: `live/` for scheduled backups, `cold/` for graceful shutdown backups, `emergency/` for unexpected exit backups. The `BACKUP_DIR` env var SHALL override the base path.
+Backups SHALL be stored in Category subdirectories (`live`, `cold`, `emergency`) under a configurable base path (default `/data/backups/`).
 
-#### Scenario: Scheduled backup writes to live/
+#### Scenario: Scheduled backup stored in live
 
-- **WHEN** a scheduled backup triggers
-- **THEN** the backup file SHALL be written to `/data/backups/live/`
+- **WHEN** a scheduled Backup triggers
+- **THEN** the Backup SHALL be stored in the live Category directory
 
-#### Scenario: Cold backup writes to cold/
+#### Scenario: Cold backup stored in cold
 
-- **WHEN** a cold backup triggers
-- **THEN** the backup file SHALL be written to `/data/backups/cold/`
+- **WHEN** a cold Backup triggers
+- **THEN** the Backup SHALL be stored in the cold Category directory
 
-#### Scenario: Emergency backup writes to emergency/
+#### Scenario: Emergency backup stored in emergency
 
-- **WHEN** an emergency backup triggers
-- **THEN** the backup file SHALL be written to `/data/backups/emergency/`
+- **WHEN** an emergency Backup triggers
+- **THEN** the Backup SHALL be stored in the emergency Category directory
 
 #### Scenario: Custom base directory
 
-- **WHEN** `BACKUP_DIR=/mnt/nfs/backups` is set
-- **THEN** backups SHALL be written to `/mnt/nfs/backups/{live,cold,emergency}/`
+- **WHEN** the backup base directory is set to a custom path
+- **THEN** Backups SHALL be stored under that path in the three Category subdirectories
 
 ### Requirement: Backup filename format
 
-Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-emergency].<ext>` where `<ext>` is determined by the compression format: `tar.zst`, `tar.gz`, or `zip`.
+Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-emergency].<ext>` where `<ext>` is determined by the compression format: `tar.zst`, `tar.gz`, or `zip`. No other files in the Category directories are Backups.
 
 #### Scenario: Live backup filename
 
-- **WHEN** a live backup is created at 2026-05-29 12:00:00 UTC with zstd format
+- **WHEN** a live Backup is created at 2026-05-29 12:00:00 UTC with zstd format
 - **THEN** the filename SHALL be `enshrouded-20260529-120000.tar.zst`
 
 #### Scenario: Cold backup filename
 
-- **WHEN** a cold backup is created at 2026-05-29 18:00:00 UTC with zstd format
+- **WHEN** a cold Backup is created at 2026-05-29 18:00:00 UTC with zstd format
 - **THEN** the filename SHALL be `enshrouded-20260529-180000-cold.tar.zst`
 
 #### Scenario: Emergency backup filename with gzip
 
-- **WHEN** an emergency backup is created at 2026-05-29 03:45:22 UTC with gzip format
+- **WHEN** an emergency Backup is created at 2026-05-29 03:45:22 UTC with gzip format
 - **THEN** the filename SHALL be `enshrouded-20260529-034522-emergency.tar.gz`
 
 ### Requirement: Emergency backup on crash
 
-When the game server exits unexpectedly and `BACKUP_EMERGENCY=1`, the entrypoint SHALL spawn an emergency backup subprocess (`enshctl backup --emergency`) in its own session (`start_new_session=True`).
+When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before exiting with the server's exit code.
 
-#### Scenario: Emergency backup on unexpected exit
+#### Scenario: Emergency backup spawned
 
-- **WHEN** the game server exits with a non-zero code (not SIGTERM-initiated) and `BACKUP_EMERGENCY=1`
-- **THEN** an emergency backup subprocess SHALL be spawned with `start_new_session=True` and SHALL complete independently of the parent process
+- **WHEN** the game server exits unexpectedly with emergency backups enabled and save data present
+- **THEN** a detached emergency backup SHALL be created and the entrypoint SHALL exit with the server's exit code
 
-#### Scenario: Emergency backup disabled
+#### Scenario: Emergency backup skipped
 
-- **WHEN** the game server exits unexpectedly and `BACKUP_EMERGENCY=0`
-- **THEN** no emergency backup SHALL be created
+- **WHEN** the game server exits unexpectedly with `BACKUP_EMERGENCY=0`, or with no save data present
+- **THEN** no emergency Backup SHALL be created
