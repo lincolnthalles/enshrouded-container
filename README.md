@@ -9,6 +9,8 @@ Docker container for the Enshrouded Dedicated Server with version pinning, mod i
 
 > [!TIP]
 > The container is working just fine with game version 1.0.
+>
+> Images are published on [ghcr.io](https://github.com/lincolnthalles/enshrouded-container/pkgs/container/enshrouded-container).
 
 ## Requirements
 
