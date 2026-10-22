@@ -1,4 +1,4 @@
-# Development compose file — mounts ./data (already in .gitignore).
+# Development compose file — builds from repo and mounts ./data (already in .gitignore).
 # Usage: just dev
 
 services:
@@ -14,7 +14,8 @@ services:
     container_name: dev-enshrouded-server
     restart: no
     stop_grace_period: 300s
-    network_mode: host
+    ports:
+      - "15637:15637/udp"
     environment:
       VERSION: "latest"
       TZ: America/Sao_Paulo
@@ -63,7 +64,6 @@ services:
       ENSHROUDED_USER_GROUPS__1__CAN_EDIT_BASE: true
       ENSHROUDED_USER_GROUPS__1__CAN_EXTEND_BASE: true
       ENSHROUDED_USER_GROUPS__1__RESERVED_SLOTS: 1
-
     volumes:
       - enshrouded_wineprefix:/data/wineprefix
       - ./enshrouded-data/manifests:/data/manifests
@@ -73,13 +73,13 @@ services:
       - ./enshrouded-data/config:/data/config
       - ./enshrouded-data/logs:/data/logs
 
-    devices:
-      # This is required for ntsync to work inside Docker.
-      # If ntsync support is not enabled in your Linux kernel (`lsmod | grep ntsync`), comment out this section.
-      # Check if it's in use: `lsof -p $(pidof wineserver) | grep ntsync`
-      - /dev/ntsync:/dev/ntsync
-    cap_add:
-      - SYS_NICE
+    # Optional. Ntsync may improve the game server performance.
+    #!! If ntsync support is _not_ enabled in your Linux kernel (`lsmod | grep ntsync`),
+    #!! comment out this section, or the container will fail to start.
+    # To if ntsync is being used while the server is running: `lsof -p $(pidof wineserver) | grep ntsync`
+    devices: [/dev/ntsync:/dev/ntsync]
+    # Optional. Allow backups to run at a lower priority.
+    cap_add: [SYS_NICE]
 
 volumes:
   enshrouded_wineprefix:

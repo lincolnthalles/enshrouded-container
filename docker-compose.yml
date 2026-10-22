@@ -4,13 +4,8 @@ services:
     container_name: enshrouded-server
     restart: on-failure:5
     stop_grace_period: 300s
-    network_mode: host
-    # This likely won't work:
-    # ports:
-    #   - "15636:15636/udp"
-    #   - "15637:15637/udp"
-    #   - "27015:27015"
-    #   - "27015:27015/udp"
+    ports:
+      - "15637:15637/udp"
     environment:
       VERSION: "${VERSION:-latest}"
       BACKUP_CRON: "${BACKUP_CRON:-*/60 * * * *}"
@@ -27,24 +22,22 @@ services:
       ENSHROUDED_USER_GROUPS__0__NAME: "${ENSHROUDED_USER_GROUPS__0__NAME:-Default}"
       ENSHROUDED_USER_GROUPS__0__PASSWORD: "${ENSHROUDED_USER_GROUPS__0__PASSWORD:-}"
       TZ: "${TZ:-UTC}"
-
     volumes:
       - ./enshrouded-data/backups:/data/backups
       - ./enshrouded-data/config:/data/config
       - ./enshrouded-data/logs:/data/logs
       - ./enshrouded-data/mods:/data/mods
       - ./enshrouded-data/saves:/data/saves
-      - enshrouded_manifests:/data/manifests
+      - ./enshrouded-data/manifests:/data/manifests
       - enshrouded_wineprefix:/data/wineprefix
 
-    devices:
-      # Optional. May improve the game server performance.
-      # If ntsync support is not enabled in your Linux kernel (`lsmod | grep ntsync`), comment out this section.
-      # Check if it's in use: `lsof -p $(pidof wineserver) | grep ntsync`
-      - /dev/ntsync:/dev/ntsync
-    cap_add:
-      # Optional. Allow backups to run at a lower priority.
-      - SYS_NICE
+    # Optional. Ntsync may improve the game server performance.
+    #!! If ntsync support is _not_ enabled in your Linux kernel (`lsmod | grep ntsync`),
+    #!! comment out this section, or the container will fail to start.
+    # To if ntsync is being used while the server is running: `lsof -p $(pidof wineserver) | grep ntsync`
+    devices: [/dev/ntsync:/dev/ntsync]
+    # Optional. Allow backups to run at a lower priority.
+    cap_add: [SYS_NICE]
 
 volumes:
   enshrouded_manifests:
