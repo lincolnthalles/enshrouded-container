@@ -17,5 +17,6 @@ def run(settings: AppSettings | None = None) -> None:
     try:
         target = install.ensure_install(settings)
     except InstallError:
+        logger.exception("Install failed")
         sys.exit(1)
     logger.info("Game installed at: %s", target)

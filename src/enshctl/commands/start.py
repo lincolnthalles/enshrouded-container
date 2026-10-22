@@ -449,6 +449,7 @@ def run(settings: AppSettings | None = None) -> None:
     try:
         target = install.ensure_install(settings)
     except InstallError:
+        logger.exception("Start failed")
         sys.exit(1)
 
     mods.build_game_tree(mods.GameTreePlan.from_settings(target.name, settings))

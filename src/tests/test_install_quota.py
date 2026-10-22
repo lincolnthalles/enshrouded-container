@@ -29,7 +29,7 @@ class TestDownloadVersionQuota:
         base: dict[str, object] = {
             "hub_download": lambda _a, _b, _c, _d, _e: Path("/nonexistent"),
             "support": lambda: False,
-            "depot_download": lambda _mid, _target, _config: None,
+            "depot_download": lambda _mid, _target, _config, _pinned=None: None,
             "discover": lambda: [("2278521", "12345")],
         }
         base.update(overrides)

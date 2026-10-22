@@ -61,5 +61,6 @@ def run(settings: AppSettings | None = None) -> None:
             auth=_DownloadAuth(username=username, password=password),
         )
     except InstallError:
+        logger.exception("Download failed")
         sys.exit(1)
     logger.info("Manifest %s downloaded at: %s", args.manifest_id, target)

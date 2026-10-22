@@ -98,6 +98,7 @@ def download_depots(
     manifest_id: str,
     target_dir: Path,
     config: DownloadConfig,
+    depot_manifests: list[tuple[str, str]] | None = None,
 ) -> None:
     """Download game depots via DepotDownloader using the given strategy config.
 
@@ -111,7 +112,9 @@ def download_depots(
             flush=True,
         )
 
-    depot_manifests = _with_manifest_override(discover_depots(), manifest_id)
+    depot_manifests = (
+        _with_manifest_override(discover_depots(), manifest_id) if depot_manifests is None else depot_manifests
+    )
 
     strategy_label = (
         "QR login"

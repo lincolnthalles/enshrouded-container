@@ -49,7 +49,7 @@ class DownloadAuth:
 class DownloadDeps:
     hub_download: Callable[[str, str, Path, str, str], Path] = download_manifest_from_hub
     support: Callable[[], bool] = check_manifestfile_support
-    depot_download: Callable[[str, Path, DownloadConfig], None] = download_depots
+    depot_download: Callable[[str, Path, DownloadConfig, list[tuple[str, str]] | None], None] = download_depots
     discover: Callable[[], list[tuple[str, str]]] | None = None
 
 
@@ -59,11 +59,11 @@ def _download_all_depots(
     config: DownloadConfig,
     *,
     discover: Callable[[], list[tuple[str, str]]] | None = None,
-    depot_download: Callable[[str, Path, DownloadConfig], None] = download_depots,
+    depot_download: Callable[[str, Path, DownloadConfig, list[tuple[str, str]] | None], None] = download_depots,
 ) -> None:
     discover_fn = discover or discover_depots
-    for _depot_id, depot_manifest_id in _with_manifest_override(discover_fn(), manifest_id):
-        depot_download(depot_manifest_id or manifest_id, target_dir, config)
+    pinned = _with_manifest_override(discover_fn(), manifest_id)
+    depot_download(manifest_id, target_dir, config, pinned)
 
 
 def prepare_manifests(

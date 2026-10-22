@@ -1,47 +1,65 @@
 ## Purpose
 
-Shared depot download loop with strategy-specific behavior controlled by configuration.
+Shared depot download execution with credential-strategy behavior selected by Install.
 
 ## Requirements
 
-### Requirement: Shared depot download loop
+### Requirement: Per-depot download loop
 
-The system SHALL provide a single `download_depots(manifest_id, target_dir, config)` function in `enshctl.download` that iterates discovered depots and runs DepotDownloader for each. Strategy-specific behavior SHALL be controlled by a `DownloadConfig` dataclass.
+The Download SHALL fetch every discovered depot of the game, pinning the target depot to the requested Manifest ID while leaving other depots at their discovered Manifest IDs. When discovery reports nothing, the Download SHALL fall back to the default depot. A failed depot download or an expired download window SHALL fail the Install with an error naming the depot.
 
-#### Scenario: Auth-free download
+#### Scenario: Target depot pinned, others discovered
 
-- **WHEN** `download_depots` is called with `DownloadConfig(use_manifestfile=True, depot_keys_path=Path(...), manifest_file=Path(...))`
-- **THEN** DepotDownloader SHALL be invoked with `-depotkeys` and `-manifestfile` flags
+- **WHEN** a Download runs for a Manifest ID with the game depots discovered in a single pass
+- **THEN** the target depot SHALL fetch the requested Manifest ID in one invocation per depot, and other depots SHALL fetch their discovered Manifest IDs
 
-#### Scenario: Steam auth download
+#### Scenario: Discovery fallback
 
-- **WHEN** `download_depots` is called with `DownloadConfig(username="user", password="pass")`
-- **THEN** DepotDownloader SHALL be invoked with `-username` and `-password` flags
+- **WHEN** depot discovery reports no depots
+- **THEN** the Download SHALL target the default depot and log the fallback
 
-#### Scenario: Anonymous download
+#### Scenario: Depot failure fails install
 
-- **WHEN** `download_depots` is called with `DownloadConfig()` (defaults)
-- **THEN** DepotDownloader SHALL be invoked with no auth flags
+- **WHEN** DepotDownloader exits non-zero for a depot
+- **THEN** the Install SHALL fail with an error naming the depot and exit code
 
-#### Scenario: QR login download
+#### Scenario: Download timeout fails install
 
-- **WHEN** `download_depots` is called with `DownloadConfig(use_qr=True)`
-- **THEN** DepotDownloader SHALL be invoked with `-qr` flag
+- **WHEN** a depot download exceeds its time window
+- **THEN** the Install SHALL fail with an error naming the depot
 
-### Requirement: DownloadConfig dataclass
+### Requirement: Auth-free credential strategy
 
-The system SHALL provide a `DownloadConfig` dataclass in `enshctl.download` with fields for all strategy-specific parameters: `username`, `password`, `use_manifestfile`, `depot_keys_path`, `manifest_file`, `use_qr`. All fields SHALL have sensible defaults (None/False).
+When Install selects the auth-free strategy, the Download SHALL pass the depot keys and Manifest file to DepotDownloader instead of login credentials.
 
-#### Scenario: Default config is anonymous
+#### Scenario: Auth-free flags
 
-- **WHEN** `DownloadConfig()` is constructed with no arguments
-- **THEN** `username` SHALL be `None`, `use_manifestfile` SHALL be `False`, `use_qr` SHALL be `False`
+- **WHEN** the auth-free strategy is selected with keys and Manifest file present
+- **THEN** DepotDownloader SHALL receive the depot-keys and manifest-file inputs and no login flags
 
-### Requirement: Depot discovery preserved
+### Requirement: Steam credential strategy
 
-The system SHALL preserve the `discover_depots()` function in `enshctl.download`. It SHALL return a list of `(depot_id, manifest_id)` tuples by invoking DepotDownloader with `-manifest-only`.
+When Install selects the Steam strategy, the Download SHALL authenticate with the configured username and persist the login. The password SHALL be passed only when one is configured.
 
-#### Scenario: Multi-depot discovery
+#### Scenario: Steam auth flags
 
-- **WHEN** DepotDownloader reports depot keys for depots 2278521 and 2278522
-- **THEN** `discover_depots()` SHALL return both depot IDs with their current manifest IDs
+- **WHEN** the Steam strategy is selected with username and password configured
+- **THEN** DepotDownloader SHALL receive the username, password, and login-persistence inputs
+
+### Requirement: Anonymous strategy
+
+When Install selects the anonymous strategy, the Download SHALL pass no credential inputs to DepotDownloader.
+
+#### Scenario: Anonymous flags
+
+- **WHEN** the anonymous strategy is selected
+- **THEN** DepotDownloader SHALL receive the app, depot, and target-directory inputs with no credential inputs
+
+### Requirement: Interactive login strategy
+
+When Install selects the interactive strategy, the Download SHALL print login instructions and authenticate interactively.
+
+#### Scenario: Interactive login prompt
+
+- **WHEN** the interactive strategy is selected
+- **THEN** the Download SHALL print login instructions and authenticate interactively

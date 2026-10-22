@@ -54,7 +54,7 @@ class TestDownloadVersionCredentials:
         manifests_dir = self._manifests_dir(tmp_path, with_keys=with_keys)
         captured: list[DownloadConfig] = []
 
-        def _capture(mid: str, target: Path, config: DownloadConfig) -> None:
+        def _capture(mid: str, target: Path, config: DownloadConfig, _pinned: object = None) -> None:
             captured.append(config)
             (target / "enshrouded_server.exe").write_bytes(b"")
 
@@ -186,3 +186,43 @@ class TestDownloadVersionCredentials:
         assert config.username is None
         assert config.use_manifestfile is False
         assert config.use_qr is False
+
+    def test_multi_depot_download_runs_single_pass_with_pin(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # GIVEN two depots discovered with their own manifest IDs
+        # WHEN downloading a pinned manifest ID
+        manifests_dir = self._manifests_dir(tmp_path)
+        calls: list[tuple[str, list[tuple[str, str]]]] = []
+
+        def _capture(mid: str, target: Path, _config: DownloadConfig, pinned: object = None) -> None:
+            assert isinstance(pinned, list)
+            calls.append((mid, pinned))
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "enshrouded_server.exe").write_bytes(b"")
+
+        env = InstallEnv(
+            disk_free=lambda _p: 12 * 1024**3,
+            chown=lambda *_args, **_kwargs: None,
+            chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
+        )
+        download = DownloadDeps(
+            hub_download=lambda _a, _b, _c, _d, _e: manifests_dir / "existing.manifest",
+            support=lambda: True,
+            depot_download=_capture,
+            discover=lambda: [("2278521", "111"), ("2278522", "222")],
+        )
+        from enshctl.install import DownloadAuth
+
+        install.download_version(
+            "999",
+            _settings(version="999"),
+            auth=DownloadAuth(),
+            manifests_dir=manifests_dir,
+            env=env,
+            download=download,
+        )
+
+        # THEN depot download runs once with the pin applied to the target depot only
+        assert calls == [("999", [("2278521", "999"), ("2278522", "222")])]

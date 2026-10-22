@@ -6,129 +6,99 @@ Pinned, manifest-driven game installs via a self-contained DepotDownloader binar
 
 ### Requirement: DepotDownloader is installed
 
-The container SHALL include DepotDownloader built as a self-contained single-file binary at `/opt/depotdownloader/DepotDownloader`. The binary SHALL be built from the vendored source in `vendor/DepotDownloader/` in a Docker builder stage (`dotnet publish` with `--self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false`). The vendored tree is the only source; no `DD_REPO_URL` build argument is supported.
+The container SHALL include a self-contained DepotDownloader binary that runs without a .NET runtime in the final image. The binary SHALL authenticate anonymously with Steam's CDN for depot discovery.
 
 #### Scenario: DepotDownloader binary is present
 
-- **WHEN** `ls /opt/depotdownloader/DepotDownloader` is executed inside the container
+- **WHEN** `/opt/depotdownloader/DepotDownloader` is executed inside the container
 - **THEN** the file SHALL exist and be executable
 
-#### Scenario: DepotDownloader can authenticate
+#### Scenario: DepotDownloader can reach Steam
 
-- **WHEN** DepotDownloader is invoked with `-app 2278520`
-- **THEN** it SHALL authenticate anonymously with Steam's CDN and list depot information
+- **WHEN** DepotDownloader lists depot information for the game
+- **THEN** it SHALL authenticate anonymously with Steam's CDN
 
-#### Scenario: DepotDownloader source is vendored
+### Requirement: Version spec resolution
 
-- **WHEN** the image is built
-- **THEN** the binary SHALL be built from `vendor/DepotDownloader/`; there is no build argument to substitute a different repository
+The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: explicit digits, Steam build ID with `build:` prefix, and the `latest` keyword (newest Manifest by timestamp). A resolved `latest` Manifest ID SHALL be persisted in a control file for offline fallback.
 
-#### Scenario: No .NET runtime in final image
+#### Scenario: Explicit Manifest ID
 
-- **WHEN** the final image is inspected
-- **THEN** no .NET runtime packages (`dotnet-runtime-*`) SHALL be installed
+- **WHEN** `VERSION` is set to explicit digits
+- **THEN** those digits SHALL be used as the Manifest ID without network resolution
 
-### Requirement: Download orchestration
+#### Scenario: Build ID resolution
 
-The download driver in `enshctl.install` SHALL delegate the actual DepotDownloader invocation to `enshctl.download.download_depots()` via a `DownloadDeps` strategy bundle (with `download=`, `discover=`, `hub_download=`, `support=` injection points). The `download_version` function SHALL construct a `DownloadConfig` based on available credentials and pass it to `download_depots()` through `_download_all_depots()`. The auth-free, Steam-auth, and fallback paths SHALL be preserved.
+- **WHEN** `VERSION=build:<id>` is set
+- **THEN** the Manifest ID whose branch matches the build, or whose value ends with the build, SHALL be used; if none matches, the entrypoint SHALL warn and treat the build value itself as the Manifest ID
 
-#### Scenario: Auth-free path uses download_depots
+#### Scenario: Latest resolution and persistence
 
-- **WHEN** depot keys and manifest file exist and DepotDownloader supports `-manifestfile`
-- **THEN** `download_version` SHALL call `download_depots(mid, dir, DownloadConfig(use_manifestfile=True, depot_keys_path=..., manifest_file=...))`
+- **WHEN** `VERSION=latest` (or unset) is set and DepotDownloader reports manifests
+- **THEN** the newest Manifest ID SHALL be used and persisted to the control file
 
-#### Scenario: Steam auth path uses download_depots
+#### Scenario: Offline fallback to cached latest
 
-- **WHEN** `STEAM_USERNAME` and `STEAM_PASSWORD` are set
-- **THEN** `download_version` SHALL call `download_depots(mid, dir, DownloadConfig(username=..., password=...))`
+- **WHEN** `VERSION=latest` is set and DepotDownloader reports no manifests but the control file contains a cached Manifest ID
+- **THEN** the cached Manifest ID SHALL be used with a warning; if no cache exists, the entrypoint SHALL exit with code 1
 
-#### Scenario: No duplicated depot iteration
+### Requirement: Install ensures Manifest ID present
 
-- **WHEN** the codebase is scanned for the depot iteration pattern (loop over `_discover_depots()` + subprocess.run)
-- **THEN** it SHALL appear only in `enshctl/download.py`
-
-### Requirement: Game download to versioned path
-
-The game server SHALL be downloaded to `/data/manifests/<manifest_id>/` where `<manifest_id>` is the Steam depot manifest ID. The Enshrouded Windows dedicated server binary SHALL reside at `/data/manifests/<manifest_id>/enshrouded_server.exe`. Downloaded directories SHALL be treated as immutable — the entrypoint SHALL NOT write to them after download. The download SHALL use one of two methods: (1) auth-free via `depot.keys` + `.manifest` file, or (2) Steam login via username/password. If neither method is available for an old version, the system SHALL raise a clear error. Before downloading, the system SHALL check disk space (see `disk-space-guards` capability).
-
-#### Scenario: Download with explicit manifest ID
-
-- **WHEN** `VERSION=1234567890123456789` is set and the container starts
-- **THEN** the game SHALL be downloaded to `/data/manifests/1234567890123456789/` using `DepotDownloader -app 2278520 -depot 2278521 -manifest 1234567890123456789 -os windows`
-
-#### Scenario: Download latest version
-
-- **WHEN** `VERSION=latest` (or unset) and the container starts
-- **THEN** the latest available manifest SHALL be resolved, and the game SHALL be downloaded to `/data/manifests/<latest_manifest_id>/`
+Install SHALL resolve the Version spec to a Manifest ID and ensure the matching Manifest install exists: skip when the version directory carries the `.installed` marker (unless forced), otherwise Download it. The `.installed` marker SHALL be written only after the server binary is verified present.
 
 #### Scenario: Skip download if version already installed
 
-- **WHEN** the target version directory already exists and contains the `.installed` marker file (created only when DepotDownloader exits with code 0)
-- **THEN** the download SHALL be skipped
+- **WHEN** the Manifest install directory already exists with the `.installed` marker and no force flag is set
+- **THEN** no Download SHALL run
 
-#### Scenario: Download with auth-free depot.keys and manifest
+#### Scenario: Marker written only on verified install
 
-- **WHEN** `depot.keys` exists and the `.manifest` file for the requested version exists
-- **THEN** DepotDownloader SHALL be invoked with `-depotkeys /data/manifests/depot.keys -manifestfile /data/manifests/{depotId}_{manifestId}.manifest` instead of Steam login flags
+- **WHEN** a download completes but the server binary is absent from the Manifest install
+- **THEN** the Install SHALL fail and the `.installed` marker SHALL NOT be written
 
-#### Scenario: Error when no download method available
+### Requirement: Auth strategy selection
 
-- **WHEN** the requested version is not installed, no `.manifest` file exists, `STEAM_PASSWORD` is not set, and no manifest token is available
-- **THEN** the orchestrator SHALL exit with error: "Version {manifest_id} is not installed and cannot be downloaded. Provide STEAM_PASSWORD for Steam login, or use VERSION=latest."
+The Download SHALL use exactly one credential strategy, selected by availability: Steam username/password when a username is set; auth-free Manifest file plus depot keys when both exist and support is available; anonymous for `latest`; interactive login otherwise. When a Manifest file exists without depot keys, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
 
-#### Scenario: Abort on insufficient disk space
+#### Scenario: Auth-free preferred when material present
 
-- **WHEN** `effective_free = free + partial_download_size < INSTALL_MIN_FREE_SPACE` for the target manifest
-- **THEN** the system SHALL log an error with exact sizes and exit with code 1
+- **WHEN** no Steam username is configured, and depot keys and the Manifest file for the requested Manifest ID both exist with support available
+- **THEN** the Download SHALL use the Manifest file and keys instead of Steam login flags
+
+#### Scenario: Steam auth when credentials set
+
+- **WHEN** a Steam username is set, even when depot keys and the Manifest file exist
+- **THEN** the Download SHALL authenticate with the Steam credentials
+
+#### Scenario: Error when manifest exists without keys
+
+- **WHEN** the Manifest file exists for the requested Manifest ID but no depot keys are available
+- **THEN** the entrypoint SHALL exit with an error naming key setup and Steam login as alternatives
+
+#### Scenario: Interactive login otherwise
+
+- **WHEN** the requested Manifest ID is not installed, no Manifest file exists, and no credentials are available
+- **THEN** the Download SHALL print login instructions and authenticate interactively (anonymous when the Version spec is `latest`)
+
+### Requirement: Install-time guards and immutability
+
+Before Downloading, the Install SHALL verify sufficient disk space accounting for any partial download of the same Manifest ID (see `disk-space-guards`). After a successful Download, the Manifest install SHALL be marked read-only (see `game-tree-rebuild`). An interrupted download SHALL resume within quota on the next attempt.
 
 #### Scenario: Resume partial download within quota
 
-- **WHEN** the same manifest has a partial download directory and `effective_free >= INSTALL_MIN_FREE_SPACE`
-- **THEN** the download SHALL proceed (DepotDownloader will validate and resume)
-
-### Requirement: Manifest resolution
-
-The entrypoint SHALL support resolving versions via three methods: explicit manifest ID, Steam build ID with `build:` prefix, and `latest` keyword. The resolved latest manifest SHALL be persisted in the `/data/manifests/.latest-manifest` control file (`<manifest_id>-<timestamp>`) for offline fallback. No `versions.json` metadata file is written.
-
-#### Scenario: Resolve build ID to manifest
-
-- **WHEN** `VERSION=build:16789000` is set
-- **THEN** the entrypoint SHALL list manifests via DepotDownloader (each tagged `branch: "public"`) and return the first whose manifest ID ends with `16789000`; if none matches, it SHALL warn and treat `16789000` itself as the manifest ID
-
-#### Scenario: Persist latest manifest control file
-
-- **WHEN** `VERSION=latest` is resolved to a manifest
-- **THEN** `/data/manifests/.latest-manifest` SHALL be written with `<manifest_id>-<timestamp>`
-
-#### Scenario: Offline fallback to cached latest manifest
-
-- **WHEN** `VERSION=latest` is set and DepotDownloader returns no manifests but `.latest-manifest` contains a cached manifest ID
-- **THEN** the cached manifest ID SHALL be used with a warning; if no cache exists, the entrypoint SHALL exit with code 1
-
-### Requirement: install driver stays small
-
-The `enshctl.install` module SHALL remain a thin driver (under ~250 lines) delegating to domain modules: version/manifest resolution to `enshctl.manifests` (`fetch_manifests`, `list_manifests_via_depotdownloader`, `resolve_manifest`), key fetching to `enshctl.keys` (`ensure_depot_keys`), manifest fetching to `enshctl.hub` (`download_manifest_from_hub`, `fetch_missing_manifests`), depot download to `enshctl.download` (`DownloadConfig`, `discover_depots`, `download_depots`, `InstallError`), and filesystem helpers to `enshctl.files`. The module SHALL retain only the `ensure_install`/`download_version` orchestration (plus small `prepare_manifests` and the `_download_all_depots` fan-out) and injectable `InstallEnv`/`DownloadAuth`/`DownloadDeps` bundles.
-
-#### Scenario: install driver delegates to domain modules
-
-- **WHEN** `enshctl/install.py` is analyzed
-- **THEN** it SHALL import version resolution and manifest handling from `enshctl.manifests`, key management from `enshctl.keys`, hub fetching from `enshctl.hub`, and download from `enshctl.download`, keeping only `ensure_install`/`download_version` orchestration plus `prepare_manifests` and injectable env/auth/deps bundles
-
-#### Scenario: Download logic in download.py
-
-- **WHEN** `enshctl/download.py` is analyzed
-- **THEN** it SHALL contain `DownloadConfig`, `download_depots()`, and `discover_depots()`
+- **WHEN** the same Manifest ID has a partial download and effective free space meets the minimum
+- **THEN** the Download SHALL proceed and resume
 
 ### Requirement: Volume-based version switching
 
-The game server data SHALL be stored on a named Docker volume mapped to `/data/manifests` (currently `enshrouded_manifests` in `docker-compose.yml`). Changing the `VERSION` env var and restarting the container SHALL switch to the specified version without re-downloading previously installed versions.
+Manifest installs SHALL live on a persistent volume mapped to the manifests directory. Changing the Version spec and restarting the container SHALL switch to the specified Manifest ID without re-downloading previously installed versions.
 
 #### Scenario: Switch between installed versions
 
-- **WHEN** `VERSION=manifest_a` was used, then the container is restarted with `VERSION=manifest_b` (and manifest_b was previously downloaded)
-- **THEN** the game SHALL use `/data/manifests/manifest_b/` as the active version via the symlink tree, with no download
+- **WHEN** the container is restarted with a different Version spec whose Manifest ID was previously downloaded
+- **THEN** the game SHALL use that Manifest install with no download
 
 #### Scenario: Persist game data across container recreation
 
 - **WHEN** the container is removed and recreated with the same manifests volume
-- **THEN** all previously downloaded versions SHALL still be present
+- **THEN** all previously downloaded Manifest installs SHALL still be present

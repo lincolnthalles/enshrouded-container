@@ -79,6 +79,16 @@ def test_resolve_manifest_latest_no_cache_no_manifests_raises(tmp_path: Path) ->
         manifests.resolve_manifest("latest", control_file=control, fetch=list)
 
 
+def test_resolve_manifest_latest_picks_newest_across_months(tmp_path: Path) -> None:
+    control = tmp_path / ".latest-manifest"
+    found = [
+        {"manifest_id": "older", "timestamp": "12/15/2025 12:00:00", "branch": "public"},
+        {"manifest_id": "newer", "timestamp": "01/05/2026 12:00:00", "branch": "public"},
+    ]
+    result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+    assert result == "newer"
+
+
 def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
     control = tmp_path / ".latest-manifest"
     result = manifests.resolve_manifest("12345", control_file=control)

@@ -85,6 +85,21 @@ def list_manifests_via_depotdownloader() -> list[str]:
     return manifest_ids
 
 
+def _manifest_sort_key(manifest: dict[str, str]) -> tuple[int, int, int, int, int, int]:
+    """Parse a DepotDownloader manifest timestamp for chronological comparison.
+
+    DepotDownloader prints ``MM/DD/YYYY HH:MM:SS``; lexicographic comparison
+    misorders across months, so parse to a component tuple instead.
+    """
+    try:
+        date_part, time_part = manifest["timestamp"].split(" ", 1)
+        month, day, year = (int(part) for part in date_part.split("/"))
+        hour, minute, second = (int(part) for part in time_part.split(":"))
+    except ValueError:
+        return (0, 0, 0, 0, 0, 0)
+    return (year, month, day, hour, minute, second)
+
+
 def _write_latest_manifest(manifest_id: str, timestamp: str, control_file: Path = LATEST_MANIFEST_FILE) -> None:
     """Persist the resolved latest manifest to a control file for offline fallback."""
     control_file.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +144,7 @@ def resolve_manifest(
                 return cached
             msg = "No manifests found from DepotDownloader and no cached manifest available"
             raise InstallError(msg)
-        latest = max(manifests, key=lambda m: m["timestamp"])
+        latest = max(manifests, key=_manifest_sort_key)
         logger.info("Resolved 'latest' to manifest %s (%s)", latest["manifest_id"], latest["timestamp"])
         _write_latest_manifest(latest["manifest_id"], latest["timestamp"], control_file)
         return latest["manifest_id"]
