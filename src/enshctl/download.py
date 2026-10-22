@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class InstallError(Exception):
     """Raised when game installation cannot be completed."""
 
+
 DEPOT_KEY_PATTERN = re.compile(r"Got depot key for (\d+) result: OK")
 MANIFEST_PATTERN = re.compile(r"Manifest\s+(\d+)\s+\((\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})\)")
 
@@ -90,9 +91,7 @@ def _with_manifest_override(
     manifest_id: str,
 ) -> list[tuple[str, str]]:
     """Override the target depot's manifest while leaving other depots at discovered IDs."""
-    return [
-        (depot, manifest_id if depot == DEPOT_ID else discovered_mid) for depot, discovered_mid in depot_manifests
-    ]
+    return [(depot, manifest_id if depot == DEPOT_ID else discovered_mid) for depot, discovered_mid in depot_manifests]
 
 
 def download_depots(

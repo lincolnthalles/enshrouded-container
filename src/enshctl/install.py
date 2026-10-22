@@ -209,9 +209,7 @@ def download_version(
         strategy = "QR login"
         config = DownloadConfig(use_qr=True, print_qr_message=True)
     logger.info("Downloading manifest %s via %s", manifest_id, strategy)
-    _download_all_depots(
-        manifest_id, target_dir, config, discover=deps.discover, depot_download=deps.depot_download
-    )
+    _download_all_depots(manifest_id, target_dir, config, discover=deps.discover, depot_download=deps.depot_download)
 
     exe = target_dir / "enshrouded_server.exe"
     if not exe.exists():

@@ -10,12 +10,12 @@ The `verify` subcommand SHALL check archive integrity by streaming each backup t
 
 #### Scenario: Verify specific backup
 
-- **WHEN** `enshrouded-server verify --file enshrouded-20260529-120000.tar.zst` is executed
+- **WHEN** `enshctl verify --file enshrouded-20260529-120000.tar.zst` is executed
 - **THEN** the specified backup SHALL be decompressed and all members read to EOF, with OK or CORRUPT status reported
 
 #### Scenario: Verify all backups
 
-- **WHEN** `enshrouded-server verify` or `enshrouded-server verify --all` is executed
+- **WHEN** `enshctl verify` or `enshctl verify --all` is executed
 - **THEN** all backups in all categories (live, cold, emergency) SHALL be verified
 
 ### Requirement: Verify output format

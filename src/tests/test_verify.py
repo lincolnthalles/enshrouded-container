@@ -114,9 +114,7 @@ def test_scan_stray_missing_dir(tmp_path: Path) -> None:
 class TestVerifyAllStrayReporting:
     """Tests for verify --all stray-archive reporting."""
 
-    def test_stray_skipped_with_warning_and_count(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_stray_skipped_with_warning_and_count(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         from unittest.mock import patch
 
         from enshctl.commands import verify as verify_cmd

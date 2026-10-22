@@ -101,9 +101,7 @@ class AppSettings:
 
     # Shutdown
     shutdown_timeout: int = field(default_factory=lambda: max(0, _env_int("SHUTDOWN_TIMEOUT", 60)))
-    shutdown_backup_wait: int = field(
-        default_factory=lambda: max(0, _env_int("SHUTDOWN_BACKUP_WAIT", 120))
-    )
+    shutdown_backup_wait: int = field(default_factory=lambda: max(0, _env_int("SHUTDOWN_BACKUP_WAIT", 120)))
 
     # Orchestrator logging
     orchestrator_log_file: str = field(default_factory=lambda: _env_str("ORCHESTRATOR_LOG_FILE", ""))

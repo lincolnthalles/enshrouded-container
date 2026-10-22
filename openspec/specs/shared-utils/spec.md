@@ -6,7 +6,7 @@ Shared formatting and parsing helpers used across enshctl modules.
 
 ### Requirement: Unified human-readable size formatting
 
-The system SHALL provide a single `human_size(size_bytes: int | float) -> str` function in `enshctl.utils` that formats byte counts as human-readable strings (B, KB, MB, GB, TB). All modules SHALL use this function instead of implementing their own formatting.
+The system SHALL provide a single `human_size(size_bytes: float) -> str` function in `enshctl.utils` that formats byte counts as human-readable strings (B, KB, MB, GB, TB). All modules SHALL use this function instead of implementing their own formatting.
 
 #### Scenario: Format bytes
 

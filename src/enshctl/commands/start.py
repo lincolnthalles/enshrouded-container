@@ -170,9 +170,7 @@ def _run_backup(request: BackupRequest | None = None) -> None:
     try:
         outcome = BackupOutcome(result.returncode)
     except ValueError:
-        logger.warning(
-            "Backup subprocess returned unknown exit code %d: %s", result.returncode, output
-        )
+        logger.warning("Backup subprocess returned unknown exit code %d: %s", result.returncode, output)
         return
     if outcome == BackupOutcome.SUCCESS:
         for line in output.splitlines():
@@ -237,9 +235,7 @@ def _make_sigterm_handler(
                 try:
                     context.server_process.wait(timeout=settings.shutdown_timeout)
                 except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout
-                    )
+                    logger.warning("Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout)
                     with suppress(OSError):
                         context.server_process.kill()
                     with suppress(OSError):

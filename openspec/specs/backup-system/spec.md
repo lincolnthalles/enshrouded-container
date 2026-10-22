@@ -6,11 +6,11 @@ Scheduled, shutdown-triggered, and crash-triggered backups of the saves director
 
 ### Requirement: Backup module structure
 
-The backup system SHALL be organized as a `backup/` subpackage with the following modules: `__init__.py` (re-exports public API), `locking.py` (file lock management), `archive.py` (compression/decompression/verification), `catalog.py` (filename grammar, `BackupInfo`, discovery via `scan_dir`/`scan_all`, selection via `select`), `core.py` (format/level resolution, disk space checks, backup creation). The public API SHALL remain backward compatible — all existing imports from `enshctl.backup` SHALL continue to work.
+The backup system SHALL be organized as a `backup/` subpackage with the following modules: `__init__.py` (re-exports public API), `locking.py` (file lock management), `archive.py` (compression/decompression/verification facade over `format.py`), `format.py` (compression formats, level resolution, verification internals), `catalog.py` (filename grammar, `BackupInfo`, discovery via `scan_dir`/`scan_all`, selection via `select`), `core.py` (backup plans, disk space checks, backup creation). Minute-level cron parsing lives in `enshctl.scheduling` as `parse_cron`; `BackupOutcome` and `BackupRequest` live in `enshctl.backup_protocol`. The public API SHALL remain backward compatible — all existing imports from `enshctl.backup` SHALL continue to work.
 
 #### Scenario: Backward compatible imports
 
-- **WHEN** code imports `from enshctl.backup import create_backup, acquire_lock, parse_cron`
+- **WHEN** code imports `from enshctl.backup import create_backup, acquire_lock` or `from enshctl.scheduling import parse_cron` or `from enshctl.backup_protocol import BackupOutcome, BackupRequest`
 - **THEN** the imports SHALL succeed without changes
 
 #### Scenario: Locking isolated
@@ -39,7 +39,7 @@ The container SHALL run periodic backups of `/data/saves` on a configurable cron
 
 ### Requirement: Cron parser warns on unsupported fields
 
-The `parse_cron` function SHALL log a WARNING when hours, days, months, or weekday fields contain non-`*` values (excluding `*/N` patterns in the minute field). The function SHALL still return an interval based on the minute field, but the warning SHALL inform the user that other fields are ignored.
+The `parse_cron` function in `enshctl.scheduling` SHALL log a WARNING when hours, days, months, or weekday fields contain non-`*` values (excluding `*/N` patterns in the minute field). The function SHALL return seconds until the next trigger based on the minute field, but the warning SHALL inform the user that other fields are ignored.
 
 #### Scenario: Standard cron expression with hour field
 
@@ -49,7 +49,7 @@ The `parse_cron` function SHALL log a WARNING when hours, days, months, or weekd
 #### Scenario: Minute-only cron expression
 
 - **WHEN** `parse_cron("*/30 * * * *")` is called
-- **THEN** it SHALL NOT log a warning and SHALL return `1800.0`
+- **THEN** it SHALL NOT log a warning and SHALL return the seconds until the next 30-minute boundary
 
 #### Scenario: Unsupported minute field
 
@@ -58,7 +58,7 @@ The `parse_cron` function SHALL log a WARNING when hours, days, months, or weekd
 
 ### Requirement: Backup compression
 
-Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The `BACKUP_FORMAT` env var SHALL set the default format (default: `zstd`). The `BACKUP_LEVEL` env var SHALL set the default level. Default levels are per-format: zstd `9`, gzip `6`, zip `6`. Levels SHALL be clamped to the format's maximum with a warning log if exceeded.
+Backups SHALL support configurable compression formats (zstd, gzip, zip) and compression levels. The `BACKUP_FORMAT` env var SHALL set the default format (default: `zstd`). The `BACKUP_LEVEL` env var SHALL set the default level. Level clamping is per-format with a warning log if exceeded. The CLI accepts `--format` (case-insensitive) and `--level`; the child resolves them via `format.py`/`core.py` (`BackupPlan.from_settings`).
 
 #### Scenario: Default compression
 
@@ -117,7 +117,7 @@ When the container receives SIGTERM and `BACKUP_COLD=1`, the entrypoint SHALL sp
 #### Scenario: Cold backup waits for in-progress backup
 
 - **WHEN** the container receives SIGTERM and a scheduled backup subprocess is running
-- **THEN** the handler SHALL wait up to `SHUTDOWN_BACKUP_WAIT` seconds (default 120s) for the scheduled backup to finish before spawning the cold backup, and SHALL skip the cold backup with a warning if the wait expires
+- **THEN** the cold backup child SHALL wait up to `SHUTDOWN_BACKUP_WAIT` seconds (default 120s) for the scheduled backup to finish before starting, and SHALL skip the cold backup with a warning if the wait expires
 
 #### Scenario: Cold backup disabled
 

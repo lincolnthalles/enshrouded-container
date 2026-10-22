@@ -104,12 +104,12 @@ The `prune` subcommand SHALL apply retention rules to all categories on demand. 
 
 #### Scenario: Manual prune
 
-- **WHEN** `enshrouded-server prune` is executed
+- **WHEN** `enshctl prune` is executed
 - **THEN** retention rules SHALL be applied to all categories and matching backups SHALL be deleted
 
 #### Scenario: Dry-run prune
 
-- **WHEN** `enshrouded-server prune --dry-run` is executed
+- **WHEN** `enshctl prune --dry-run` is executed
 - **THEN** a list of backups that would be deleted SHALL be printed, but no files SHALL be removed
 
 ### Requirement: All-zero configuration is a no-op

@@ -30,7 +30,7 @@ The container SHALL include DepotDownloader built as a self-contained single-fil
 
 ### Requirement: Download orchestration
 
-The `download_version` function in `enshctl.install` SHALL delegate the actual DepotDownloader invocation to `enshctl.download.download_depots()`. The four `_download_version_*` functions SHALL be removed from `install.py`. The `download_version` function SHALL construct a `DownloadConfig` based on available credentials and pass it to `download_depots()`.
+The download driver in `enshctl.install` SHALL delegate the actual DepotDownloader invocation to `enshctl.download.download_depots()` via a `DownloadDeps` strategy bundle (with `download=`, `discover=`, `hub_download=`, `support=` injection points). The `download_version` function SHALL construct a `DownloadConfig` based on available credentials and pass it to `download_depots()` through `_download_all_depots()`. The auth-free, Steam-auth, and fallback paths SHALL be preserved.
 
 #### Scenario: Auth-free path uses download_depots
 
@@ -105,14 +105,14 @@ The entrypoint SHALL support resolving versions via three methods: explicit mani
 - **WHEN** `VERSION=latest` is set and DepotDownloader returns no manifests but `.latest-manifest` contains a cached manifest ID
 - **THEN** the cached manifest ID SHALL be used with a warning; if no cache exists, the entrypoint SHALL exit with code 1
 
-### Requirement: install.py size reduction
+### Requirement: install driver stays small
 
-The `enshctl/install.py` module SHALL be reduced from approximately 701 lines to approximately 400 lines by moving download strategy code to `enshctl/download.py`. The module SHALL retain: version resolution, manifest management, key fetching, and the `ensure_install` orchestration function.
+The `enshctl.install` module SHALL remain a thin driver (under ~250 lines) delegating to domain modules: version/manifest resolution to `enshctl.manifests` (`fetch_manifests`, `list_manifests_via_depotdownloader`, `resolve_manifest`), key fetching to `enshctl.keys` (`ensure_depot_keys`), manifest fetching to `enshctl.hub` (`download_manifest_from_hub`, `fetch_missing_manifests`), depot download to `enshctl.download` (`DownloadConfig`, `discover_depots`, `download_depots`, `InstallError`), and filesystem helpers to `enshctl.files`. The module SHALL retain only the `ensure_install`/`download_version` orchestration (plus small `prepare_manifests` and the `_download_all_depots` fan-out) and injectable `InstallEnv`/`DownloadAuth`/`DownloadDeps` bundles.
 
-#### Scenario: install.py focused on manifest management
+#### Scenario: install driver delegates to domain modules
 
 - **WHEN** `enshctl/install.py` is analyzed
-- **THEN** it SHALL contain version resolution (`resolve_manifest`), manifest fetching (`fetch_manifests`, `prepare_manifests`), key management (`ensure_depot_keys`, `parse_key_vdf`), and install orchestration (`ensure_install`, `download_version`)
+- **THEN** it SHALL import version resolution and manifest handling from `enshctl.manifests`, key management from `enshctl.keys`, hub fetching from `enshctl.hub`, and download from `enshctl.download`, keeping only `ensure_install`/`download_version` orchestration plus `prepare_manifests` and injectable env/auth/deps bundles
 
 #### Scenario: Download logic in download.py
 
@@ -121,7 +121,7 @@ The `enshctl/install.py` module SHALL be reduced from approximately 701 lines to
 
 ### Requirement: Volume-based version switching
 
-The game server data SHALL be stored on a named Docker volume `gameserver` mapped to `/data/manifests`. Changing the `VERSION` env var and restarting the container SHALL switch to the specified version without re-downloading previously installed versions.
+The game server data SHALL be stored on a named Docker volume mapped to `/data/manifests` (currently `enshrouded_manifests` in `docker-compose.yml`). Changing the `VERSION` env var and restarting the container SHALL switch to the specified version without re-downloading previously installed versions.
 
 #### Scenario: Switch between installed versions
 
@@ -130,5 +130,5 @@ The game server data SHALL be stored on a named Docker volume `gameserver` mappe
 
 #### Scenario: Persist game data across container recreation
 
-- **WHEN** the container is removed and recreated with the same `gameserver` volume
+- **WHEN** the container is removed and recreated with the same manifests volume
 - **THEN** all previously downloaded versions SHALL still be present

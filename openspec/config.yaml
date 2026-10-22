@@ -1,20 +1,15 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Tech stack: Python 3.14+, enshctl CLI, Docker (Fedora runtime), Wine.
+  pytest resolves via pythonpath=["src"]; gate is `just gate`.
+  Domain: Enshrouded dedicated server lifecycle, version-pinned installs, mod overlay, backups.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  specs:
+    - |
+      Refactor test: each requirement SHALL survive a behavior-preserving refactor. No module/function names, signatures, line counts, internal flags, or call shapes.
+    - Scenarios SHALL be observable only (CLI, env vars, files under /data/, logs, exit codes, ordering, failure behavior). No `WHEN the codebase is scanned` scenarios.
+    - One owner per behavior; other capabilities reference it by name (`see <capability>`), never restate it.
+    - Main specs describe current intent only under a single `## Requirements`. No History/Changelog/Migration/Deprecated/Reason sections. Deleted behavior is deleted outright.
+    - If a touched capability violates these rules, rewrite recipes as principles and merge duplicates under the owner in the same change.

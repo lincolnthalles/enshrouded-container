@@ -29,6 +29,13 @@ Run bare `just` for the full list. Venv auto-creates via `uv`; pytest resolves i
 
 Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `select = ["ALL"]`, see `pyproject.toml` for current ignores. Python 3.14+, no `__future__`.
 
+## Specs & Domain Language
+
+- Specs own observable what + why; code owns how. Mechanics in `openspec/config.yaml: rules.specs`.
+- One owning capability per behavior. When code changes behavior, update the owning spec in the same change; limit cleanup to touched capabilities.
+- Terms follow `GLOSSARY.md` (create lazily per domain-modeling skill); durable why goes to `docs/adr/` only when hard to reverse, surprising, and traded off.
+- Spec change is done only when `openspec validate --specs` passes and every touched requirement passes the refactor test in `openspec/config.yaml` (`rules.specs`).
+
 ## Rules
 
 - Do NOT circumvent linters or type checkers. A scoped ignore belongs in `pyproject.toml` with a why-comment.

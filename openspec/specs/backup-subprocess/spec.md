@@ -6,7 +6,7 @@ Subprocess-isolated backup execution with lowered priority and exclusive file lo
 
 ### Requirement: Backup runs in subprocess
 
-Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(request=None)` function taking a `BackupRequest`. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at WARNING level.
+Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(request=None)` function taking a `BackupRequest`. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at the custom `BACKUP` level (between INFO and WARNING) so child output is tagged but not mixed with parent warnings.
 
 #### Scenario: Scheduler spawns subprocess
 
@@ -26,16 +26,16 @@ Each backup invocation SHALL execute as a separate subprocess (`enshctl backup .
 #### Scenario: Child errors surface to parent
 
 - **WHEN** the backup subprocess exits with code 2
-- **THEN** the parent SHALL log the captured output at WARNING level (e.g., "Backup failed (exit 2): <output>")
+- **THEN** the parent SHALL log the captured output at the `BACKUP` level (e.g., "Backup failed (exit 2): <output>")
 
 #### Scenario: Successful backup stays quiet
 
 - **WHEN** the backup subprocess exits with code 0
-- **THEN** the parent SHALL log at INFO level without dumping child output
+- **THEN** the parent SHALL log child output at the `BACKUP` level with the logging timestamp prefix stripped
 
 ### Requirement: Priority lowering
 
-The `backup_runner` SHALL lower CPU priority via `os.nice(19)` and IO priority via `ionice -c3`. If `SYS_NICE` capability is unavailable, it SHALL log a warning once and continue. The `_lower_priority` function SHALL use closure state (via `_make_priority_lowerer()`) instead of a `global` variable for the "warned once" flag.
+The `backup_runner` SHALL lower CPU priority via `os.nice(19)` and IO priority via `ionice -c3`. If `SYS_NICE` capability is unavailable, it SHALL log a warning once and continue. The `_lower_priority` function SHALL use module-level `_priority_state` (shared across the nice and ionice steps) instead of a `global` variable for the "warned once" flag.
 
 #### Scenario: Priority lowered successfully
 
@@ -80,22 +80,22 @@ The backup subprocess SHALL acquire an exclusive non-blocking lock on `/data/bac
 
 ### Requirement: Backup subprocess runner
 
-The `backup_runner.main()` function SHALL return a `BackupOutcome` enum value (`SUCCESS=0` for success, `LOCK_HELD=1` for lock held, `ERROR=2` for error) instead of calling `sys.exit()`. The `commands/backup.py` wrapper SHALL call `sys.exit()` with the returned code. The numeric exit-code contract (0/1/2) SHALL be preserved.
+The `backup_runner.main()` function SHALL return an `int` exit code (`BackupOutcome` values: `SUCCESS=0` for success, `LOCK_HELD=1` for lock held, `ERROR=2` for error) instead of calling `sys.exit()`. `BackupOutcome` SHALL be defined in `enshctl.backup_protocol`. The `commands/backup.py` wrapper SHALL log the result and call `sys.exit()` with the returned code. The numeric exit-code contract (0/1/2) SHALL be preserved.
 
 #### Scenario: Successful backup returns 0
 
 - **WHEN** `backup_runner.main()` completes a backup successfully
-- **THEN** it SHALL return `BackupOutcome.SUCCESS` (value `0`)
+- **THEN** it SHALL return `0` (`BackupOutcome.SUCCESS` from `enshctl.backup_protocol`)
 
 #### Scenario: Lock held returns 1
 
 - **WHEN** `backup_runner.main()` cannot acquire the lock
-- **THEN** it SHALL return `BackupOutcome.LOCK_HELD` (value `1`)
+- **THEN** it SHALL return `1` (`BackupOutcome.LOCK_HELD`)
 
 #### Scenario: Error returns 2
 
 - **WHEN** `backup_runner.main()` encounters an OSError during backup
-- **THEN** it SHALL return `BackupOutcome.ERROR` (value `2`)
+- **THEN** it SHALL return `2` (`BackupOutcome.ERROR`)
 
 #### Scenario: commands/backup.py handles exit
 

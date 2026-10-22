@@ -4,13 +4,13 @@ Restore of world save data from a selected backup archive.
 
 ## Requirements
 
-### Requirement: Restore safety check
+### Requirement: Running-server guard via PID file
 
-Before restoring, the system SHALL check if the game server process is running. If running, the system SHALL refuse to restore and exit with an error.
+Before restoring, the system SHALL check whether a previous server start recorded its PID by testing for the PID file (`enshctl.pid` in the backup base dir, written at server start and removed on clean shutdown). If present, the system SHALL refuse to restore and exit with an error directing the user to stop the server first.
 
 #### Scenario: Refuse restore while server runs
 
-- **WHEN** `enshrouded_server.exe` process is detected
+- **WHEN** the PID file exists (orchestrator considers the server running)
 - **THEN** the restore command SHALL exit with an error message "Cannot restore while server is running"
 
 ### Requirement: Restore from backup by filename
@@ -19,12 +19,12 @@ The `restore` subcommand SHALL restore a specific backup to `/data/saves/` when 
 
 #### Scenario: Restore specific backup
 
-- **WHEN** `enshrouded-server restore --file enshrouded-20260529-120000.tar.zst` is executed and the game server is not running
+- **WHEN** `enshctl restore --file enshrouded-20260529-120000.tar.zst` is executed and the game server is not running
 - **THEN** `/data/saves/` SHALL be emptied and the contents of the specified backup SHALL be extracted into it
 
 #### Scenario: Restore refuses if server is running
 
-- **WHEN** `enshrouded-server restore --file ...` is executed and `enshrouded_server.exe` process is detected
+- **WHEN** `enshctl restore --file ...` is executed and the PID file exists
 - **THEN** the command SHALL refuse to proceed and exit with an error message indicating the server must be stopped first
 
 ### Requirement: Restore from backup by direction
@@ -33,22 +33,22 @@ The `restore` subcommand SHALL select the best-matching backup when given a `--w
 
 #### Scenario: Restore most recent backup
 
-- **WHEN** `enshrouded-server restore --when last` is executed and backups exist in all categories
+- **WHEN** `enshctl restore --when last` is executed and backups exist in all categories
 - **THEN** the newest backup across all categories SHALL be selected for restore
 
 #### Scenario: Restore with time window
 
-- **WHEN** `enshrouded-server restore --when 30d` is executed
+- **WHEN** `enshctl restore --when 30d` is executed
 - **THEN** the newest backup created within the last 30 days SHALL be selected for restore
 
 #### Scenario: Restore with category qualifier
 
-- **WHEN** `enshrouded-server restore --when 30d:cold` is executed
+- **WHEN** `enshctl restore --when 30d:cold` is executed
 - **THEN** the newest cold backup within the last 30 days SHALL be selected
 
 #### Scenario: No backup matches direction
 
-- **WHEN** `enshrouded-server restore --when 1h` is executed and no backup exists within the last hour
+- **WHEN** `enshctl restore --when 1h` is executed and no backup exists within the last hour
 - **THEN** the command SHALL report no matching backup and exit with a non-zero code
 
 ### Requirement: Interactive restore picker
@@ -57,12 +57,12 @@ When neither `--file` nor `--when` is provided and stdout is a TTY, the `restore
 
 #### Scenario: Interactive restore on TTY
 
-- **WHEN** `enshrouded-server restore` is executed in a TTY without `--file` or `--when`
+- **WHEN** `enshctl restore` is executed in a TTY without `--file` or `--when`
 - **THEN** an interactive picker SHALL be displayed showing each backup as `name (size)`; category drill-in, counts, and timestamps are not shown
 
 #### Scenario: Interactive restore falls back on non-TTY
 
-- **WHEN** `enshrouded-server restore` is executed without `--file` or `--when` and stdout is not a TTY
+- **WHEN** `enshctl restore` is executed without `--file` or `--when` and stdout is not a TTY
 - **THEN** the command SHALL print available backups as a table and exit (equivalent to `--list`)
 
 ### Requirement: List backups
@@ -71,7 +71,7 @@ The `restore --list` flag SHALL list all backups as a Rich table (TTY) or plain 
 
 #### Scenario: List all backups
 
-- **WHEN** `enshrouded-server restore --list` is executed
+- **WHEN** `enshctl restore --list` is executed
 - **THEN** a table SHALL be printed showing all backups across all categories with filename, category, size, and timestamp
 
 ### Requirement: Restore confirmation prompt
@@ -85,12 +85,12 @@ Before restoring, the command SHALL prompt for confirmation showing the backup f
 
 #### Scenario: Confirmation skipped with --yes
 
-- **WHEN** `enshrouded-server restore --file ... --yes` is executed
+- **WHEN** `enshctl restore --file ... --yes` is executed
 - **THEN** the restore SHALL proceed without prompting
 
 ### Requirement: Restore process
 
-The restore process SHALL: (1) acquire the backup lock, (2) remove all contents of `/data/saves/`, (3) extract the backup archive into `/data/saves/`, (4) release the lock.
+The restore process SHALL: (1) acquire the backup lock, (2) extract the backup archive to the temporary directory (`RESTORE_TMP_DIR`), verify disk space, (3) remove all contents of `/data/saves/`, (4) move the extracted contents into `/data/saves/`, (5) remove the temporary directory, (6) release the lock.
 
 #### Scenario: Successful restore
 
