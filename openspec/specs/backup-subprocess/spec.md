@@ -6,98 +6,86 @@ Subprocess-isolated backup execution with lowered priority and exclusive file lo
 
 ### Requirement: Backup runs in subprocess
 
-Each backup invocation SHALL execute as a separate subprocess (`enshctl backup ...`) rather than in-process. The subprocess SHALL be spawned via `subprocess.run(capture_output=True)` using a unified `_run_backup(request=None)` function taking a `BackupRequest`. Cold and emergency backups SHALL pass `detach=True` (`start_new_session=True`). On non-zero exit (except lock-held), the captured stdout and stderr SHALL be logged at the custom `BACKUP` level (between INFO and WARNING) so child output is tagged but not mixed with parent warnings.
+Each backup SHALL execute as a separate `enshctl backup` process rather than in-process. Detached backup processes SHALL run in their own process group; live backups SHALL share the parent's process group. The parent SHALL still wait for each backup process to complete (see `backup-system` for scheduler, shutdown, and crash trigger behavior). Child output SHALL be relayed at a dedicated level between INFO and WARNING with the child's log prefix removed; lock-held skips SHALL stay quiet unless the invocation waited for the lock.
 
-#### Scenario: Scheduler spawns subprocess
+#### Scenario: Scheduler triggers live backup
 
-- **WHEN** the cron scheduler fires a backup
-- **THEN** it SHALL call `_run_backup()` which spawns `subprocess.run(["enshctl", "backup"], capture_output=True)` and wait for completion
+- **WHEN** the scheduler fires a backup and no other backup holds the lock
+- **THEN** a separate backup process SHALL run for the live Category and the scheduler SHALL wait for completion
 
-#### Scenario: Shutdown handler spawns subprocess
+#### Scenario: Detached backup still awaited
 
-- **WHEN** the SIGTERM handler triggers a cold backup
-- **THEN** it SHALL call `_run_backup(BackupRequest(category="cold", wait_seconds=<SHUTDOWN_BACKUP_WAIT>, detach=True))` which spawns `subprocess.run(["enshctl", "backup", "--cold", "--wait", "<secs>"], capture_output=True, start_new_session=True)` and wait for completion
+- **WHEN** a detached cold or emergency backup is triggered
+- **THEN** a backup process SHALL run in its own process group and the parent SHALL wait for its completion
 
-#### Scenario: Crash handler spawns subprocess
+#### Scenario: Successful backup output is relayed
 
-- **WHEN** the server exits unexpectedly and a backup is triggered
-- **THEN** it SHALL call `_run_backup(BackupRequest(category="emergency", detach=True))` which spawns `subprocess.run(["enshctl", "backup", "--emergency"], capture_output=True, start_new_session=True)` and wait for completion
+- **WHEN** the backup process exits with code 0
+- **THEN** the parent SHALL relay its output at the dedicated backup level with the child's log prefix removed
 
-#### Scenario: Child errors surface to parent
+#### Scenario: Failed backup output is relayed
 
-- **WHEN** the backup subprocess exits with code 2
-- **THEN** the parent SHALL log the captured output at the `BACKUP` level (e.g., "Backup failed (exit 2): <output>")
+- **WHEN** the backup process exits with code 2
+- **THEN** the parent SHALL relay its output at the dedicated backup level
 
-#### Scenario: Successful backup stays quiet
+#### Scenario: Quiet lock-held skip
 
-- **WHEN** the backup subprocess exits with code 0
-- **THEN** the parent SHALL log child output at the `BACKUP` level with the logging timestamp prefix stripped
+- **WHEN** the backup process skips because the lock is held and no wait was requested
+- **THEN** the skip SHALL be recorded below warning level
 
 ### Requirement: Priority lowering
 
-The `backup_runner` SHALL lower CPU priority via `os.nice(19)` and IO priority via `ionice -c3`. If `SYS_NICE` capability is unavailable, it SHALL log a warning once and continue. The `_lower_priority` function SHALL use module-level `_priority_state` (shared across the nice and ionice steps) instead of a `global` variable for the "warned once" flag.
+The backup process SHALL run at the lowest CPU and IO priority so a running backup does not starve the game server. If lowered priority is unavailable, it SHALL warn once per backup run and continue at default priority.
 
-#### Scenario: Priority lowered successfully
+#### Scenario: Warning deduplicated within one run
 
-- **WHEN** `backup_runner.main()` is called with `SYS_NICE` capability available
-- **THEN** the process SHALL run at nice 19 and ionice class 3
+- **WHEN** CPU and IO priority lowering both fail during one backup run
+- **THEN** the first failure SHALL warn once and the second SHALL be recorded below warning level
 
-#### Scenario: Warning logged once on failure
+### Requirement: Backup locking
 
-- **WHEN** `os.nice(19)` raises `OSError` on first call
-- **THEN** a warning SHALL be logged at WARNING level
-- **WHEN** `os.nice(19)` raises `OSError` on second call
-- **THEN** the message SHALL be logged at DEBUG level (no duplicate warning)
+The backup process SHALL hold an exclusive non-blocking lock on the backup lock file before compressing, so at most one backup process writes at a time, and release it when the backup completes or fails.
 
-### Requirement: Backup file locking
+#### Scenario: Lock held — skip without changes
 
-The backup subprocess SHALL acquire an exclusive non-blocking lock on `/data/backups/.lock` using `fcntl.flock(fd, LOCK_EX | LOCK_NB)` before compressing. The lock SHALL be released after compression completes. The lock functions SHALL be defined in `enshctl/backup/locking.py` and re-exported from `enshctl/backup`.
+- **WHEN** a backup starts and another process holds the lock (and no wait budget remains)
+- **THEN** it SHALL exit reporting lock-held and SHALL NOT create, modify, or delete any Backup
 
-#### Scenario: Lock acquired successfully
+#### Scenario: Wait budget expires — warning
 
-- **WHEN** the backup subprocess starts and no other process holds the lock
-- **THEN** the lock SHALL be acquired and backup SHALL proceed
+- **WHEN** a backup started with a wait budget still cannot acquire the lock after the budget expires
+- **THEN** it SHALL exit reporting lock-held and log a warning naming the waited seconds
 
-#### Scenario: Lock held — auto backup skips
+### Requirement: Backup outcome reporting
 
-- **WHEN** the backup subprocess is spawned by the scheduler and the lock is held by another process
-- **THEN** the subprocess SHALL exit with code 1 and the scheduler SHALL skip this backup cycle silently
+The backup process SHALL exit 0 on success, 1 when lock-held, 2 on error. The parent SHALL log a warning naming any unrecognized exit code and its captured output.
 
-#### Scenario: Lock wait expires — warning
+#### Scenario: Successful backup reports success
 
-- **WHEN** the backup subprocess is spawned with `--wait N` and the lock is still held after N seconds
-- **THEN** the subprocess SHALL exit with code 1 and log a warning (`Backup lock still held after Ns wait, skipping backup`)
+- **WHEN** a backup completes and the lock is released
+- **THEN** it SHALL exit with code 0
 
-#### Scenario: Lock held — manual backup fails
+#### Scenario: Lock held reports lock-held
 
-- **WHEN** the backup subprocess is spawned by a manual `enshctl backup` command and the lock is held
-- **THEN** the subprocess SHALL exit with code 1 and an error message SHALL be displayed to the user
+- **WHEN** a backup skips because the lock is held
+- **THEN** it SHALL exit with code 1
 
-#### Scenario: Lock released on process exit
+#### Scenario: Compression failure leaves no partial backup
 
-- **WHEN** the backup subprocess exits (success or failure)
-- **THEN** the lock SHALL be released automatically (fcntl.flock releases on fd close)
+- **WHEN** compression fails with a handled archive error while writing a Backup
+- **THEN** the partial file SHALL NOT remain, the failure SHALL be logged naming the failed path, and the run SHALL still report success
 
-### Requirement: Backup subprocess runner
+#### Scenario: Error outside compression reports error
 
-The `backup_runner.main()` function SHALL return an `int` exit code (`BackupOutcome` values: `SUCCESS=0` for success, `LOCK_HELD=1` for lock held, `ERROR=2` for error) instead of calling `sys.exit()`. `BackupOutcome` SHALL be defined in `enshctl.backup_protocol`. The `commands/backup.py` wrapper SHALL log the result and call `sys.exit()` with the returned code. The numeric exit-code contract (0/1/2) SHALL be preserved.
+- **WHEN** the backup process hits an I/O or value error outside handled archive errors (e.g. the Category directory cannot be created)
+- **THEN** the run SHALL exit with code 2
 
-#### Scenario: Successful backup returns 0
+#### Scenario: Spawn failure is logged and skipped
 
-- **WHEN** `backup_runner.main()` completes a backup successfully
-- **THEN** it SHALL return `0` (`BackupOutcome.SUCCESS` from `enshctl.backup_protocol`)
+- **WHEN** the backup process cannot be spawned
+- **THEN** the parent SHALL log a warning and the backup SHALL be skipped without retry
 
-#### Scenario: Lock held returns 1
+#### Scenario: Unexpected exit code is logged
 
-- **WHEN** `backup_runner.main()` cannot acquire the lock
-- **THEN** it SHALL return `1` (`BackupOutcome.LOCK_HELD`)
-
-#### Scenario: Error returns 2
-
-- **WHEN** `backup_runner.main()` encounters an OSError during backup
-- **THEN** it SHALL return `2` (`BackupOutcome.ERROR`)
-
-#### Scenario: commands/backup.py handles exit
-
-- **WHEN** `commands/backup.py:run()` calls `backup_runner.main()`
-- **THEN** it SHALL call `sys.exit()` with the returned exit code
+- **WHEN** the backup process exits with a code outside 0/1/2
+- **THEN** the parent SHALL log a warning naming the exit code and the captured output
