@@ -122,6 +122,34 @@ def test_wait_expiry_warns() -> None:
     assert code == BackupOutcome.LOCK_HELD
 
 
+def test_run_backup_forwards_settings_env() -> None:
+    import enshctl.commands.start as st
+
+    # GIVEN settings-bearing env vars set in the parent
+    source = {
+        "PATH": "/usr/bin",
+        "BACKUP_DIR": "/mnt/nfs/backups",
+        "BACKUP_KEEP_LAST": "7",
+        "PUID": "1001",
+        "PGID": "1002",
+        "STEAM_PASSWORD": "s3cret",
+        "UNRELATED_SECRET": "nope",
+    }
+    with patch.object(st.subprocess, "run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        # WHEN a backup subprocess is spawned
+        with patch.object(st, "environ", source):
+            st._run_backup()
+        # THEN the settings keys cross the seam but unrelated vars and secrets do not
+        env = mock_run.call_args.kwargs["env"]
+        assert env["BACKUP_DIR"] == "/mnt/nfs/backups"
+        assert env["BACKUP_KEEP_LAST"] == "7"
+        assert env["PUID"] == "1001"
+        assert env["PGID"] == "1002"
+        assert "UNRELATED_SECRET" not in env
+        assert "STEAM_PASSWORD" not in env
+
+
 def test_signal_game_uses_pkill() -> None:
     import signal as sigmod
 

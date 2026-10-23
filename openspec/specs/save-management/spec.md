@@ -6,7 +6,7 @@ Persistent world save data volume and its wiring into the Generated config.
 
 ### Requirement: Saved games volume
 
-The container SHALL expose the saves directory as a volume for persistent world save data (see `shared-config` for the path constant). The Generated config's save directory field SHALL be an absolute path defaulting to the saves volume. Relative values from any source (Base config, env var override) SHALL be remapped to the volume default with a warning naming the discarded value, since the game resolves them against the ephemeral Game tree.
+The container SHALL expose the saves directory as a volume for persistent world save data. Default location `/data/saves` (see `shared-config` for default locations). The Generated config's save directory field SHALL be an absolute path defaulting to the saves volume. Relative values from any source (Base config, env var override) SHALL be remapped to the volume default with a warning naming the discarded value, since the game resolves them against the ephemeral Game tree.
 
 #### Scenario: Save directory is configured
 

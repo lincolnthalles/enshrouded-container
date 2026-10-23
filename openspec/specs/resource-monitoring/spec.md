@@ -6,43 +6,28 @@ CPU and memory monitoring of the server process tree via /proc.
 
 ### Requirement: Process tree CPU and memory monitoring
 
-The system SHALL provide functions to read CPU ticks and memory (RSS) from `/proc` for a given PID and all its descendants. These functions SHALL be in `enshctl.resources`.
+The system SHALL report CPU share and memory (RSS) for a process and all its descendants, read from `/proc`. Unreadable processes SHALL contribute zero rather than failing the report.
 
-#### Scenario: Read RSS for a process
+#### Scenario: Dead process contributes zero
 
-- **WHEN** `read_pid_rss(pid)` is called for a running process
-- **THEN** it SHALL return the VmRSS in kB from `/proc/[pid]/status`
-
-#### Scenario: Read CPU ticks for a process
-
-- **WHEN** `read_pid_cpu_ticks(pid)` is called for a running process
-- **THEN** it SHALL return the sum of utime+stime+cutime+cstime from `/proc/[pid]/stat`
-
-#### Scenario: Collect all child PIDs recursively
-
-- **WHEN** `get_all_child_pids(parent_pid)` is called
-- **THEN** it SHALL return a list of all descendant PIDs by reading `/proc/[pid]/task/[pid]/children`
-
-#### Scenario: Read system CPU ticks
-
-- **WHEN** `read_system_cpu_ticks()` is called
-- **THEN** it SHALL return the total CPU ticks from the first line of `/proc/stat`
+- **WHEN** a monitored process exits mid-poll
+- **THEN** its contribution SHALL be zero and the report SHALL still be logged
 
 ### Requirement: Resource poller thread
 
-The system SHALL provide a `start_resource_poller(server_pid, stop_event, interval=60)` function that spawns a daemon thread logging CPU and memory usage for both `enshctl` and the game server process tree at the given interval in seconds. The `start` subcommand SHALL pass `settings.resource_poll_interval` as the interval.
+While the server runs, a daemon poller thread SHALL log CPU and memory usage for both the orchestrator and the game server process tree at a configurable interval (default 60s). A non-positive interval SHALL disable polling. The poller SHALL stop when shutdown begins.
 
 #### Scenario: Poller logs resource usage
 
-- **WHEN** the resource poller thread is running and the interval elapses
-- **THEN** it SHALL log `enshctl: X.X% CPU, Y MB RSS | enshrouded_server.exe: X.X% CPU, Y MB RSS (N procs)`
+- **WHEN** the resource poller is running and the interval elapses
+- **THEN** a line SHALL be logged with orchestrator CPU/RSS and game server CPU/RSS with process count
 
 #### Scenario: Poller respects stop event
 
-- **WHEN** `stop_event` is set
-- **THEN** the poller thread SHALL exit
+- **WHEN** shutdown begins
+- **THEN** no further resource-usage lines SHALL be logged
 
 #### Scenario: Poller disabled when interval is zero
 
-- **WHEN** `RESOURCE_POLL_INTERVAL=0` is set
-- **THEN** `start_resource_poller` SHALL return `None` and not spawn a thread
+- **WHEN** the poll interval is set to 0
+- **THEN** no periodic resource-usage lines SHALL be logged

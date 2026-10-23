@@ -6,22 +6,17 @@ Shared formatting and parsing helpers used across enshctl modules.
 
 ### Requirement: Unified human-readable size formatting
 
-The system SHALL provide a single `human_size(size_bytes: float) -> str` function in `enshctl.utils` that formats byte counts as human-readable strings (B, KB, MB, GB, TB). All modules SHALL use this function instead of implementing their own formatting.
+Byte counts SHALL be formatted as human-readable strings (B, KB, MB, GB, TB) through a single shared helper. All modules SHALL use it instead of implementing their own formatting.
 
 #### Scenario: Format bytes
 
-- **WHEN** `human_size(1536)` is called
-- **THEN** it SHALL return `"1.5 KB"`
+- **WHEN** 1536 bytes are formatted
+- **THEN** the result SHALL be `"1.5 KB"`
 
 #### Scenario: Format gigabytes
 
-- **WHEN** `human_size(2 * 1024**3)` is called
-- **THEN** it SHALL return `"2.0 GB"`
-
-#### Scenario: Single implementation used everywhere
-
-- **WHEN** the codebase is scanned for human-readable size formatting
-- **THEN** `human_size` SHALL be defined only in `enshctl/utils.py`
+- **WHEN** 2 GiB are formatted
+- **THEN** the result SHALL be `"2.0 GB"`
 
 ### Requirement: Boolean settings parsing behavior
 
@@ -29,24 +24,15 @@ Boolean settings SHALL parse `1/true/on/yes` (case-insensitive) as True and `0/f
 
 #### Scenario: Truthy values
 
-- **WHEN** `BACKUP_LIVE=true` (or `1`, `on`, `yes`)
+- **WHEN** a live-backup setting is `true` (or `1`, `on`, `yes`)
 - **THEN** the live-backup setting SHALL resolve to True
 
 #### Scenario: Falsy values
 
-- **WHEN** `BACKUP_LIVE=false` (or `0`, `off`, `no`)
+- **WHEN** a live-backup setting is `false` (or `0`, `off`, `no`)
 - **THEN** the live-backup setting SHALL resolve to False
 
 #### Scenario: Unrecognized value falls back to default
 
-- **WHEN** `BACKUP_COLD` is set to an unrecognized value such as `enabled`
+- **WHEN** a cold-backup setting is set to an unrecognized value such as `enabled`
 - **THEN** the cold-backup setting SHALL resolve to its documented default (True)
-
-### Requirement: UID/GID resolved once
-
-The system SHALL read `PUID` and `PGID` environment variables once per `load_settings()` call and expose them as `AppSettings.puid` and `AppSettings.pgid`. All modules SHALL use these fields directly instead of reading the env vars independently.
-
-#### Scenario: Consistent UID/GID across modules
-
-- **WHEN** `PUID=1001` is set
-- **THEN** all modules SHALL use uid 1001 from the settings object, not from independent `os.environ.get("PUID")` calls

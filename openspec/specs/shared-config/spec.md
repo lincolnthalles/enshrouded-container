@@ -1,61 +1,56 @@
 ## Purpose
 
-Centralized configuration for the enshctl orchestrator: filesystem path constants and environment-derived settings.
+Centralized configuration for the enshctl orchestrator: settings seam, ownership identity, and default filesystem locations.
 
 ## Requirements
 
-### Requirement: Centralized path constants
+### Requirement: Default filesystem locations
 
-The system SHALL define all filesystem path constants (`SAVE_DIR`, `MANIFESTS_DIR`, `CONFIG_DIR`, `MOUNT_POINT`, `WINE_PREFIX`, `BACKUP_BASE_DIR`) in a single `paths.py` module. All other modules SHALL import paths from this module rather than defining their own.
+Default persistent locations SHALL live under `/data/`: `/data/saves`, `/data/logs`, `/data/manifests`, `/data/config`, `/data/backups`, `/data/mods`, and `/data/wineprefix`. The Game tree at `/data/gameserver/` is container-internal (rebuilt every start, see `game-tree-rebuild`). User-configured destinations (`BACKUP_DIR`, absolute save/log directories) MAY point outside `/data/`. No module SHALL define its own ad-hoc persistent location.
 
-#### Scenario: Single source of truth for SAVE_DIR
+#### Scenario: Defaults under /data
 
-- **WHEN** any module needs the saves directory path
-- **THEN** it SHALL import `SAVE_DIR` from `enshctl.paths` rather than defining `Path("/data/saves")` locally
+- **WHEN** no overrides are configured
+- **THEN** saves SHALL default to `/data/saves`, logs to `/data/logs`, and backups to `/data/backups/`
 
-#### Scenario: No duplicated path definitions
+#### Scenario: User override outside /data
 
-- **WHEN** the codebase is scanned for `Path("/data/manifests")`
-- **THEN** it SHALL appear only in `enshctl/paths.py`
+- **WHEN** `BACKUP_DIR` points outside `/data/`
+- **THEN** Backups SHALL be stored there (see `backup-system`)
 
-### Requirement: Typed settings dataclass
+### Requirement: Typed settings seam
 
-The system SHALL provide a frozen dataclass `AppSettings` that holds all environment-variable-derived configuration. The dataclass SHALL be populated by a `load_settings()` function that reads `os.environ` once per call. All modules SHALL accept settings via function parameters or import from the settings module rather than calling `os.environ.get()` directly.
+All environment-derived configuration SHALL flow through a single frozen settings object, loaded once per process entrypoint and passed to subsystems via parameters. Subsystems SHALL NOT read process environment directly for configured values; the settings loader, the `ENSHROUDED_*` config merge (see `config-management`), child-process environment forwarding, and the removed-setting check are the only direct environment reads.
 
 #### Scenario: Settings loaded once at startup
 
 - **WHEN** the `start` command runs
-- **THEN** `load_settings()` SHALL be called once per process entrypoint and the resulting `AppSettings` instance SHALL be passed to subsystems; the backup subprocess SHALL reload settings from its inherited environment
+- **THEN** settings SHALL be loaded once per process entrypoint and the resulting object SHALL be passed to subsystems; the backup child process SHALL reload settings from its inherited environment
 
 #### Scenario: Settings are frozen
 
-- **WHEN** an `AppSettings` instance is created
-- **THEN** attempting to modify an attribute SHALL raise `FrozenInstanceError`
+- **WHEN** a settings object is created
+- **THEN** attempting to modify an attribute SHALL fail
 
 #### Scenario: Testable without env var manipulation
 
 - **WHEN** a test needs custom settings
-- **THEN** it SHALL construct an `AppSettings` instance directly with test values, without modifying `os.environ`
+- **THEN** it SHALL construct a settings object directly with test values, without modifying process environment
 
-### Requirement: Settings loaded once per process entrypoint
+### Requirement: Settings cross the backup subprocess seam
 
-Each process entrypoint SHALL call `load_settings()` once and pass the resulting `AppSettings` instance to subsystems via function parameters. Across a subprocess seam, the child process SHALL reload settings from its inherited environment rather than receiving them over IPC. The parent SHALL forward the settings-bearing environment keys (all `BACKUP_*`, `PUID`, `PGID`, plus the base allowlist) so the child observes the same configured values.
-
-#### Scenario: Start command loads once
-
-- **WHEN** the `start` command runs
-- **THEN** `load_settings()` SHALL be called once in `start.run()` and the resulting `AppSettings` instance SHALL be passed to subsystems
+Across the backup subprocess seam, the child SHALL observe the same `BACKUP_*`, `PUID`, and `PGID` values the parent configured. The parent SHALL forward those settings-bearing environment keys (plus the base allowlist) so the child reloads identical backup settings from its inherited environment rather than receiving them over IPC. Keys the backup path never consumes (`MANIFESTHUB_*`, `STEAM_*`, `LOG_TAIL`, `WINE*`, `PERSIST_FILES`) are not forwarded.
 
 #### Scenario: Reload across the backup subprocess seam
 
-- **WHEN** `start` spawns `enshctl backup` as a subprocess
-- **THEN** the child SHALL call `load_settings()` on its inherited environment, observing the same values the parent configured
+- **WHEN** `start` spawns a backup child process
+- **THEN** the child SHALL observe the same `BACKUP_*`, `PUID`, and `PGID` values the parent configured
 
-### Requirement: PUID/PGID resolved once
+### Requirement: PUID/PGID identity
 
-The system SHALL read `PUID` and `PGID` environment variables once in `load_settings()` and expose them as `AppSettings.puid` and `AppSettings.pgid`. All modules SHALL use the settings object instead of reading these env vars independently.
+The system SHALL read `PUID` and `PGID` once at load time (defaults 1000/1000) and expose them as the single ownership identity. All file ownership SHALL use these values; no module SHALL read the variables independently. The server process account itself is owned by `fedora-wine-base`.
 
 #### Scenario: Consistent UID/GID across modules
 
 - **WHEN** `PUID=1001` is set
-- **THEN** all modules SHALL use uid 1001 from the settings object, not from independent `os.environ.get("PUID")` calls
+- **THEN** all modules SHALL resolve uid 1001 from the settings object, not from independent environment reads

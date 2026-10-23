@@ -39,14 +39,14 @@ The container image SHALL include: `python3`, `python3-pip` (build only), `procp
 
 ### Requirement: Steam user and directory structure
 
-The container SHALL create a non-root `steam` user (UID/GID configurable via `PUID`/`PGID` env vars, default 1000/1000) and the following directories: `/data/backups`, `/data/config`, `/data/logs`, `/data/manifests`, `/data/mods`, `/data/saves`, `/data/wineprefix`. All data directories SHALL be owned by `steam:steam`.
+The container SHALL create a non-root `steam` user (UID/GID 1000/1000 at build time) and the following directories: `/data/backups`, `/data/config`, `/data/logs`, `/data/manifests`, `/data/mods`, `/data/saves`, `/data/wineprefix`. Runtime directory ownership follows the configured identity (see `shared-config`); the process account itself remains the build-time user.
 
 #### Scenario: Steam user exists
 
-- **WHEN** the container starts
-- **THEN** the `steam` user SHALL exist with the configured UID/GID and a home directory at `/home/steam`
+- **WHEN** the container starts with default configuration
+- **THEN** the `steam` user SHALL exist with UID/GID 1000/1000 and a home directory at `/home/steam`
 
 #### Scenario: Data directories exist with correct ownership
 
 - **WHEN** the container starts
-- **THEN** all data directories SHALL exist and be owned by `steam:steam`
+- **THEN** all data directories SHALL exist and be owned by the configured identity (see `shared-config`)
