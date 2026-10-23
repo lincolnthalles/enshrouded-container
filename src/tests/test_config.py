@@ -197,6 +197,29 @@ def test_generate_config_remaps_env_relative_save_directory(monkeypatch: pytest.
     assert result["saveDirectory"] == "/data/saves"
 
 
+def test_generate_config_empty_save_directory_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch
+
+    # GIVEN an empty save directory via env var
+    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "")
+    with patch("enshctl.config.load_base_config", return_value={}):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN the default volume path is used, not the empty string
+    assert result["saveDirectory"] == "/data/saves"
+
+
+def test_generate_config_whitespace_base_save_directory_falls_back_to_default() -> None:
+    from unittest.mock import patch
+
+    # GIVEN a whitespace-only save directory in the base config
+    with patch("enshctl.config.load_base_config", return_value={"saveDirectory": "   "}):
+        # WHEN generating the config
+        result = generate_config()
+    # THEN the default volume path is used
+    assert result["saveDirectory"] == "/data/saves"
+
+
 def test_generate_config_keeps_absolute_custom_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import patch
 

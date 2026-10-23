@@ -178,9 +178,12 @@ def _resolve_persisted_dir(key: str, value: object, default: str) -> str:
     The game resolves relative paths against its working directory
     (/data/gameserver), which is wiped and rebuilt on every start — so a
     relative directory can never point at persistent storage. Remap it to
-    the volume default with a warning naming the discarded value.
+    the volume default with a warning naming the discarded value. Empty or
+    whitespace-only values are treated as unset.
     """
-    if isinstance(value, str) and value and not value.startswith("/"):
+    if not isinstance(value, str) or not value.strip():
+        return default
+    if not value.startswith("/"):
         logger.warning(
             "Relative %s '%s' would resolve inside the ephemeral game tree; using %s instead",
             key,
@@ -188,7 +191,7 @@ def _resolve_persisted_dir(key: str, value: object, default: str) -> str:
             default,
         )
         return default
-    return value if isinstance(value, str) else default
+    return value
 
 
 def generate_config() -> dict[str, Any]:

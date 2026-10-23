@@ -25,6 +25,21 @@ def test_prune_keeps_all_when_keep_last_negative_one(tmp_path: Path) -> None:
     assert len(deleted) == 0
 
 
+def test_prune_weekly_buckets_year_boundary_week_once(tmp_path: Path) -> None:
+    cat_dir = tmp_path / "live"
+    cat_dir.mkdir()
+    _make_backup_file(cat_dir, "enshrouded-20251222-120000.tar.zst")
+    _make_backup_file(cat_dir, "enshrouded-20251228-120000.tar.zst")
+    _make_backup_file(cat_dir, "enshrouded-20260102-120000.tar.zst")
+    config = RetentionConfig(weekly=2)
+    deleted = prune_category(cat_dir, config, dry_run=True)
+    # THEN the Dec28-Jan03 week counts once: its older duplicate is pruned
+    # while the sole backup of the prior real week is kept
+    assert len(deleted) == 1
+    deleted_names = {p.name for p in deleted}
+    assert deleted_names == {"enshrouded-20251228-120000.tar.zst"}
+
+
 def test_prune_keeps_last_n(tmp_path: Path) -> None:
     cat_dir = tmp_path / "live"
     cat_dir.mkdir()

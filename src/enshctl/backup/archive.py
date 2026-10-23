@@ -21,9 +21,9 @@ def verify_archive(archive_path: Path) -> bool:
 
     Returns True if intact, False if corrupt.
     """
-    fmt = detect_format(archive_path)
     try:
+        fmt = detect_format(archive_path)
         return fmt.verify()(archive_path)
-    except ARCHIVE_ERRORS as exc:
+    except (*ARCHIVE_ERRORS, ValueError) as exc:
         logger.warning("Verification failed for %s: %s", archive_path, exc)
         return False

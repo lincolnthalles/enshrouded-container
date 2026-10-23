@@ -139,3 +139,34 @@ class TestRestoreAtomicSwap:
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
         assert not tmp_dir.exists(), "tmp should be cleaned up on corrupt zip"
+
+    def test_swap_failure_cleans_tmp_and_raises(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        # GIVEN extracted data ready but a move that fails mid-swap
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"old")
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+        tmp_dir = tmp_path / "saves-restore-tmp"
+
+        def _fail_move(_src: str, _dst: str) -> None:
+            msg = "move failed"
+            raise OSError(msg)
+
+        # WHEN the swap move fails
+        with (
+            patch("enshctl.restore.shutil.move", side_effect=_fail_move),
+            pytest.raises(RestoreError),
+        ):
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_dir,
+                extract=_extract_new,
+                disk_free=lambda _p: 10 * 1024**3,
+            )
+
+        # THEN tmp is cleaned up and the failure surfaces as RestoreError
+        assert not tmp_dir.exists(), "tmp should be cleaned up on swap failure"

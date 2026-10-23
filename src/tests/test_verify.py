@@ -216,3 +216,26 @@ class TestVerifyAllStrayReporting:
 
         # THEN it verifies OK instead of reporting not found
         mock_exit.assert_called_once_with(0)
+
+    def test_verify_file_unknown_suffix_reports_corrupt(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from enshctl.commands import verify as verify_cmd
+        from enshctl.settings import AppSettings
+
+        # GIVEN a file whose suffix matches no known format
+        live = tmp_path / "live"
+        live.mkdir()
+        (live / "manual-copy.zst").write_bytes(b"\x00" * 10)
+        settings = replace(AppSettings(), backup_dir=str(tmp_path))
+
+        # WHEN verifying that specific file
+        with (
+            patch("sys.argv", ["prog", "--file", "manual-copy.zst"]),
+            patch.object(verify_cmd, "load_settings", return_value=settings),
+            patch.object(verify_cmd.sys, "exit") as mock_exit,
+        ):
+            verify_cmd.run()
+
+        # THEN it reports CORRUPT (exit 1) instead of raising
+        mock_exit.assert_called_once_with(1)

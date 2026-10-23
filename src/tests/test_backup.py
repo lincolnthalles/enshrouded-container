@@ -239,6 +239,50 @@ def test_select_backup_invalid_direction(tmp_path: Path) -> None:
     assert select(base, when="42x") is None
 
 
+def test_select_backup_by_file_rejects_escape(tmp_path: Path) -> None:
+    # GIVEN backups present and a file outside the categories
+    base = tmp_path / "backups"
+    (base / "live").mkdir(parents=True)
+    outside = tmp_path / "outside.tar.zst"
+    outside.write_bytes(b"\x00" * 10)
+    # WHEN selecting with absolute and parent-escape names
+    # THEN nothing outside the categories resolves
+    assert select(base, file=str(outside)) is None
+    assert select(base, file="../outside.tar.zst") is None
+
+
+def test_select_backup_by_file_rejects_directory(tmp_path: Path) -> None:
+    # GIVEN a subdirectory inside a category
+    base = tmp_path / "backups"
+    (base / "live" / "subdir").mkdir(parents=True)
+    # WHEN selecting the directory name
+    # THEN nothing resolves
+    assert select(base, file="subdir") is None
+
+
+def test_select_backup_when_zero_window_matches_nothing(tmp_path: Path) -> None:
+    # GIVEN a backup created now
+    base = tmp_path / "backups"
+    live = base / "live"
+    live.mkdir(parents=True)
+    name = _today_backup("enshrouded-YYYYMMDD-HHMMSS.tar.zst")
+    (live / name).write_bytes(b"\x00" * 10)
+    # WHEN selecting within a zero-length window
+    # THEN nothing resolves
+    assert select(base, when="0d") is None
+
+
+def test_select_backup_when_overflow_matches_nothing(tmp_path: Path) -> None:
+    # GIVEN a base directory
+    base = tmp_path / "backups"
+    base.mkdir()
+    # WHEN selecting with overflowing windows (construction and subtraction paths)
+    # THEN nothing resolves instead of raising
+    assert select(base, when="999999999999999999999d") is None
+    assert select(base, when="3000000d") is None
+    assert select(base, when="25000M") is None
+
+
 def test_select_backup_no_args(tmp_path: Path) -> None:
     # GIVEN a base directory and no selection criteria
     base = tmp_path / "backups"

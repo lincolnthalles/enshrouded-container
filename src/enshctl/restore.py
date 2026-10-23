@@ -40,7 +40,7 @@ def restore_backup(
     logger.info("Extracting backup to temporary directory...")
     try:
         extract(backup_path, tmp_dir)
-    except ARCHIVE_ERRORS:
+    except (*ARCHIVE_ERRORS, ValueError):
         logger.exception("Restore extraction failed")
         free = disk_free(saves_dir)
         logger.exception(
@@ -72,17 +72,22 @@ def restore_backup(
 
     # Clear saves contents (don't rmtree the mount point itself)
     logger.info("Clearing current saves...")
-    if saves_dir.exists():
-        for item in saves_dir.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
+    try:
+        if saves_dir.exists():
+            for item in saves_dir.iterdir():
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
 
-    # Move extracted data from tmp to saves
-    logger.info("Moving restored data to saves directory...")
-    for item in tmp_dir.iterdir():
-        shutil.move(str(item), str(saves_dir / item.name))
+        # Move extracted data from tmp to saves
+        logger.info("Moving restored data to saves directory...")
+        for item in tmp_dir.iterdir():
+            shutil.move(str(item), str(saves_dir / item.name))
+    except OSError:
+        logger.exception("Restore swap failed")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise RestoreError from None
 
     # Cleanup tmp directory
     shutil.rmtree(tmp_dir, ignore_errors=True)

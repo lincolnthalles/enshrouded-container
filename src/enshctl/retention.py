@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import BackupInfo, scan_dir
@@ -9,7 +10,6 @@ from enshctl.paths import BACKUP_DIRS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import datetime
     from pathlib import Path
 
     from enshctl.settings import AppSettings
@@ -65,9 +65,13 @@ def _apply_time_bucket(
 
 
 def _week_key(dt: datetime) -> str:
-    """Sunday-start calendar week key: YYYY-WW."""
-    # strftime %U = Sunday-start week number (00-53)
-    return dt.strftime("%Y-W%U")
+    """Sunday-start calendar week key: the ISO date of the week's Sunday.
+
+    Scoped to the actual week, not the year — a Sunday-start week spanning
+    January 1st keys to a single Sunday instead of splitting across years.
+    """
+    sunday = (dt - timedelta(days=(dt.weekday() + 1) % 7)).date()
+    return sunday.isoformat()
 
 
 def _month_key(dt: datetime) -> str:

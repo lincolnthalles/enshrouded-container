@@ -1,61 +1,76 @@
 ## Purpose
 
-Integrity verification of backup archives without extracting them to disk.
+Integrity reporting for stored Backups without extracting them to disk.
 
 ## Requirements
 
-### Requirement: Verify backup integrity
+### Requirement: Verify Backup integrity
 
-The `verify` subcommand SHALL check archive integrity by streaming each backup through its decompressor and reading every archive member to EOF without writing to disk. A backup that decompresses and reads completely SHALL be reported as OK; one that fails SHALL be reported as CORRUPT.
+The `verify` invocation SHALL check integrity by streaming each Backup through its decompressor and reading every member to EOF without writing to disk. A Backup that reads completely SHALL be reported as OK; one that fails SHALL be reported as CORRUPT.
 
-#### Scenario: Verify specific backup
+#### Scenario: Verify specific Backup
 
-- **WHEN** `enshctl verify --file enshrouded-20260529-120000.tar.zst` is executed
-- **THEN** the specified backup SHALL be decompressed and all members read to EOF, with OK or CORRUPT status reported
+- **WHEN** `verify --file` names an existing Backup
+- **THEN** the specified Backup SHALL be streamed to EOF with OK or CORRUPT status reported
 
-#### Scenario: Verify all backups
+#### Scenario: Non-Backup file accepted by presence
 
-- **WHEN** `enshctl verify` or `enshctl verify --all` is executed
-- **THEN** all backups in all categories (live, cold, emergency) SHALL be verified
+- **WHEN** `verify --file` names a grammar-matching or non-grammar file present in a Category directory
+- **THEN** that file SHALL be verified (selection by presence is owned by `backup-restore`)
+
+#### Scenario: Unreadable format reported CORRUPT
+
+- **WHEN** `verify --file` names a file whose suffix matches no known compression format
+- **THEN** the file SHALL be reported CORRUPT and the command SHALL exit 1
+
+#### Scenario: Unknown filename exits non-zero
+
+- **WHEN** `verify --file` names a Backup that exists in no Category
+- **THEN** the command SHALL report the file as not found and exit with a non-zero code
+
+#### Scenario: Verify all Backups
+
+- **WHEN** `verify` or `verify --all` is executed
+- **THEN** all Backups in all Categories SHALL be verified
 
 ### Requirement: Verify output format
 
-The verify command SHALL output a Rich table (TTY) or plain text (non-TTY) showing each backup's path, size, and status (OK or CORRUPT).
+The verify command SHALL output a table (TTY) or plain text (non-TTY) showing each Backup's name, size, and status (OK or CORRUPT).
 
-#### Scenario: Rich table output on TTY
+#### Scenario: Table output on TTY
 
 - **WHEN** verify is executed in a TTY
-- **THEN** a Rich table SHALL be displayed with columns: Backup, Size, Status
+- **THEN** a table SHALL be displayed with columns for Backup, size, and status
 
 #### Scenario: Plain text output on non-TTY
 
-- **WHEN** verify is executed in a non-TTY (e.g., piped output)
+- **WHEN** verify is executed in a non-TTY (e.g. piped output)
 - **THEN** plain text output SHALL be printed without ANSI escape codes
 
 ### Requirement: Verify exit code
 
-The verify command SHALL exit with code 0 if all backups are OK, or code 1 if at least one backup is CORRUPT.
+The verify command SHALL exit with code 0 when every verified Backup is OK, or code 1 when at least one verified Backup is CORRUPT.
 
-#### Scenario: All backups intact
+#### Scenario: All Backups intact
 
-- **WHEN** all verified backups decompress successfully
+- **WHEN** all verified Backups stream successfully
 - **THEN** exit code SHALL be 0
 
-#### Scenario: Corrupt backup found
+#### Scenario: Corrupt Backup found
 
-- **WHEN** at least one backup fails decompression
-- **THEN** exit code SHALL be 1 and the corrupt backup SHALL be listed in the output
+- **WHEN** at least one Backup fails streaming
+- **THEN** exit code SHALL be 1 and the corrupt Backup SHALL be listed in the output
 
-### Requirement: Stray archives reported as skipped in verify-all
+### Requirement: Stray files reported as skipped in verify-all
 
-`verify` without `--file` SHALL verify every archive matching the backup filename grammar and SHALL report non-grammar archive files (suffix `.zst`, `.gz`, `.zip`, or `.tar.zst`/`.tar.gz`) present in category directories as skipped: each skipped filename SHALL be logged at WARNING level, and the command output SHALL include a skipped count. Skipped files SHALL NOT affect the exit code; exit code SHALL remain 0 when all verified archives are OK and 1 when at least one verified archive is CORRUPT.
+Verify-all SHALL verify every grammar-matching Backup and SHALL report non-grammar files (suffix `.zst`, `.gz`, `.zip`, or `.tar.zst`/`.tar.gz`) present in Category directories as skipped: each skipped filename SHALL be logged at WARNING level, and the command output SHALL include a skipped count. Skipped files SHALL NOT affect the exit code; exit code SHALL remain 0 when all verified Backups are OK and 1 when at least one verified Backup is CORRUPT.
 
-#### Scenario: Stray archive skipped with warning
+#### Scenario: Stray file skipped with warning
 
-- **WHEN** `live/` contains `enshrouded-20260529-120000.tar.zst` (valid) and `manual-copy.zip` (non-grammar)
-- **THEN** the valid archive SHALL be verified and reported OK/CORRUPT, and `manual-copy.zip` SHALL be logged at WARNING as skipped with a skipped count of 1 in the output
+- **WHEN** a Category directory contains one valid Backup and one non-grammar file
+- **THEN** the valid Backup SHALL be verified and reported OK/CORRUPT, and the stray SHALL be logged at WARNING as skipped with a skipped count of 1 in the output
 
-#### Scenario: Only stray archives present
+#### Scenario: Only stray files present
 
-- **WHEN** category directories contain only non-grammar archives
-- **THEN** the command SHALL report zero verified backups plus the skipped count, and exit code SHALL be 0
+- **WHEN** Category directories contain only non-grammar files
+- **THEN** the command SHALL report zero verified Backups plus the skipped count, and exit code SHALL be 0

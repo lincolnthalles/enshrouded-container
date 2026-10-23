@@ -10,7 +10,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from enshctl.backup.format import BackupFormat, detect_format, suffix_category
 from enshctl.paths import BACKUP_DIRS
@@ -88,7 +88,7 @@ def scan_all(base_dir: Path, category: str | None = None, when: timedelta | None
     """List backups across categories, newest first, optionally filtered."""
     results: list[BackupInfo] = []
     categories = [category] if category else list(BACKUP_DIRS)
-    cutoff = _local_now() - when if when else None
+    cutoff = _local_now() - when if when is not None else None
     for cat in categories:
         for info in scan_dir(base_dir / cat):
             if cutoff is not None and info.timestamp < cutoff:
@@ -117,9 +117,11 @@ def scan_stray(base_dir: Path, category: str | None = None) -> list[Path]:
 def select(base_dir: Path, file: str | None = None, when: str | None = None) -> Path | None:
     """Select a backup by filename or `--when` direction grammar."""
     if file:
+        if PurePath(file).is_absolute() or ".." in PurePath(file).parts:
+            return None
         for cat in BACKUP_DIRS:
             candidate = base_dir / cat / file
-            if candidate.exists():
+            if candidate.is_file():
                 return candidate
         return None
 
@@ -142,20 +144,27 @@ def select(base_dir: Path, file: str | None = None, when: str | None = None) -> 
                 value = int(direction[:-1])
             except ValueError:
                 return None
-            match unit:
-                case "m":
-                    delta = timedelta(minutes=value)
-                case "h":
-                    delta = timedelta(hours=value)
-                case "d":
-                    delta = timedelta(days=value)
-                case "M":
-                    delta = timedelta(days=value * 30)
-                case _:
-                    return None
+            if value < 0:
+                return None
+            try:
+                match unit:
+                    case "m":
+                        delta = timedelta(minutes=value)
+                    case "h":
+                        delta = timedelta(hours=value)
+                    case "d":
+                        delta = timedelta(days=value)
+                    case "M":
+                        delta = timedelta(days=value * 30)
+                    case _:
+                        return None
+            except OverflowError:
+                return None
 
-        backups = scan_all(base_dir, category=category, when=delta)
+        try:
+            backups = scan_all(base_dir, category=category, when=delta)
+        except OverflowError:
+            return None
         if backups:
             return backups[0].path
-
     return None
