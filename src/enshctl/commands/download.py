@@ -51,8 +51,8 @@ def run(settings: AppSettings | None = None) -> None:
         "yes" if settings.manifesthub_api_token else "no",
     )
 
-    install.prepare_manifests(settings)
     try:
+        install.prepare_manifests(settings)
         from enshctl.install import DownloadAuth as _DownloadAuth
 
         target = install.download_version(

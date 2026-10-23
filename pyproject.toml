@@ -92,6 +92,9 @@ docstring-quotes = "double"
     'PLC0415', # Local imports in start_scheduler to avoid circular imports.
     'TRY300', # Return in try/except is intentional.
 ]
+"src/enshctl/install.py" = [
+    'PLR0915', # download_version strategy branches each carry distinct user-facing errors; extracting one branch would scatter the selection.
+]
 "src/enshctl/backup/__init__.py" = [
     'ANN401', # PEP 562 __getattr__ must return Any for lazy parse_cron re-export.
 ]

@@ -4,54 +4,60 @@ Dispatch of CLI subcommands to dedicated modules under the commands package.
 
 ## Requirements
 
-### Requirement: Subcommand dispatch via commands package
+### Requirement: Subcommand dispatch
 
-The entrypoint SHALL dispatch CLI subcommands to dedicated modules under `enshctl.commands`. Each subcommand (`start`, `install`, `backup`, `restore`, `verify`, `prune`, `download`, `version-info`, `debug-config`) SHALL be registered in the `COMMANDS` registry in `enshctl/commands/__init__.py` and implemented in its own module under `commands/` exposing a `run()` function.
+The entrypoint SHALL dispatch each CLI subcommand (`start`, `install`, `backup`, `restore`, `verify`, `prune`, `download`, `version-info`, `debug-config`) to its dedicated commands module.
 
 #### Scenario: CLI dispatch to commands module
 
 - **WHEN** the container runs `enshctl start`
-- **THEN** the entrypoint SHALL call `commands.start.run()` via the `COMMANDS` registry
+- **THEN** the start command SHALL execute
 
 #### Scenario: CLI dispatch for backup subcommand
 
 - **WHEN** the container runs `enshctl backup`
-- **THEN** the entrypoint SHALL call `commands.backup.run()`
+- **THEN** the backup command SHALL execute
 
 #### Scenario: CLI dispatch for restore subcommand
 
 - **WHEN** the container runs `enshctl restore`
-- **THEN** the entrypoint SHALL call `commands.restore.run()`
+- **THEN** the restore command SHALL execute
 
 #### Scenario: CLI dispatch for verify subcommand
 
 - **WHEN** the container runs `enshctl verify`
-- **THEN** the entrypoint SHALL call `commands.verify.run()`
+- **THEN** the verify command SHALL execute
 
 #### Scenario: CLI dispatch for prune subcommand
 
 - **WHEN** the container runs `enshctl prune`
-- **THEN** the entrypoint SHALL call `commands.prune.run()`
+- **THEN** the prune command SHALL execute
 
-### Requirement: Subcommand module interface
+#### Scenario: CLI dispatch for install subcommand
 
-Each `commands` module SHALL expose a `run()` function as its public entrypoint. The module MAY define additional private helper functions. Each `run()` function SHALL be type-annotated, accept an optional `AppSettings` (defaulting to `load_settings()` when `None`), and return `None`.
+- **WHEN** the container runs `enshctl install`
+- **THEN** the install command SHALL execute
 
-#### Scenario: commands module has run function
+#### Scenario: CLI dispatch for download subcommand
 
-- **WHEN** `enshctl.commands.start` is imported
-- **THEN** `enshctl.commands.start.run` SHALL be a callable that returns `None`
+- **WHEN** the container runs `enshctl download`
+- **THEN** the download command SHALL execute
 
-#### Scenario: commands module keeps helpers private
+#### Scenario: CLI dispatch for version-info subcommand
 
-- **WHEN** `enshctl.commands.start` is imported
-- **THEN** subcommand-internal functions (e.g., `_setup_directories`, `_start_server`) SHALL be module-level private functions (underscore-prefixed)
+- **WHEN** the container runs `enshctl version-info`
+- **THEN** the version report SHALL be printed
+
+#### Scenario: CLI dispatch for debug-config subcommand
+
+- **WHEN** the container runs `enshctl debug-config`
+- **THEN** the generated configuration SHALL be printed
 
 ### Requirement: Thin entrypoint
 
-The `__main__.py` module SHALL contain only argument parsing, logging setup (console plus the opt-in orchestrator file handler), CLI-flag-to-settings merging, settings loading, and subcommand dispatch. It SHALL NOT contain business logic, signal handling, or process management code.
+The entrypoint SHALL contain only argument parsing, logging setup, CLI-flag-to-settings merging, settings loading, and subcommand dispatch. It SHALL NOT contain business logic, signal handling, or process management code.
 
-#### Scenario: Entry point has no business logic
+#### Scenario: Unknown subcommand rejected at entrypoint
 
-- **WHEN** `__main__.py` is inspected
-- **THEN** it SHALL contain only: argument parser definition, CLI-flag-to-settings merging via `dataclasses.replace`, logging setup including the `_GameServerFilter` filter class, `main()` function, and dispatch via the `COMMANDS` registry — no signal handling or process management code
+- **WHEN** the container runs `enshctl` with an unknown subcommand name
+- **THEN** argument parsing SHALL reject it with a non-zero exit and name the known subcommands, before any business logic runs

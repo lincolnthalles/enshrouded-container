@@ -4,44 +4,34 @@ Multi-stage Docker build producing and installing the project wheel via uv.
 
 ## Requirements
 
-### Requirement: Multi-stage Docker build with uv
+### Requirement: Builder produces wheel
 
-The Dockerfile SHALL use a multi-stage build. A builder stage SHALL use `uv build` to produce a Python wheel from the project source. The final stage SHALL install the wheel into the runtime Python environment.
+A builder stage SHALL produce a Python wheel from the project source via `uv build`.
 
 #### Scenario: Builder stage produces wheel
 
-- **WHEN** `docker build` is executed
-- **THEN** a builder stage SHALL run `uv build` against the project source and produce a `.whl` file
+- **WHEN** the image is built
+- **THEN** a builder stage SHALL run the project build and produce a `.whl` file
+
+### Requirement: Final image installs wheel
+
+The final stage SHALL install the built wheel into the runtime Python environment with all declared dependencies available. No raw source SHALL be copied into the final image; the package SHALL be installed as a proper Python package. The `zstandard` module SHALL be importable at module top level. UI display libraries are optional at runtime: their absence SHALL degrade output gracefully instead of failing.
 
 #### Scenario: Final stage installs wheel
 
-- **WHEN** the final Docker stage is built
-- **THEN** it SHALL copy the wheel from the builder stage and install it, ensuring all declared dependencies (including `zstandard`) are available at runtime
+- **WHEN** the final image is built
+- **THEN** it SHALL install the wheel from the builder stage with all declared dependencies
 
-#### Scenario: No raw source copy in final image
+#### Scenario: zstandard importable at module level
 
-- **WHEN** the final image is inspected
-- **THEN** there SHALL be no `/scripts/` directory containing raw Python source files; the package SHALL be installed as a proper Python package
-
-### Requirement: Runtime dependency availability
-
-All dependencies declared in `pyproject.toml` SHALL be installed in the final Docker image. The `zstandard` module SHALL be importable at the top level without fallback logic.
-
-#### Scenario: zstandard is importable at module level
-
-- **WHEN** Python code in the container imports `zstandard`
-- **THEN** the import SHALL succeed without `ImportError` or deferred import patterns
+- **WHEN** Python code in the container imports `zstandard` at module top level
+- **THEN** the import SHALL succeed without `ImportError`
 
 ### Requirement: Entry point script
 
-The `pyproject.toml` SHALL declare a `[project.scripts]` entry point that maps `enshctl` to the main CLI function. The Dockerfile `ENTRYPOINT` SHALL use this script name instead of `python3 /scripts/entrypoint.py`.
+The container SHALL start via the installed `enshctl` console script as its entrypoint.
 
 #### Scenario: Container entrypoint uses installed script
 
 - **WHEN** the container starts
-- **THEN** the `ENTRYPOINT` SHALL invoke `enshctl` (the installed console script) rather than `python3 /scripts/entrypoint.py`
-
-#### Scenario: Console script resolves to correct function
-
-- **WHEN** `enshctl` is executed
-- **THEN** it SHALL resolve to `enshctl.__main__:main` as declared in `pyproject.toml`
+- **THEN** the entrypoint SHALL invoke the installed `enshctl` console script

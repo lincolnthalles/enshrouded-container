@@ -6,77 +6,67 @@ Free-space guards that gate game installs and backups before they run.
 
 ### Requirement: Install disk space check
 
-Before downloading game files, the system SHALL compute `effective_free = shutil.disk_usage(MANIFESTS_DIR).free + size(partial_download_dir)` and compare against `INSTALL_MIN_FREE_SPACE` (default 10 GB, configurable via env var). If `effective_free < INSTALL_MIN_FREE_SPACE`, the system SHALL log an error with exact sizes and exit with code 1.
+Before downloading game files, the Install SHALL verify that free space plus any partial download of the same Manifest ID meets the configured minimum (default 10 GB). Otherwise the Install SHALL fail with an error naming exact sizes and exit 1. Partial data for other Manifest IDs SHALL NOT count.
 
 #### Scenario: Sufficient space for fresh install
 
-- **WHEN** `VERSION=1234567890123456789` is set, no partial download exists, and free space is 12 GB
-- **THEN** the install SHALL proceed (12 GB ≥ 10 GB threshold)
+- **WHEN** a Manifest ID is requested with no partial download and free space above the minimum
+- **THEN** the Install SHALL proceed
 
-#### Scenario: Insufficient space for fresh install
+#### Scenario: Insufficient space aborts with sizes
 
-- **WHEN** `VERSION=1234567890123456789` is set, no partial download exists, and free space is 8 GB
-- **THEN** the system SHALL log "Insufficient disk space" with the shortfall amount and exit with code 1
+- **WHEN** free space plus same-manifest partial data is below the minimum
+- **THEN** the Install SHALL fail with an error naming free, partial, and required sizes, and exit 1
 
-#### Scenario: Partial download counts toward quota
+#### Scenario: Different manifest partial ignored
 
-- **WHEN** `VERSION=1234567890123456789` is set, a 3 GB partial download exists for the same manifest, and free space is 7 GB
-- **THEN** `effective_free` SHALL be 10 GB (7 + 3) and the install SHALL proceed
-
-#### Scenario: Different manifest ignores partial
-
-- **WHEN** `VERSION=9999999999999999999` is set, a 3 GB partial download exists for a different manifest, and free space is 7 GB
-- **THEN** `effective_free` SHALL be 7 GB (partial is for a different manifest) and the system SHALL abort
+- **WHEN** partial data belongs to a different Manifest ID
+- **THEN** it SHALL NOT count toward the quota
 
 #### Scenario: Custom threshold via env var
 
-- **WHEN** `INSTALL_MIN_FREE_SPACE=5368709120` (5 GB) is set and free space is 6 GB
-- **THEN** the install SHALL proceed (6 GB ≥ 5 GB threshold)
+- **WHEN** `INSTALL_MIN_FREE_SPACE` sets a custom minimum and free space meets it
+- **THEN** the Install SHALL proceed
 
 ### Requirement: Backup disk space guard
 
-The system SHALL check `shutil.disk_usage(backup_dir).free` at the start of `create_backup()`. If free space is below `BACKUP_MIN_FREE_SPACE_STOP` (default 1 GB), the backup SHALL be skipped and `None` returned. If free space is below `BACKUP_MIN_FREE_SPACE_WARN` (default 2 GB), a warning SHALL be logged and the backup SHALL proceed.
+When free space in the backup directory falls below the stop threshold (default 1 GB), the Backup SHALL be skipped. Below the warn threshold (default 2 GB), a warning SHALL be logged and the Backup SHALL proceed. The guard SHALL apply to every Category.
 
 #### Scenario: Normal backup proceeds
 
-- **WHEN** free space is 5 GB and a backup is triggered
-- **THEN** the backup SHALL proceed without warning
+- **WHEN** free space is above the warn threshold and a Backup is triggered
+- **THEN** the Backup SHALL proceed without warning
 
 #### Scenario: Warning at low disk
 
-- **WHEN** free space is 1.5 GB (below 2 GB warn threshold) and a backup is triggered
-- **THEN** a warning SHALL be logged ("Disk space low: 1.5 GB free") and the backup SHALL proceed
+- **WHEN** free space is below the warn threshold
+- **THEN** a warning SHALL name the free space and the Backup SHALL proceed
 
 #### Scenario: Skip at critical disk
 
-- **WHEN** free space is 0.8 GB (below 1 GB stop threshold) and a backup is triggered
-- **THEN** a warning SHALL be logged ("Disk space critical: 0.8 GB free, skipping backup") and `create_backup()` SHALL return `None`
+- **WHEN** free space is below the stop threshold
+- **THEN** a warning SHALL be logged and the Backup SHALL be skipped
 
 #### Scenario: Guard applies to all categories
 
 - **WHEN** free space is below the stop threshold
-- **THEN** live, cold, and emergency backups SHALL all be skipped
+- **THEN** live, cold, and emergency Backups SHALL all be skipped
 
 #### Scenario: Custom thresholds via env vars
 
-- **WHEN** `BACKUP_MIN_FREE_SPACE_WARN=1073741824` and `BACKUP_MIN_FREE_SPACE_STOP=536870912` are set
-- **THEN** the warn threshold SHALL be 1 GB and the stop threshold SHALL be 512 MB
+- **WHEN** `BACKUP_MIN_FREE_SPACE_WARN` and `BACKUP_MIN_FREE_SPACE_STOP` set custom thresholds
+- **THEN** those values SHALL gate Backup execution
 
 ### Requirement: Restore disk space check
 
-After extracting the backup to a temporary directory and before clearing saves, the system SHALL verify that `shutil.disk_usage(SAVE_DIR).free + du(SAVE_DIR) >= du(tmp_dir)`. If this check fails, the system SHALL log an error with exact sizes (extracted data, current saves, free space, shortfall) and clean up the temporary directory without modifying saves.
+After extracting the Backup to the temporary directory and before clearing saves, the restore SHALL verify that free space plus the current saves size covers the extracted data. On shortfall, the temporary directory SHALL be cleaned up and the command SHALL exit 1 without modifying saves.
 
 #### Scenario: Sufficient space after extraction
 
-- **WHEN** extraction to tmp succeeds and `free + du(saves) >= du(tmp)`
+- **WHEN** extraction to tmp succeeds and free space plus saves size covers the extracted data
 - **THEN** the restore SHALL proceed to clear saves and move tmp data
 
 #### Scenario: Insufficient space after extraction
 
-- **WHEN** extraction to tmp succeeds but `free + du(saves) < du(tmp)`
-- **THEN** the system SHALL log the exact shortfall, clean up tmp, and exit with code 1 without modifying saves
-
-#### Scenario: Extraction fails from ENOSPC
-
-- **WHEN** extraction to tmp fails because the disk fills mid-write
-- **THEN** the system SHALL clean up tmp, log the error with current free space, and exit with code 1 without modifying saves
+- **WHEN** extraction succeeds but free space plus saves size is below the extracted size
+- **THEN** the system SHALL log the exact shortfall, clean up tmp, and exit 1 without modifying saves

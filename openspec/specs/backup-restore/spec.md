@@ -144,13 +144,13 @@ The restore SHALL extract the Backup to the temporary directory (`/data/saves-re
 
 #### Scenario: Failed extraction leaves saves untouched
 
-- **WHEN** extraction to tmp fails because the Backup is corrupt
+- **WHEN** extraction to tmp fails because the Backup is corrupt or the disk fills mid-write
 - **THEN** the temporary directory SHALL be cleaned up, the error SHALL name the cause with current free space, the saves directory SHALL remain untouched, and the command SHALL exit 1
 
-#### Scenario: Space shortfall leaves saves untouched
+#### Scenario: Space shortfall before clearing leaves saves untouched
 
-- **WHEN** extraction succeeds but the space check fails
-- **THEN** the outcome SHALL be exactly as `disk-space-guards` specifies (tmp cleaned, saves untouched, exit 1)
+- **WHEN** extraction succeeds but the space check fails (see `disk-space-guards`)
+- **THEN** the temporary directory SHALL be cleaned up, the saves directory SHALL remain untouched, and the command SHALL exit 1
 
 #### Scenario: Unreadable format fails cleanly
 

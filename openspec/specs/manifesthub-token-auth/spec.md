@@ -1,128 +1,72 @@
 ## Purpose
 
-Auth-free game downloads using depot decryption keys from an external source.
+Auth-free Install inputs: depot decryption keys and Manifest files from external sources. Credential strategy selection lives in `versioned-game-install`; Download execution in `download-strategies`. Auth-free setup runs as part of `start`, `download`, and `install`.
 
 ## Requirements
 
-### Requirement: Depot keys generation from external source
+### Requirement: Depot keys from external source
 
-A `depot.keys` file SHALL be generated at `/data/manifests/depot.keys` containing depot decryption keys in the format `depotId;hexKey` per line. The file SHALL be generated from a user-supplied git repository URL or fallback to archive.org mirrors. Generation SHALL only occur if the file does not already exist.
+As part of auth-free setup (`MANIFESTHUB_API_TOKEN` or `DEPOT_KEYS_REPO` configured, and Manifest file inputs supported), when no `depot.keys` file exists at `/data/manifests/depot.keys`, the Install SHALL fetch decryption keys from the `DEPOT_KEYS_REPO` git repository, falling back to archive.org mirrors when the repo is unconfigured or its fetch fails, and write them as `depotId;hexKey` lines. An existing file SHALL never be regenerated. When all sources fail, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
 
-#### Scenario: Generate depot.keys from git repo
+#### Scenario: Keys fetched from git repo
 
-- **WHEN** `DEPOT_KEYS_REPO` is set to a git-compatible URL (e.g., `https://github.com/user/repo`)
-- **THEN** the orchestrator SHALL fetch `key.vdf` from that repo (auto-inferring branch and path) and parse it into `depot.keys`
+- **WHEN** auth-free setup runs with `DEPOT_KEYS_REPO` configured and no `depot.keys` file exists
+- **THEN** the key material SHALL be fetched from that repo (auto-inferring branch and path) and written as `depot.keys`
 
-#### Scenario: Generate depot.keys from archive.org fallback
+#### Scenario: Keys fetched from archive.org fallback
 
-- **WHEN** `DEPOT_KEYS_REPO` is not set
-- **THEN** the orchestrator SHALL fetch `key.vdf` from `https://archive.org/download/manifest-hub-repo/NEW-depot-keys.zip/` and parse it into `depot.keys`
+- **WHEN** auth-free setup runs with no `DEPOT_KEYS_REPO` configured, or the repo fetch fails, and no `depot.keys` file exists
+- **THEN** the key material SHALL be fetched from the archive.org mirror and written as `depot.keys`
 
-#### Scenario: Skip generation if depot.keys exists
+#### Scenario: Existing keys never regenerated
 
-- **WHEN** `/data/manifests/depot.keys` already exists
-- **THEN** the orchestrator SHALL NOT regenerate it
+- **WHEN** a `depot.keys` file already exists
+- **THEN** no fetch SHALL run
 
-#### Scenario: Error on key generation failure
+#### Scenario: All key sources fail
 
-- **WHEN** both git repo and archive.org sources fail to provide a valid `key.vdf`
-- **THEN** the orchestrator SHALL raise an error with a clear message indicating the failure and suggesting the user supply a `DEPOT_KEYS_REPO` or `STEAM_PASSWORD`, or source a key file elsewhere and save it as /data/manifests/depot.keys.
+- **WHEN** both the git repo and archive.org sources fail to provide valid key material
+- **THEN** the Install SHALL fail with an error naming key setup and Steam login as alternatives
 
-### Requirement: ManifestHub manifest fetching
+### Requirement: Manifest files from ManifestHub
 
-When a `MANIFESTHUB_API_TOKEN` and `MANIFESTHUB_API_URL` are both provided, the orchestrator SHALL download missing `.manifest` files from the ManifestHub API at `{api_url}/manifest?apikey={token}&depotid={depotId}&manifestid={manifestId}`. `MANIFESTHUB_API_URL` has no default and MUST be supplied alongside the token.
+As part of auth-free setup, the Install SHALL discover available Manifest IDs via the DepotDownloader listing and download each missing Manifest file from the ManifestHub API (`MANIFESTHUB_API_TOKEN` plus `MANIFESTHUB_API_URL`); an empty listing SHALL warn and skip prefetching. ManifestHub API errors SHALL be logged with the API's reported details without aborting the Install; the absent Manifest file then falls through to strategy selection (see `versioned-game-install`). A token without a URL SHALL fail fast directing the user to set `MANIFESTHUB_API_URL`.
 
-#### Scenario: Download manifest for specific version
+#### Scenario: Missing Manifest files prefetched
 
-- **WHEN** `MANIFESTHUB_API_TOKEN` is set and a `.manifest` file for the requested version does not exist at `/data/manifests/{depotId}_{manifestId}.manifest`
-- **THEN** the orchestrator SHALL download it from ManifestHub and save it to `/data/manifests/{depotId}_{manifestId}.manifest`
+- **WHEN** auth-free setup runs with `MANIFESTHUB_API_TOKEN` and `MANIFESTHUB_API_URL` configured and the listing reports Manifest IDs
+- **THEN** each missing Manifest file SHALL be downloaded from the ManifestHub API and present ones skipped
 
-#### Scenario: Skip download if manifest exists
+#### Scenario: Empty listing warns and skips
 
-- **WHEN** the `.manifest` file already exists at `/data/manifests/{depotId}_{manifestId}.manifest`
-- **THEN** the orchestrator SHALL NOT re-download it
+- **WHEN** auth-free setup runs and the listing reports no Manifest IDs
+- **THEN** a warning SHALL be logged and prefetching SHALL be skipped
 
-#### Scenario: ManifestHub API error
+#### Scenario: ManifestHub API error logged without abort
 
-- **WHEN** the ManifestHub API returns a non-success HTTP status or JSON error
-- **THEN** the orchestrator SHALL raise an error with the API response details
+- **WHEN** the ManifestHub API returns an error for a Manifest file
+- **THEN** the error SHALL be logged with the API's reported details and fetching SHALL continue
 
-### Requirement: ManifestHub API URL required
+#### Scenario: Token without URL fails fast
 
-The ManifestHub API base URL SHALL be supplied via the `MANIFESTHUB_API_URL` env var. There is no default. If `MANIFESTHUB_API_TOKEN` is set without `MANIFESTHUB_API_URL`, the orchestrator SHALL exit with an error directing the user to set it.
+- **WHEN** `MANIFESTHUB_API_TOKEN` is set without `MANIFESTHUB_API_URL`
+- **THEN** the Install SHALL fail with an error directing the user to set `MANIFESTHUB_API_URL`
 
-#### Scenario: Custom API URL
+### Requirement: Mod-fork DepotDownloader detection
 
-- **WHEN** `MANIFESTHUB_API_URL` is set (e.g., `https://my-mirror.example.com`)
-- **THEN** manifest downloads SHALL use that URL as the base (e.g., `https://my-mirror.example.com/manifest?apikey=...`)
+The Install SHALL detect whether the installed DepotDownloader supports Manifest file inputs by invoking it with no arguments and checking its usage text for the Manifest file flags: the Mod fork documents them, vanilla does not. The probe SHALL touch neither the network nor the working directory. When support is absent and auth-free inputs are requested, the Install SHALL warn and fall back to Steam login when available (see `versioned-game-install` for strategy selection).
 
-#### Scenario: Token without URL exits
+#### Scenario: Mod fork detected
 
-- **WHEN** `MANIFESTHUB_API_TOKEN` is set and `MANIFESTHUB_API_URL` is not set
-- **THEN** the orchestrator SHALL exit with an error directing the user to set `MANIFESTHUB_API_URL`
+- **WHEN** DepotDownloader usage documents the Manifest file flags
+- **THEN** Manifest file inputs SHALL be available for strategy selection
 
-### Requirement: Auth-free DepotDownloader invocation
+#### Scenario: Vanilla DepotDownloader falls back
 
-When `depot.keys` and the required `.manifest` file exist and no explicit Steam username was supplied, DepotDownloader SHALL be invoked with `-depotkeys` and `-manifestfile` flags for auth-free download from Steam's CDN. When an explicit Steam username is supplied via `--steam-username` or the `STEAM_USERNAME` env var (non-empty after stripping whitespace), DepotDownloader SHALL be invoked with `-username`/`-password` flags instead, even when `depot.keys` and the manifest file exist.
+- **WHEN** DepotDownloader usage lacks the Manifest file flags and auth-free inputs are requested
+- **THEN** a warning SHALL be logged and Steam login SHALL be used when credentials are available
 
-#### Scenario: Download with depot.keys and manifest file
+#### Scenario: Probe timeout presumes support
 
-- **WHEN** `/data/manifests/depot.keys` exists and the `.manifest` file for the requested version exists and no Steam username was supplied
-- **THEN** DepotDownloader SHALL be invoked with `-depotkeys /data/manifests/depot.keys -manifestfile /data/manifests/{depotId}_{manifestId}.manifest` instead of `-username`/`-password` flags
-
-#### Scenario: Latest uses auth-free when set up
-
-- **WHEN** `VERSION=latest`, `/data/manifests/depot.keys` and the resolved `.manifest` file exist, and no Steam username was supplied
-- **THEN** DepotDownloader SHALL be invoked with `-depotkeys`/`-manifestfile` flags, and the selected strategy SHALL be logged
-
-#### Scenario: Latest falls back to anonymous
-
-- **WHEN** `VERSION=latest` and no credentials, keys, or token are configured
-- **THEN** DepotDownloader SHALL be invoked with no auth flags (anonymous download)
-
-#### Scenario: Explicit credentials override auth-free inputs
-
-- **WHEN** `--steam-username user` is supplied (or `STEAM_USERNAME` is set non-empty) and `/data/manifests/depot.keys` plus the `.manifest` file exist
-- **THEN** DepotDownloader SHALL be invoked with `-username`/`-password` flags and the auth-free path SHALL NOT be used
-
-#### Scenario: Fallback to Steam login when keys missing
-
-- **WHEN** `depot.keys` does not exist and `STEAM_USERNAME`/`STEAM_PASSWORD` are provided
-- **THEN** DepotDownloader SHALL be invoked with `-username`/`-password` flags as in the current behavior
-
-### Requirement: DepotDownloaderMod feature detection
-
-The orchestrator SHALL detect whether the installed DepotDownloader supports `-manifestfile`/`-depotkeys` flags. If unsupported, a clear error SHALL be raised.
-
-#### Scenario: DepotDownloaderMod supports manifest flags
-
-- **WHEN** DepotDownloader is invoked with `-manifestfile /dev/null -depotkeys /dev/null` and stderr does not contain "unknown" or "unrecognized" flag errors
-- **THEN** the orchestrator SHALL proceed with auth-free download
-
-#### Scenario: Vanilla DepotDownloader detected
-
-- **WHEN** DepotDownloader is invoked with `-manifestfile /dev/null -depotkeys /dev/null` and stderr contains "unknown option" or "unrecognized argument"
-- **THEN** the orchestrator SHALL raise an error: "This container was built with vanilla DepotDownloader which does not support auth-free downloads. Use the DepotDownloaderMod fork or provide STEAM_USERNAME/STEAM_PASSWORD."
-
-### Requirement: Manifest listing via DepotDownloader
-
-When `MANIFESTHUB_API_TOKEN` is provided, the orchestrator SHALL call DepotDownloader with `-manifest-only` to discover all available manifest IDs for the app. This list drives which `.manifest` files to fetch from ManifestHub.
-
-#### Scenario: List manifests with token
-
-- **WHEN** `MANIFESTHUB_API_TOKEN` is set
-- **THEN** the orchestrator SHALL call DepotDownloader `-app 2278520 -depot 2278521 -manifest-only -os windows` and parse the output for manifest IDs
-
-#### Scenario: Manifest listing fails
-
-- **WHEN** DepotDownloader fails to list manifests (e.g., Steam CDN unreachable)
-- **THEN** the orchestrator SHALL raise an error with the DepotDownloader output
-
-### Requirement: Graceful error for missing download path
-
-If an old version is not installed, no manifest file exists, and the user is not supplying a password or token, the orchestrator SHALL raise a clear error explaining the options.
-
-#### Scenario: No path available for old version
-
-- **WHEN** the requested version is not installed, no `.manifest` file exists, `STEAM_PASSWORD` is not set, and `MANIFESTHUB_API_TOKEN` is not set
-- **THEN** the orchestrator SHALL exit with error: "Version {manifest_id} is not installed and cannot be downloaded. Provide STEAM_PASSWORD for Steam login, or MANIFESTHUB_API_TOKEN for ManifestHub access, or use VERSION=latest."
+- **WHEN** the support probe itself times out
+- **THEN** support SHALL be presumed and the warning SHALL note the timeout, rather than blocking the Install

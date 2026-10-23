@@ -17,11 +17,22 @@ logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=1)
 def check_manifestfile_support() -> bool:
-    """Check whether the installed DepotDownloader supports -manifestfile/-depotkeys flags."""
-    cmd = [*DEPOT_DOWNLOADER, "-manifestfile", "/dev/null", "-depotkeys", "/dev/null"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    """Check whether the installed DepotDownloader supports -manifestfile/-depotkeys flags.
+
+    The probe invokes the binary with no arguments: it prints version and
+    usage text and exits without touching the network. The Mod fork
+    documents -manifestfile/-depotkeys in its usage; vanilla does not.
+    Probing usage text avoids a network round trip, a startup stall, and
+    stray downloads in the working directory.
+    """
+    cmd = [*DEPOT_DOWNLOADER]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    except subprocess.TimeoutExpired:
+        logger.warning("DepotDownloader support probe timed out; presuming -manifestfile/-depotkeys support")
+        return True
     output = (result.stdout + result.stderr).lower()
-    supported = "unknown" not in output and "unrecognized" not in output
+    supported = "manifestfile" in output and "depotkeys" in output
     if not supported:
         logger.warning(
             "DepotDownloader does not support -manifestfile/-depotkeys flags. "

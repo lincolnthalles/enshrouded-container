@@ -450,8 +450,8 @@ def run(settings: AppSettings | None = None) -> None:
     _setup_x11_socket()
     _ensure_wineprefix(settings)
 
-    install.prepare_manifests(settings)
     try:
+        install.prepare_manifests(settings)
         target = install.ensure_install(settings)
     except InstallError:
         logger.exception("Start failed")

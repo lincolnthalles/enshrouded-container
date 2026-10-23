@@ -20,4 +20,4 @@ def run(settings: AppSettings | None = None) -> None:
     print(json.dumps(config, indent=2))
     print()
 
-    print("Written to: /data/config/enshrouded_server.json", file=sys.stderr)
+    print("Preview only — nothing written to /data/config/enshrouded_server.json", file=sys.stderr)

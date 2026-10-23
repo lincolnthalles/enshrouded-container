@@ -99,6 +99,6 @@ def ensure_depot_keys(manifests_dir: Path, repo_url: str | None) -> Path:
         "Failed to generate depot.keys from all sources. "
         "Provide DEPOT_KEYS_REPO with a valid git repository URL, "
         "or manually place a depot.keys file at /data/manifests/depot.keys, "
-        "or use STEAM_PASSWORD for login-based download."
+        "or use STEAM_USERNAME/STEAM_PASSWORD for login-based download."
     )
     raise InstallError(msg)

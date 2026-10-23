@@ -15,6 +15,7 @@ def run(settings: AppSettings | None = None) -> None:
     settings = settings or load_settings()
     logger.info("Installing game version: %s (force=%s)", settings.version, settings.force_install)
     try:
+        install.prepare_manifests(settings)
         target = install.ensure_install(settings)
     except InstallError:
         logger.exception("Install failed")

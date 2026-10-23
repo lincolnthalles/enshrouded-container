@@ -6,50 +6,65 @@ Plain-Wine game execution environment: launch, prefix lifecycle, and version rep
 
 ### Requirement: Wine server launch
 
-The `_start_server()` function SHALL launch the game via `/usr/bin/runuser -u steam -- xvfb-run --auto-servernum wine <game-exe>` with `cwd=/data/gameserver`. The subprocess environment SHALL include `WINEPREFIX=/data/wineprefix`, `WINEARCH`, `WINEDEBUG`, and the resolved `WINEDLLOVERRIDES`.
+The game SHALL be launched under Wine wrapped in a virtual display server, running as the `steam` user with the Game tree as its working directory. The server environment SHALL carry the Wine prefix, architecture, debug, and resolved DLL override settings (see `server-lifecycle` for startup ordering and environment rules).
 
-#### Scenario: Server launches under Wine via xvfb-run
+#### Scenario: Server launches under Wine
 
-- **WHEN** the server process is started via `_start_server()`
-- **THEN** the command SHALL invoke `wine` wrapped in `runuser -u steam` and `xvfb-run --auto-servernum`
+- **WHEN** the server process is started
+- **THEN** the game executable SHALL run under Wine in a virtual display as the `steam` user
 
 #### Scenario: Wine environment is set during server launch
 
-- **WHEN** the server process is started via `_start_server()`
-- **THEN** the subprocess environment SHALL contain `WINEPREFIX=/data/wineprefix` and the resolved `WINEDLLOVERRIDES`
+- **WHEN** the server process is started
+- **THEN** its environment SHALL contain the Wine prefix path and the resolved DLL overrides
 
 ### Requirement: Machine ID generation
 
-The Dockerfile SHALL generate `/etc/machine-id` from the kernel UUID (`cat /proc/sys/kernel/random/uuid > /etc/machine-id`) during the image build.
+The image SHALL generate `/etc/machine-id` from the kernel UUID during the image build.
 
 #### Scenario: Machine ID exists at runtime
 
 - **WHEN** the container starts
 - **THEN** `/etc/machine-id` SHALL exist and contain a valid UUID
 
-### Requirement: Wine prefix directory ownership
+### Requirement: Wine prefix lifecycle
 
-The Wine prefix directory `/data/wineprefix` SHALL be created and owned by the `steam` user. Wine SHALL create the prefix subdirectory structure (`drive_c/`, `*.reg`, etc.) on first init via `wineboot --init`.
+The Wine prefix SHALL be created on first start via prefix initialization running as the `steam` user under the virtual display, marked complete afterwards, and reused on later starts. Initialization failure SHALL fail startup.
 
-#### Scenario: Wine prefix directory exists
+#### Scenario: Wine prefix is initialized
 
-- **WHEN** the container starts
-- **THEN** `/data/wineprefix` SHALL exist and be owned by `steam:steam`
+- **WHEN** the container starts and no completed-initialization marker exists
+- **THEN** prefix initialization SHALL run as the `steam` user under the virtual display
+
+#### Scenario: Wine prefix is reused once initialized
+
+- **WHEN** the container starts and the initialization marker exists
+- **THEN** prefix initialization SHALL be skipped
+
+#### Scenario: Prefix initialization failure fails startup
+
+- **WHEN** prefix initialization fails or times out
+- **THEN** the container SHALL fail startup with the initialization error
 
 ### Requirement: Version reporting
 
-The `version-info` subcommand SHALL report installed game versions (manifest ID and install timestamp for each directory under `/data/manifests/` carrying a `.installed` marker). No Proton or Wine version detection is required.
+The `version-info` invocation SHALL report each installed Manifest ID with its install timestamp. With no installs present, it SHALL report that none are installed.
 
 #### Scenario: Version info lists installed manifests
 
-- **WHEN** `enshctl version-info` is run
-- **THEN** the output SHALL list each installed manifest ID with its install timestamp
+- **WHEN** `version-info` is run with Manifest installs present
+- **THEN** the output SHALL list each installed Manifest ID with its install timestamp
+
+#### Scenario: Version info with no installs
+
+- **WHEN** `version-info` is run with no Manifest installs present
+- **THEN** the output SHALL report that no versions are installed
 
 ### Requirement: Wine server cleanup on shutdown
 
-The shutdown handler SHALL kill the Wine server process using `/usr/bin/wineserver -k` (falling back to `-k9` on timeout) after the game server process exits.
+After the game server process exits, the shutdown sequence SHALL stop the Wine server process (escalating on timeout) before completing shutdown (see `backup-system` for the full shutdown order).
 
 #### Scenario: Wine server is cleaned up on shutdown
 
-- **WHEN** the container receives SIGTERM and the game server exits
-- **THEN** `/usr/bin/wineserver -k` SHALL be executed to clean up Wine server processes
+- **WHEN** the container shuts down after the game server exits
+- **THEN** the Wine server SHALL be stopped before shutdown completes

@@ -94,3 +94,59 @@ def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
     result = manifests.resolve_manifest("12345", control_file=control)
     assert result == "12345"
     assert not control.exists()
+
+
+def test_manifestfile_support_probe_lists_no_args() -> None:
+    from unittest.mock import MagicMock, patch
+
+    # GIVEN the DepotDownloader probe
+    manifests.check_manifestfile_support.cache_clear()
+    try:
+        # WHEN probing support
+        with patch.object(
+            manifests.subprocess,
+            "run",
+            return_value=MagicMock(stdout=" -manifestfile <file>\n -depotkeys <file>\n", stderr=""),
+        ) as mock_run:
+            assert manifests.check_manifestfile_support() is True
+        # THEN the probe passes no arguments, avoiding any network or download
+        assert mock_run.call_args.args[0] == [*manifests.DEPOT_DOWNLOADER]
+    finally:
+        manifests.check_manifestfile_support.cache_clear()
+
+
+def test_manifestfile_support_detects_vanilla() -> None:
+    from unittest.mock import MagicMock, patch
+
+    # GIVEN a DepotDownloader whose usage lacks the Mod-fork flags
+    manifests.check_manifestfile_support.cache_clear()
+    try:
+        # WHEN probing support
+        with patch.object(
+            manifests.subprocess,
+            "run",
+            return_value=MagicMock(stdout="Usage: depotdownloader -app <id>\n", stderr=""),
+        ):
+            # THEN vanilla is detected as unsupported
+            assert manifests.check_manifestfile_support() is False
+    finally:
+        manifests.check_manifestfile_support.cache_clear()
+
+
+def test_manifestfile_support_timeout_presumes_support() -> None:
+    import subprocess
+    from unittest.mock import patch
+
+    # GIVEN a probe that times out (fork proceeding to network)
+    manifests.check_manifestfile_support.cache_clear()
+    try:
+        # WHEN probing support
+        with patch.object(
+            manifests.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired("dd", 30),
+        ):
+            # THEN support is presumed rather than blocking Install
+            assert manifests.check_manifestfile_support() is True
+    finally:
+        manifests.check_manifestfile_support.cache_clear()

@@ -6,36 +6,26 @@ Fedora-based container image providing plain Wine as the game execution runtime.
 
 ### Requirement: Plain Wine runtime
 
-The container SHALL provide plain Wine from the Fedora repositories (`wine-core`, `wine-common`, `wine-ldap`). The Wine prefix at `/data/wineprefix` SHALL be initialized with `wineboot --init` on first start. The game server SHALL be launched via `wine` (wrapped in `xvfb-run` and `runuser -u steam`), not via Proton.
-
-#### Scenario: Wine prefix is initialized
-
-- **WHEN** the container starts and `/data/wineprefix/.wineboot-completed` does not exist
-- **THEN** `wine wineboot --init` SHALL run as the `steam` user under `xvfb-run`
-
-#### Scenario: Wine prefix is reused once initialized
-
-- **WHEN** the container starts and `/data/wineprefix/.wineboot-completed` exists
-- **THEN** prefix initialization SHALL be skipped
+The container SHALL provide plain Wine from the Fedora repositories; no Proton packages SHALL be present in the final stage. Game launch under Wine is owned by `proton-runtime`.
 
 #### Scenario: Plain Wine is the game execution runtime
 
 - **WHEN** the game server is started
-- **THEN** the server SHALL be launched via `wine` (`/usr/bin/runuser -u steam -- xvfb-run … wine <exe>`) rather than Proton
+- **THEN** the server SHALL run under plain Wine from the system repositories rather than Proton (see `proton-runtime` for launch)
 
 ### Requirement: Image contains required packages
 
-The container image SHALL include: `python3`, `python3-pip` (build only), `procps-ng`, `util-linux`, `xorg-x11-server-Xvfb`, `wine-core`, `wine-common`, `wine-ldap`. The `Dockerfile` SHALL NOT require WineHQ repositories, `winetricks`, GE-Proton, or .NET runtimes in the final stage.
+The container image SHALL include the Python runtime, process tools, virtual display server, and Wine packages. The image SHALL NOT require WineHQ repositories, `winetricks`, GE-Proton, or .NET runtimes in the final stage.
 
 #### Scenario: Image builds successfully
 
-- **WHEN** `docker build` is run with the Dockerfile
+- **WHEN** the image is built
 - **THEN** the image builds without errors and produces a runnable container
 
 #### Scenario: Image contains required packages
 
 - **WHEN** the image is inspected
-- **THEN** the following packages SHALL be present: `python3`, `procps-ng`, `util-linux`, `xorg-x11-server-Xvfb`, `wine-core`, `wine-common`, `wine-ldap`
+- **THEN** the Python runtime, process tools, virtual display, and Wine packages SHALL be present
 
 ### Requirement: Steam user and directory structure
 

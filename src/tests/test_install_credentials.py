@@ -226,3 +226,20 @@ class TestDownloadVersionCredentials:
 
         # THEN depot download runs once with the pin applied to the target depot only
         assert calls == [("999", [("2278521", "999"), ("2278522", "222")])]
+
+
+def test_prepare_manifests_fetches_keys_without_token(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a depot keys repo but no ManifestHub token
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    settings = _settings(depot_keys_repo="https://github.com/example/keys")
+
+    # WHEN running auth-free setup
+    mock_keys = MagicMock(return_value=manifests_dir / "depot.keys")
+    with patch.object(install, "MANIFESTS_DIR", manifests_dir):
+        install.prepare_manifests(settings, support=lambda: True, keys=mock_keys)
+
+    # THEN keys are fetched from the repo without requiring a token
+    mock_keys.assert_called_once_with(manifests_dir, "https://github.com/example/keys")

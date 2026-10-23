@@ -78,7 +78,7 @@ def prepare_manifests(
     manifest_api_token = settings.manifesthub_api_token
     manifest_api_url = settings.manifesthub_api_url
 
-    if not manifest_api_token:
+    if not manifest_api_token and not depot_keys_repo:
         logger.info("No MANIFESTHUB_API_TOKEN, skipping auth-free setup")
         return
     if manifest_api_token and not manifest_api_url:
@@ -197,10 +197,14 @@ def download_version(
         strategy = "Steam auth"
         config = DownloadConfig(username=effective_username, password=effective_password)
     elif manifest_file.exists():
-        msg = (
-            f"Manifest file exists for version {manifest_id} but no depot.keys found. "
-            "Set DEPOT_KEYS_REPO or STEAM_PASSWORD to enable download."
-        )
+        if depot_keys_path.exists():
+            reason = (
+                "DepotDownloader lacks -manifestfile support. "
+                "Use the DepotDownloaderMod fork or provide STEAM_USERNAME/STEAM_PASSWORD."
+            )
+        else:
+            reason = "no depot.keys found. Set DEPOT_KEYS_REPO or STEAM_USERNAME/STEAM_PASSWORD to enable download."
+        msg = f"Manifest file exists for version {manifest_id} but {reason}"
         raise InstallError(msg)
     elif settings.version == "latest":
         strategy = "anonymous"
