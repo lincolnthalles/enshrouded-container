@@ -168,6 +168,34 @@ def test_build_game_tree_persist_files_skips_path_traversal(tmp_path: Path) -> N
     assert not (config / "passwd").exists()
 
 
+def test_build_game_tree_persist_files_skips_absolute_path(tmp_path: Path) -> None:
+    # GIVEN an absolute path pointing at an existing file
+    manifest, target, config = _tree_context(tmp_path)
+    outside = tmp_path / "outside.dat"
+    outside.write_bytes(b"sensitive")
+
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree(GameTreePlan("test-version", (str(outside),), 1000, 1000))
+
+    # THEN the entry is rejected and the outside file is left untouched
+    assert outside.read_bytes() == b"sensitive"
+    assert not outside.is_symlink()
+    assert list(config.iterdir()) == []
+
+
+def test_build_game_tree_persist_files_skips_bare_dots(tmp_path: Path) -> None:
+    # GIVEN persist entries that are bare dot segments
+    manifest, target, config = _tree_context(tmp_path)
+
+    # WHEN building the game tree
+    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
+        build_game_tree(GameTreePlan("test-version", (".", ".."), 1000, 1000))
+
+    # THEN the entries are rejected without touching the tree parents
+    assert target.is_dir()
+
+
 def test_build_game_tree_persist_files_skips_missing(tmp_path: Path) -> None:
     # GIVEN a persist entry for a nonexistent file
     manifest, target, config = _tree_context(tmp_path)

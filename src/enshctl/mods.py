@@ -4,6 +4,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from os import chown
+from pathlib import PurePath
 from typing import TYPE_CHECKING
 
 from enshctl.paths import CONFIG_DIR, CONFIG_FILENAME, MANIFESTS_DIR, MODS_DIR, MOUNT_POINT
@@ -72,6 +73,12 @@ def _setup_persist_files(manifest: Path, target: Path, persist_files: tuple[str,
         # Reject path traversal attempts
         if "../" in filename or "..\\" in filename:
             logger.warning("Skipping invalid PERSIST_FILES entry (path traversal): %s", filename)
+            continue
+
+        # Reject absolute paths and dot segments anywhere (PurePath containment check)
+        parts = PurePath(filename).parts
+        if PurePath(filename).is_absolute() or not parts or ".." in parts or "." in parts:
+            logger.warning("Skipping invalid PERSIST_FILES entry (not a relative file path): %s", filename)
             continue
 
         source = manifest / filename

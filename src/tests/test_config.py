@@ -119,6 +119,15 @@ def test_env_to_dict_ignores_non_enshrouded() -> None:
         del environ["SERVER_NAME"]
 
 
+def test_env_to_dict_mixed_case_prefix() -> None:
+    environ["Enshrouded_MIXED_case_TEST"] = "1"
+    try:
+        result = env_to_dict()
+        assert result["mixedCaseTest"] == 1
+    finally:
+        del environ["Enshrouded_MIXED_case_TEST"]
+
+
 def test_resolve_array_overrides() -> None:
 
     base: dict[str, Any] = {"userGroups": [{"name": "default"}], "bans": []}

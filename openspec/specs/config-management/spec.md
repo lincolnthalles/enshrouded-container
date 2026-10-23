@@ -1,134 +1,126 @@
 ## Purpose
 
-Non-mutating generation and merging of the game server configuration.
+Non-mutating generation of the Generated config from the Base config plus environment overrides.
 
 ## Requirements
 
 ### Requirement: Non-mutating config merge
 
-The `deep_merge` function in `enshctl.config` SHALL return a new dictionary without mutating the base dictionary. The `generate_config` function SHALL call `deep_merge` and use the returned result.
+Config generation SHALL return a new dictionary without mutating the Base config. Environment overrides SHALL be merged over the Base config; game-written fields SHALL survive when no override targets them.
 
 #### Scenario: Base config preserved after merge
 
-- **WHEN** `generate_config()` is called with a base config loaded from file
-- **THEN** the original base config dict SHALL not be modified by the merge operation
+- **WHEN** config generation runs with a Base config loaded from file
+- **THEN** the original Base config SHALL NOT be modified by the merge operation
 
-### Requirement: UID/GID passed explicitly
+#### Scenario: Runtime config survives regeneration
 
-The `write_config` function SHALL accept `puid`/`pgid` as keyword integers (`write_config(config, *, puid=..., pgid=...)`) for config file ownership. The `generate_config` function takes no settings argument; callers that need configured ownership SHALL read `settings.puid`/`settings.pgid` and pass them to `write_config`. Neither function SHALL read `os.environ` directly for ownership.
+- **WHEN** the persisted config contains game-written fields and the container restarts with no overrides targeting those fields
+- **THEN** the Generated config SHALL retain the game-written values
 
-#### Scenario: Ownership passed explicitly
+### Requirement: Base config source
 
-- **WHEN** `write_config(config, puid=1001, pgid=1002)` is called
-- **THEN** the config file SHALL be owned by uid 1001, gid 1002
+The Base config SHALL be the persisted config file when present, else the Example config from the Manifest install, else empty with a warning.
 
-#### Scenario: Start passes configured ownership
+#### Scenario: Persisted config is used as base
 
-- **WHEN** the `start` command generates and writes the config
-- **THEN** it SHALL call `write_config(new_config, puid=settings.puid, pgid=settings.pgid)`
+- **WHEN** the persisted config file exists
+- **THEN** its contents SHALL be used as the Base config
 
-### Requirement: Config file injection
+#### Scenario: No persisted config falls back to example
 
-The container SHALL accept an `enshrouded_server.json` file mounted at `/data/config/enshrouded_server.json`. If present, this file SHALL serve as the base configuration that environment variable overrides apply to. If absent, the script SHALL extract the default config from the game install.
+- **WHEN** no persisted config file exists and the Example config is present in the Manifest install
+- **THEN** the Example config SHALL be used as the Base config
 
-#### Scenario: User-provided config is used as base
+#### Scenario: No base config warns and starts empty
 
-- **WHEN** `/data/config/enshrouded_server.json` exists
-- **THEN** its contents SHALL be used as the base configuration
+- **WHEN** neither the persisted config nor the Example config exists
+- **THEN** a warning SHALL be logged, the Base config SHALL be empty, and save/log defaults SHALL still apply
 
-#### Scenario: No user config, game default is used
+### Requirement: Env var to Generated config conversion
 
-- **WHEN** `/data/config/enshrouded_server.json` does not exist
-- **THEN** the default config SHALL be extracted from the game install at `/data/gameserver/enshrouded_server_example.json`
-
-### Requirement: Env var to JSON conversion
-
-Environment variables with the prefix `ENSHROUDED_` SHALL be converted to nested JSON keys and merged into the base configuration. The conversion SHALL be case-insensitive for the prefix. Nesting SHALL use double underscores (`__`) to separate path segments; single underscores (`_`) within a segment SHALL become lowerCamelCase. Each segment SHALL be lowercased before camel-casing, so acronyms are not preserved.
+Environment variables with the `ENSHROUDED_` prefix (case-insensitive for the prefix) SHALL be converted to nested JSON keys and merged into the Base config. Nesting SHALL use double underscores (`__`) to separate path segments; single underscores (`_`) within a segment SHALL become lowerCamelCase. Segments that are pure numbers SHALL address array positions; name-keyed groups SHALL resolve to arrays carrying each entry's name when the Base config holds a list at that key or provides no hint, and SHALL recurse as dictionaries when the Base config holds a dictionary there. Each segment SHALL be lowercased before camel-casing, so acronyms are not preserved. Variables without the prefix, or with an empty remainder, SHALL be ignored.
 
 #### Scenario: Simple string setting
 
-- **WHEN** `ENSHROUDED_NAME=My Server` is set
-- **THEN** the generated config SHALL contain `{"name": "My Server"}`
+- **WHEN** `ENSHROUDED_NAME` names a server
+- **THEN** the Generated config SHALL contain that name string
 
 #### Scenario: Nested setting with double-underscore segments
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS__PLAYER_HEALTH_FACTOR=2` is set
-- **THEN** the generated config SHALL contain `{"gameSettings": {"playerHealthFactor": 2}}`
+- **WHEN** an env var targets a nested player-health key via `__`
+- **THEN** the Generated config SHALL contain the nested numeric value
 
 #### Scenario: Boolean value detection
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS__IS_PVP=true` is set
-- **THEN** the generated config SHALL contain `{"gameSettings": {"isPvp": true}}` (boolean, not string)
+- **WHEN** an env var targets a nested boolean key with `true`
+- **THEN** the Generated config SHALL contain the boolean (not string)
 
 #### Scenario: Integer value detection
 
-- **WHEN** `ENSHROUDED_SLOT_COUNT=16` is set
-- **THEN** the generated config SHALL contain `{"slotCount": 16}` (integer, not string)
+- **WHEN** an env var targets a slot-count key with digits
+- **THEN** the Generated config SHALL contain the integer (not string)
 
 #### Scenario: Float value detection
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS__DAY_TIME_FACTOR=1.5` is set
-- **THEN** the generated config SHALL contain `{"gameSettings": {"dayTimeFactor": 1.5}}`
+- **WHEN** an env var targets a day-time factor key with a decimal
+- **THEN** the Generated config SHALL contain the float
 
 #### Scenario: JSON array value
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS__ALLOWED_ITEMS=["sword","shield"]` is set
-- **THEN** the generated config SHALL contain `{"gameSettings": {"allowedItems": ["sword", "shield"]}}`
+- **WHEN** an env var targets a key with a JSON array value
+- **THEN** the Generated config SHALL contain the parsed array
 
 #### Scenario: Env var without prefix is ignored
 
-- **WHEN** `SERVER_NAME=Test` is set (no ENSHROUDED_ prefix)
-- **THEN** the env var SHALL NOT affect the generated config
+- **WHEN** an env var without the `ENSHROUDED_` prefix is set
+- **THEN** the env var SHALL NOT affect the Generated config
 
 #### Scenario: Config is schema-agnostic
 
-- **WHEN** `ENSHROUDED_FUTURE_SETTING__NEW_FEATURE=enabled` is set
-- **THEN** the generated config SHALL contain `{"futureSetting": {"newFeature": "enabled"}}` regardless of whether the current game server schema defines that key
+- **WHEN** an env var targets a key the current game schema does not define
+- **THEN** the Generated config SHALL contain the key regardless
 
 #### Scenario: Single underscore stays within one segment
 
-- **WHEN** `ENSHROUDED_GAME_SETTINGS_PLAYER_HEALTH_FACTOR=2` is set (single underscores, no `__`)
-- **THEN** the generated config SHALL contain the flat key `{"gameSettingsPlayerHealthFactor": 2}` and SHALL NOT create a nested `gameSettings` object
+- **WHEN** an env var uses single underscores with no `__`
+- **THEN** the Generated config SHALL contain a single flat camelCase key and SHALL NOT nest
 
-### Requirement: Config file placement
+#### Scenario: Array index segment
 
-The generated `enshrouded_server.json` SHALL be written to the config directory (`/data/config/enshrouded_server.json`) after applying all env var overrides. The game server SHALL read this file on startup.
+- **WHEN** an env var uses a numeric segment to address a group position
+- **THEN** the Generated config SHALL contain an array with the value at that position
+
+#### Scenario: Name-keyed group resolves to named array
+
+- **WHEN** env vars use group names as keys for a group setting and the Base config holds a list there or provides no hint
+- **THEN** the Generated config SHALL contain an array of objects each carrying its group name
+
+#### Scenario: Acronyms lowercased
+
+- **WHEN** the key after prefix removal is an acronym such as `IP`
+- **THEN** the JSON key SHALL be fully lowercased
+
+#### Scenario: Lowercase input
+
+- **WHEN** the key is already lowercase after prefix removal
+- **THEN** the JSON key SHALL remain lowercase
+
+### Requirement: Generated config placement and ownership
+
+The Generated config SHALL be written to the config directory after applying all env var overrides. The persisted config file SHALL be owned by the configured `PUID`/`PGID` (see `shared-config` for where ownership values originate).
 
 #### Scenario: Config is written to config dir
 
 - **WHEN** config generation completes
-- **THEN** `/data/config/enshrouded_server.json` SHALL exist with the merged configuration
+- **THEN** the persisted config file SHALL exist with the merged configuration
 
 #### Scenario: Config overrides are applied to base
 
-- **WHEN** a user-provided base config at `/data/config/enshrouded_server.json` contains `{"name": "Base"}` and `ENSHROUDED_NAME=Override` is set
-- **THEN** the output SHALL contain `{"name": "Override"}`
+- **WHEN** a Base config names a server and an env var overrides that name
+- **THEN** the output SHALL contain the overridden name
 
-### Requirement: Naming convention transformation
+#### Scenario: Config file owned by configured user
 
-The segment transformation SHALL convert SCREAMING_SNAKE_CASE to lowerCamelCase using the following rules: split a segment on `_`, lowercase the entire segment, keep the first word as-is, then capitalize the first letter of each subsequent word. Acronyms are not preserved. Nesting across segments requires the `__` separator; a single `_` never creates nesting.
-
-#### Scenario: Single segment
-
-- **WHEN** the key after prefix removal is `NAME`
-- **THEN** the JSON key SHALL be `name`
-
-#### Scenario: Multi-word segment
-
-- **WHEN** the segment after prefix removal is `SLOT_COUNT`
-- **THEN** the JSON key SHALL be `slotCount`
-
-#### Scenario: Multi-segment nesting
-
-- **WHEN** the key after prefix removal is `GAME_SETTINGS__PLAYER_HEALTH_FACTOR`
-- **THEN** the JSON path SHALL be `gameSettings.playerHealthFactor`
-
-#### Scenario: Acronyms lowercased
-
-- **WHEN** the key after prefix removal is `IP`
-- **THEN** the JSON key SHALL be `ip` (e.g. `ENSHROUDED_IP` maps to the game's `ip` field)
-
-#### Scenario: Lowercase input
-
-- **WHEN** the key is already lowercase (e.g., `enshrouded_name`)
-- **THEN** the JSON key SHALL be `name` (first segment remains lowercase)
+- **WHEN** config generation completes with ownership configured
+- **THEN** the persisted config file SHALL be owned by the configured user and group

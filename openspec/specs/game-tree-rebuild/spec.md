@@ -1,75 +1,81 @@
 ## Purpose
 
-Rebuild of the game directory as a symlink tree from the installed manifest and mods on every start.
+Rebuild of the Game tree as a symlink tree from the Manifest install and Mod overlay on every start.
 
 ## Requirements
 
 ### Requirement: Game tree rebuild on startup
 
-At container startup, the entrypoint SHALL construct `/data/gameserver/` as a symlink tree pointing to manifest and mod files. The directory SHALL be wiped and rebuilt from scratch on every start.
+On every container start, the entrypoint SHALL wipe the Game tree and rebuild it: per-file symlinks to the Manifest install, then Mod overlay symlinks shadowing the same relative paths. Directories SHALL be real directories so the game can create runtime files where needed. When the Manifest install for the resolved Manifest ID is absent, the start SHALL fail with an error naming the missing directory.
 
-#### Scenario: Fresh start with manifest files
+#### Scenario: Fresh start symlinks Manifest install
 
-- **WHEN** the container starts and a manifest is installed at `/data/manifests/<version>/`
-- **THEN** all files from the manifest SHALL be symlinked into `/data/gameserver/` using pure-Python `symlink_to` calls (no `cp -as` subprocess)
-- **AND** `/data/gameserver/enshrouded_server.json` SHALL be a symlink to `/data/config/enshrouded_server.json`
+- **WHEN** the container starts with a Manifest install present
+- **THEN** every file in the Manifest install SHALL be visible at the same relative path in the Game tree
 
-#### Scenario: Mods override manifest files
+#### Scenario: Mod overlay shadows Manifest install
 
-- **WHEN** the container starts and `/data/mods/` contains files
-- **THEN** mod files SHALL be symlinked over the manifest symlinks (existing destinations unlinked first, then `symlink_to`)
-- **AND** files present in both manifest and mods SHALL resolve to the mod version
+- **WHEN** the container starts with files in the mods volume
+- **THEN** files present in both Manifest install and Mod overlay SHALL resolve to the mod version in the Game tree
 
-#### Scenario: Wipe on every start
+#### Scenario: Removed mod restores original
+
+- **WHEN** a mod is removed and the container restarts
+- **THEN** the original file from the Manifest install SHALL be visible again in the Game tree
+
+#### Scenario: Wipe leaves sources untouched
 
 - **WHEN** the container starts
-- **THEN** all existing contents of `/data/gameserver/` SHALL be removed before rebuilding
-- **AND** the wipe SHALL NOT delete source files in `/data/manifests/` or `/data/config/`
+- **THEN** all existing contents of the Game tree SHALL be removed before rebuilding, without deleting source files in the Manifest install, the mods volume, or the config directory
+
+#### Scenario: Missing Manifest install fails start
+
+- **WHEN** the container starts and the Manifest install for the resolved Manifest ID is absent
+- **THEN** the entrypoint SHALL fail with an error naming the missing directory
+
+#### Scenario: No shutdown-time tree cleanup
+
+- **WHEN** the container receives SIGTERM
+- **THEN** no Game tree cleanup SHALL run; cleanup is implicit in the wipe at the next startup
 
 ### Requirement: Config symlink
 
-The config file at `/data/gameserver/enshrouded_server.json` SHALL be a symlink to `/data/config/enshrouded_server.json`. The config generator SHALL read from and write to `/data/config/enshrouded_server.json` directly.
+The game-server path for the server config SHALL be a symlink to the persisted config file. Game writes (e.g. banned players) SHALL persist to the config directory through the symlink and survive restarts.
 
-#### Scenario: First run creates config
+#### Scenario: First run resolves symlink on generation
 
-- **WHEN** the container starts and `/data/config/enshrouded_server.json` does not exist
-- **THEN** the config generator SHALL fall back to the example JSON from the manifest
-- **AND** write the generated config to `/data/config/enshrouded_server.json`
-- **AND** the symlink at `/data/gameserver/enshrouded_server.json` SHALL resolve to the generated file
+- **WHEN** the container starts with no persisted config
+- **THEN** the Generated config SHALL be written to the config directory (see `config-management` for merge input) and the Game tree symlink SHALL resolve to it
 
-#### Scenario: Config persistence across restarts
+#### Scenario: Runtime writes to config persist
 
-- **WHEN** the game server modifies `enshrouded_server.json` at runtime (e.g. banned players)
-- **THEN** the modifications SHALL persist to `/data/config/enshrouded_server.json`
-- **AND** on next startup, `load_base_config` SHALL read the persisted (modified) file
-- **AND** env vars SHALL be merged on top, overriding only keys that have env var values
+- **WHEN** the game process writes to the server config at runtime
+- **THEN** the write SHALL persist to the config directory and survive container restarts
 
 ### Requirement: PERSIST_FILES escape hatch
 
-An environment variable `PERSIST_FILES` SHALL accept a comma-separated list of relative file paths. Files listed SHALL be copied from the manifest to `/data/config/` (if not already present) and symlinked from `/data/gameserver/` to `/data/config/`.
+`PERSIST_FILES` SHALL accept a comma-separated list of relative file paths. Each listed file SHALL be seeded into the config directory from the Manifest install on first run (if not already present) and symlinked from the Game tree to the config directory. Entries that are absolute paths, bare `.`/`..` segments, or contain traversal sequences SHALL be skipped with a warning and create nothing outside the config directory. Entries absent from both Manifest install and Game tree SHALL be skipped. Entries present only in the mods volume SHALL NOT be seeded; the Game tree link SHALL dangle rather than show mod content.
 
-#### Scenario: Default PERSIST_FILES
+#### Scenario: Default persisted file
 
 - **WHEN** `PERSIST_FILES` is not set
-- **THEN** `enshrouded_server.json` SHALL be the only persisted file
+- **THEN** only the server config SHALL be persisted
 
-#### Scenario: Custom PERSIST_FILES
+#### Scenario: Custom persisted file
 
-- **WHEN** `PERSIST_FILES=enshrouded_server.json,runtime_state.dat`
-- **THEN** `runtime_state.dat` SHALL be copied from the manifest to `/data/config/runtime_state.dat` (first run only)
-- **AND** symlinked from `/data/gameserver/runtime_state.dat` to `/data/config/runtime_state.dat`
+- **WHEN** `PERSIST_FILES` lists an additional file present in the Manifest install
+- **THEN** the file SHALL be seeded into the config directory on first run and symlinked from the Game tree
 
-### Requirement: Manifest read-only protection
+#### Scenario: Traversal entry skipped
 
-After downloading a manifest, the orchestrator SHALL remove write permissions from all files in the manifest directory.
+- **WHEN** `PERSIST_FILES` contains an absolute path, a bare `.`/`..`, or a traversal sequence
+- **THEN** the entry SHALL be skipped with a warning and no file SHALL be created outside the config directory
 
-#### Scenario: Manifest marked read-only after download
+### Requirement: Manifest install read-only protection
 
-- **WHEN** a manifest is downloaded to `/data/manifests/<version>/`
-- **THEN** `chmod -R a-w` SHALL be applied to the manifest directory
-- **AND** all files in the manifest SHALL have write permission removed for all users
+After a Download, the Manifest install SHALL be marked read-only as defense-in-depth. A process attempting to write to a file symlinked from the Manifest install SHALL fail with a permission error.
 
 #### Scenario: Read-only prevents accidental modification
 
-- **WHEN** a process attempts to write to a file symlinked from the manifest
+- **WHEN** a process attempts to write to a file symlinked from the Manifest install
 - **THEN** the write SHALL fail with a permission error

@@ -90,10 +90,11 @@ def env_to_dict() -> dict[str, Any]:
     by _resolve_array_overrides (edge case for userGroups-style config).
     """
     result: dict[str, Any] = {}
+    prefix_re = re.compile(r"^enshrouded_", re.IGNORECASE)
     for key, value in environ.items():
-        if not key.upper().startswith("ENSHROUDED_"):
+        if not prefix_re.match(key):
             continue
-        stripped = key.removeprefix("ENSHROUDED_").removeprefix("enshrouded_")
+        stripped = prefix_re.sub("", key, count=1)
         if not stripped:
             continue
 
