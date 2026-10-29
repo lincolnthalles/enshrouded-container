@@ -143,16 +143,26 @@ def resolve_manifest(
 ) -> str:
     """Resolve a VERSION value to a specific manifest ID."""
     if not version_spec or version_spec == "latest":
-        manifests = fetch()
+        manifests: list[dict[str, str]]
+        fetch_error: subprocess.SubprocessError | None = None
+        try:
+            manifests = fetch()
+        except subprocess.SubprocessError as exc:
+            logger.warning("Manifest listing failed (%s); trying cached manifest", exc)
+            manifests = []
+            fetch_error = exc
         if not manifests:
             cached = _read_latest_manifest(control_file)
             if cached is not None:
                 logger.warning(
-                    "fetch_manifests failed, falling back to cached manifest %s from %s",
+                    "Falling back to cached manifest %s from %s",
                     cached,
                     control_file,
                 )
                 return cached
+            if fetch_error is not None:
+                msg = f"Manifest listing failed and no cached manifest available: {fetch_error}"
+                raise InstallError(msg) from fetch_error
             msg = "No manifests found from DepotDownloader and no cached manifest available"
             raise InstallError(msg)
         latest = max(manifests, key=_manifest_sort_key)
@@ -162,12 +172,16 @@ def resolve_manifest(
 
     if version_spec.startswith("build:"):
         build_id = version_spec.removeprefix("build:")
-        manifests = fetch()
+        try:
+            manifests = fetch()
+        except subprocess.SubprocessError as exc:
+            msg = f"Manifest listing failed while resolving build {build_id}: {exc}"
+            raise InstallError(msg) from exc
         for m in manifests:
             if m.get("branch") == build_id or m.get("manifest_id", "").endswith(build_id):
                 logger.info("Resolved build:%s to manifest %s", build_id, m["manifest_id"])
                 return m["manifest_id"]
-        logger.warning("Build %s not found in manifests, treating as manifest ID")
+        logger.warning("Build %s not found in manifests, treating as manifest ID", build_id)
         return build_id
 
     if version_spec.isdigit():

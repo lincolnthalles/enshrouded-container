@@ -4,8 +4,9 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import pytest
 from enshctl import install
-from enshctl.download import DownloadConfig
+from enshctl.download import DownloadConfig, InstallError
 from enshctl.install import DownloadDeps, InstallEnv
 from enshctl.paths import DEPOT_ID
 from enshctl.settings import AppSettings
@@ -243,3 +244,63 @@ def test_prepare_manifests_fetches_keys_without_token(tmp_path: Path) -> None:
 
     # THEN keys are fetched from the repo without requiring a token
     mock_keys.assert_called_once_with(manifests_dir, "https://github.com/example/keys")
+
+
+def test_no_support_with_material_fails_with_mod_fork_guidance(tmp_path: Path) -> None:
+    # GIVEN depot keys and a manifest file but no DepotDownloader support and no Steam username
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
+    (manifests_dir / f"{DEPOT_ID}_999.manifest").write_bytes(b"manifest")
+    env = InstallEnv(
+        disk_free=lambda _p: 12 * 1024**3,
+        chown=lambda *_args, **_kwargs: None,
+        chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
+    )
+    download = DownloadDeps(
+        hub_download=lambda _a, _b, _c, _d, _e: manifests_dir / "existing.manifest",
+        support=lambda: False,
+        depot_download=lambda *_a, **_kwargs: None,
+        discover=lambda: [(DEPOT_ID, "12345")],
+    )
+
+    # WHEN downloading without Steam credentials
+    with pytest.raises(InstallError, match="Mod fork"):
+        install.download_version(
+            "999",
+            _settings(version="999", steam_username=None, steam_password=None, min_free_space=0),
+            manifests_dir=manifests_dir,
+            env=env,
+            download=download,
+        )
+    # THEN the Install fails naming the Mod fork instead of falling through
+
+
+def test_no_support_with_material_fails_for_latest_version(tmp_path: Path) -> None:
+    # GIVEN depot keys and a manifest file but no DepotDownloader support and no Steam username
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
+    (manifests_dir / f"{DEPOT_ID}_999.manifest").write_bytes(b"manifest")
+    env = InstallEnv(
+        disk_free=lambda _p: 12 * 1024**3,
+        chown=lambda *_args, **_kwargs: None,
+        chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
+    )
+    download = DownloadDeps(
+        hub_download=lambda _a, _b, _c, _d, _e: manifests_dir / "existing.manifest",
+        support=lambda: False,
+        depot_download=lambda *_a, **_kwargs: None,
+        discover=lambda: [(DEPOT_ID, "12345")],
+    )
+
+    # WHEN downloading with the Version spec set to latest
+    with pytest.raises(InstallError, match="Mod fork"):
+        install.download_version(
+            "999",
+            _settings(version="latest", steam_username=None, steam_password=None, min_free_space=0),
+            manifests_dir=manifests_dir,
+            env=env,
+            download=download,
+        )
+    # THEN the Install still fails naming the Mod fork instead of falling through to anonymous download

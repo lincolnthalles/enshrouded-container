@@ -11,9 +11,6 @@ from enshctl.paths import CONFIG_FILE, GAME_CONFIG_EXAMPLE, LOG_DIR, OUTPUT_CONF
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SAVE_DIR = "/data/saves"
-DEFAULT_LOG_DIR = "/data/logs"
-
 
 def snake_to_camel(name: str) -> str:
     segments = name.lower().split("_")

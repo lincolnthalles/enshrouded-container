@@ -32,6 +32,11 @@ The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: 
 - **WHEN** `VERSION=build:<id>` is set
 - **THEN** the Manifest ID whose branch matches the build, or whose value ends with the build, SHALL be used; if none matches, the entrypoint SHALL warn and treat the build value itself as the Manifest ID
 
+#### Scenario: Build resolution listing failure
+
+- **WHEN** `VERSION=build:<id>` is set and the manifest listing fails
+- **THEN** the entrypoint SHALL exit with code 1 naming the listing failure as the cause instead of treating the build value as a Manifest ID
+
 #### Scenario: Latest resolution and persistence
 
 - **WHEN** `VERSION=latest` (or unset) is set and DepotDownloader reports manifests
@@ -39,8 +44,18 @@ The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: 
 
 #### Scenario: Offline fallback to cached latest
 
-- **WHEN** `VERSION=latest` is set and DepotDownloader reports no manifests but the control file contains a cached Manifest ID
-- **THEN** the cached Manifest ID SHALL be used with a warning; if no cache exists, the entrypoint SHALL exit with code 1
+- **WHEN** `VERSION=latest` is set and DepotDownloader reports no manifests, or the listing fails, but the control file contains a cached Manifest ID
+- **THEN** the cached Manifest ID SHALL be used with a warning
+
+#### Scenario: No cached latest and empty listing
+
+- **WHEN** `VERSION=latest` is set, the listing reports no manifests, and no cached Manifest ID exists
+- **THEN** the entrypoint SHALL exit with code 1 reporting that no manifests were found
+
+#### Scenario: No cached latest and listing fails
+
+- **WHEN** `VERSION=latest` is set, the listing fails, and no cached Manifest ID exists
+- **THEN** the entrypoint SHALL exit with code 1 naming the listing failure as the cause
 
 ### Requirement: Install ensures Manifest ID present
 
@@ -58,7 +73,7 @@ Install SHALL resolve the Version spec to a Manifest ID and ensure the matching 
 
 ### Requirement: Auth strategy selection
 
-The Download SHALL use exactly one credential strategy, selected by availability: Steam username/password when a username is set; auth-free Manifest file plus depot keys when both exist and support is available; anonymous for `latest`; interactive login otherwise. When a Manifest file exists without depot keys, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
+The Download SHALL use exactly one credential strategy, selected by availability: Steam username/password when a username is set; auth-free Manifest file plus depot keys when both exist and support is available; anonymous for `latest` when no Manifest file exists; interactive QR login otherwise. When a Manifest file exists without depot keys, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
 
 #### Scenario: Auth-free preferred when material present
 
@@ -74,6 +89,15 @@ The Download SHALL use exactly one credential strategy, selected by availability
 
 - **WHEN** the Manifest file exists for the requested Manifest ID but no depot keys are available
 - **THEN** the entrypoint SHALL exit with an error naming key setup and Steam login as alternatives
+
+### Requirement: Unsupported downloader fails fast
+
+When depot keys and the Manifest file exist but the DepotDownloader lacks Manifest-file support and no Steam username is set, the Install SHALL fail with an error naming the Mod fork and Steam login as alternatives, even when the Version spec is `latest`.
+
+#### Scenario: Error when downloader lacks support despite material
+
+- **WHEN** depot keys and the Manifest file exist but the DepotDownloader lacks Manifest-file support and no Steam username is set
+- **THEN** the entrypoint SHALL exit with an error naming the Mod fork and Steam login as alternatives, even when the Version spec is `latest`
 
 #### Scenario: Interactive login otherwise
 

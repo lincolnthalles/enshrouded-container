@@ -1,5 +1,6 @@
 """Tests for latest manifest control file and resolve_manifest fallback."""
 
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -94,6 +95,66 @@ def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
     result = manifests.resolve_manifest("12345", control_file=control)
     assert result == "12345"
     assert not control.exists()
+
+
+def test_resolve_manifest_build_unknown_id_warns_with_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a build ID matching no listed manifest
+    control = tmp_path / ".latest-manifest"
+    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+    # WHEN resolving the unknown build ID
+    with caplog.at_level(logging.WARNING, logger="enshctl.manifests"):
+        result = manifests.resolve_manifest("build:999", control_file=control, fetch=lambda: found)
+    # THEN it falls back to the raw ID with a warning naming it instead of crashing
+    assert result == "999"
+    assert "999" in caplog.text
+
+
+def test_resolve_manifest_latest_fetch_failure_uses_cache(tmp_path: Path) -> None:
+    import subprocess
+
+    # GIVEN a cached manifest and a DepotDownloader listing that fails
+    control = tmp_path / ".latest-manifest"
+    control.write_text("999999-05/29/2026 12:00:00")
+
+    def _fail() -> list[dict[str, str]]:
+        raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
+
+    # WHEN resolving latest
+    result = manifests.resolve_manifest("latest", control_file=control, fetch=_fail)
+    # THEN the cached manifest is used instead of propagating the failure
+    assert result == "999999"
+
+
+def test_resolve_manifest_latest_fetch_failure_no_cache_raises(tmp_path: Path) -> None:
+    import subprocess
+
+    # GIVEN no cached manifest and a DepotDownloader listing that fails
+    control = tmp_path / ".latest-manifest"
+
+    def _fail() -> list[dict[str, str]]:
+        raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
+
+    # WHEN resolving latest
+    with pytest.raises(InstallError, match="Manifest listing failed") as exc_info:
+        manifests.resolve_manifest("latest", control_file=control, fetch=_fail)
+    # THEN the listing failure is chained as the cause instead of being dropped
+    assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
+
+
+def test_resolve_manifest_build_fetch_failure_raises(tmp_path: Path) -> None:
+    import subprocess
+
+    # GIVEN a DepotDownloader listing that fails
+    control = tmp_path / ".latest-manifest"
+
+    def _fail() -> list[dict[str, str]]:
+        raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
+
+    # WHEN resolving a build ID
+    with pytest.raises(InstallError, match="Manifest listing failed") as exc_info:
+        manifests.resolve_manifest("build:999", control_file=control, fetch=_fail)
+    # THEN the listing failure is chained as the cause instead of silently treating the build as a manifest ID
+    assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
 
 
 def test_manifestfile_support_probe_lists_no_args() -> None:

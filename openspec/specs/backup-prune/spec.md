@@ -11,7 +11,7 @@ The prune system SHALL apply retention rules from smallest to largest time bucke
 #### Scenario: Retention cascade order
 
 - **WHEN** prune runs with `BACKUP_KEEP_LAST=5`, daily retention 7, and weekly retention 4
-- **THEN** the 5 newest Backups SHALL be marked "keep" first, then daily rules mark up to 7 more (possibly overlapping already-kept), then weekly rules mark up to 4 more from the remaining unmarked
+- **THEN** the 5 newest Backups SHALL be marked "keep" first, then daily rules mark the newest Backup of up to 7 distinct days (possibly overlapping already-kept ones), then weekly rules mark the newest Backup of up to 4 distinct weeks (possibly overlapping already-kept ones)
 
 #### Scenario: BACKUP_KEEP_LAST as floor
 

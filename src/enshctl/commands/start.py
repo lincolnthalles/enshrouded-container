@@ -16,11 +16,16 @@ from enshctl import backup, config, install, mods
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.download import InstallError
 from enshctl.paths import (
+    BACKUP_BASE_DIR,
     BACKUP_DIR_COLD,
     BACKUP_DIR_EMERGENCY,
+    CONFIG_DIR,
     GAME_EXE,
+    LOG_DIR,
     MANIFESTS_DIR,
+    MODS_DIR,
     PIDFILE,
+    SAVE_DIR,
     WINE_PREFIX,
     WINE_PREFIX_INIT_MARKER,
     WINE_SERVER_BIN,
@@ -85,12 +90,12 @@ def _setup_directories(settings: AppSettings) -> None:
     uid, gid = settings.puid, settings.pgid
     xdg_dir = f"/var/run/user/{uid}"
     dirs = [
-        "/data/saves",
-        "/data/logs",
-        "/data/backups",
-        "/data/mods",
+        SAVE_DIR,
+        LOG_DIR,
+        BACKUP_BASE_DIR,
+        MODS_DIR,
         MANIFESTS_DIR,
-        "/data/config",
+        CONFIG_DIR,
         xdg_dir,
         WINE_PREFIX,
     ]
