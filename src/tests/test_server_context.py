@@ -7,7 +7,7 @@ from typing import cast
 from unittest.mock import patch
 
 import pytest
-from enshctl.commands.start import ServerContext, _make_sigterm_handler, _resolve_dll_overrides
+from enshctl.commands.start import ServerContext, _make_sigterm_handler, _make_tool_env, _resolve_dll_overrides
 from enshctl.settings import AppSettings
 
 
@@ -52,6 +52,26 @@ def test_sigterm_handler_with_running_process() -> None:
     with pytest.raises(SystemExit):
         handler(15, None)
     assert ctx.shutdown_requested is True
+
+
+class TestMakeToolEnv:
+    """Tests for _make_tool_env() baseline wine tool environment."""
+
+    def test_tool_env_has_baseline_video_and_dll_vars(self) -> None:
+        # GIVEN default settings
+        # WHEN building the wine tool environment
+        env = _make_tool_env(AppSettings())
+        # THEN it carries the software-GL pin and the baseline DLL overrides
+        assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
+        assert env["WINEDLLOVERRIDES"] == "mscoree,mshtml="
+
+    def test_tool_env_ignores_resolved_overrides(self) -> None:
+        # GIVEN a user-provided WINEDLLOVERRIDES value
+        settings = replace(AppSettings(), winedlloverrides="dinput8=n")
+        # WHEN building the wine tool environment
+        env = _make_tool_env(settings)
+        # THEN the baseline applies, not the per-run resolved value
+        assert env["WINEDLLOVERRIDES"] == "mscoree,mshtml="
 
 
 class TestResolveDllOverrides:

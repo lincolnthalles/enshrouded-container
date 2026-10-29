@@ -67,6 +67,8 @@ def _make_tool_env(settings: AppSettings) -> dict[str, str]:
         "WINEARCH": settings.winearch,
         "WINEDEBUG": settings.winedebug,
         "HOME": settings.home,
+        "LIBGL_ALWAYS_SOFTWARE": "1",
+        "WINEDLLOVERRIDES": mods.DEFAULT_DLL_OVERRIDES,
         "XDG_RUNTIME_DIR": f"/var/run/user/{settings.puid}",
     }
 

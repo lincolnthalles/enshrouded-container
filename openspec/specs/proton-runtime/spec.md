@@ -68,3 +68,17 @@ After the game server process exits, the shutdown sequence SHALL stop the Wine s
 
 - **WHEN** the container shuts down after the game server exits
 - **THEN** the Wine server SHALL be stopped before shutdown completes
+
+### Requirement: Wine tool environment
+
+Wine tool invocations (`wineboot --init` during prefix setup, `wineserver -k`/`-k9` during cleanup) SHALL run with `LIBGL_ALWAYS_SOFTWARE=1` and the baseline `WINEDLLOVERRIDES` (`mscoree,mshtml=`), matching the game-launch baseline but never the per-run resolved overrides.
+
+#### Scenario: Prefix init uses baseline tool env
+
+- **WHEN** prefix initialization runs `wineboot --init`
+- **THEN** its environment SHALL contain `LIBGL_ALWAYS_SOFTWARE=1` and `WINEDLLOVERRIDES=mscoree,mshtml=`
+
+#### Scenario: Wine server cleanup uses baseline tool env
+
+- **WHEN** wine server cleanup runs `wineserver -k` (or `-k9` on timeout)
+- **THEN** its environment SHALL contain `LIBGL_ALWAYS_SOFTWARE=1` and `WINEDLLOVERRIDES=mscoree,mshtml=`
