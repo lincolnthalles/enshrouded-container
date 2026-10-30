@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from enshctl.backup import verify_archive
 from enshctl.backup.catalog import scan_stray
+from enshctl.backup.category import Category
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -97,11 +98,32 @@ def test_scan_stray_lists_non_grammar_archives(tmp_path: Path) -> None:
     live = tmp_path / "live"
     live.mkdir()
     (live / "enshrouded-20260529-120000.tar.zst").write_bytes(b"\x00" * 10)
+    (live / "manual-copy.gz").write_bytes(b"junk")
+    (live / "manual-copy.tar.zst").write_bytes(b"junk")
     (live / "manual-copy.zip").write_bytes(b"junk")
+    (live / "manual-copy.zst").write_bytes(b"junk")
     (live / "notes.txt").write_bytes(b"junk")
     # WHEN scanning for strays
-    # THEN only the archive-suffixed non-grammar file returns
-    assert scan_stray(tmp_path) == [live / "manual-copy.zip"]
+    # THEN every archive-suffixed non-grammar file returns, sorted by name
+    assert scan_stray(tmp_path) == [
+        live / "manual-copy.gz",
+        live / "manual-copy.tar.zst",
+        live / "manual-copy.zip",
+        live / "manual-copy.zst",
+    ]
+
+
+def test_scan_stray_respects_category_filter(tmp_path: Path) -> None:
+    # GIVEN strays in live and cold
+    live = tmp_path / "live"
+    cold = tmp_path / "cold"
+    live.mkdir()
+    cold.mkdir()
+    (live / "manual-live.zst").write_bytes(b"junk")
+    (cold / "manual-cold.zst").write_bytes(b"junk")
+    # WHEN scanning only the cold Category
+    # THEN only the cold stray returns
+    assert scan_stray(tmp_path, category=Category.COLD) == [cold / "manual-cold.zst"]
 
 
 def test_scan_stray_missing_dir(tmp_path: Path) -> None:

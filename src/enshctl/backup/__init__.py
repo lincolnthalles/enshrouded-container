@@ -7,12 +7,13 @@ from enshctl.backup.archive import (
 )
 from enshctl.backup.catalog import (
     BackupInfo,
-    parse_backup_filename,
+    BackupName,
     scan_all,
     scan_dir,
     scan_stray,
     select,
 )
+from enshctl.backup.category import CATEGORIES, Category
 from enshctl.backup.core import (
     BackupFormat,
     backup_needed,
@@ -25,29 +26,21 @@ from enshctl.backup.locking import (
     acquire_lock,
     release_lock,
 )
-from enshctl.paths import (
-    BACKUP_DIR_COLD,
-    BACKUP_DIR_EMERGENCY,
-    BACKUP_DIR_LIVE,
-    BACKUP_DIRS,
-    SAVE_DIR,
-)
+from enshctl.paths import SAVE_DIR
 
 __all__ = [
     "ARCHIVE_ERRORS",
-    "BACKUP_DIRS",
-    "BACKUP_DIR_COLD",
-    "BACKUP_DIR_EMERGENCY",
-    "BACKUP_DIR_LIVE",
+    "CATEGORIES",
     "LOCK_FILE",
     "SAVE_DIR",
     "BackupFormat",
     "BackupInfo",
+    "BackupName",
+    "Category",
     "acquire_lock",
     "backup_needed",
     "create_backup",
     "decompress_archive",
-    "parse_backup_filename",
     "release_lock",
     "resolve_format",
     "resolve_level",

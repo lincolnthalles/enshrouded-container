@@ -3,7 +3,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Any, ClassVar, override
+from typing import ClassVar, override
 
 from enshctl.backup import (
     LOCK_FILE,
@@ -102,7 +102,7 @@ def run(settings: AppSettings | None = None) -> None:
         release_lock(fd)
 
 
-def _list_backups(backups: list[Any]) -> None:
+def _list_backups(backups: list[BackupInfo]) -> None:
     try:
         from rich.console import Console
         from rich.table import Table
@@ -114,11 +114,11 @@ def _list_backups(backups: list[Any]) -> None:
         table.add_column("Size")
         table.add_column("Timestamp")
         for bi in backups:
-            table.add_row(bi.path.name, bi.category, human_size(bi.size), bi.timestamp.isoformat())
+            table.add_row(bi.path.name, bi.name.category, human_size(bi.size), bi.name.timestamp.isoformat())
         console.print(table)
     except ImportError:
         for bi in backups:
-            print(f"{bi.path.name}  {bi.category}  {human_size(bi.size)}  {bi.timestamp.isoformat()}")
+            print(f"{bi.path.name}  {bi.name.category}  {human_size(bi.size)}  {bi.name.timestamp.isoformat()}")
 
 
 def _interactive_restore(base_dir: Path) -> Path | None:

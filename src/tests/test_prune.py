@@ -2,7 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from enshctl.retention import RetentionConfig, prune_category
+from enshctl.backup import CATEGORIES, Category
+from enshctl.retention import RetentionConfig, prune_all, prune_category
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -130,6 +131,25 @@ def test_prune_ignores_non_backup_files(tmp_path: Path) -> None:
     config = RetentionConfig(last=1)
     deleted = prune_category(cat_dir, config, dry_run=True)
     assert len(deleted) == 0
+
+
+def test_prune_all_returns_each_category(tmp_path: Path) -> None:
+    # GIVEN two Backups in each Category directory
+    base = tmp_path / "backups"
+    for category in CATEGORIES:
+        cat_dir = base / category
+        cat_dir.mkdir(parents=True)
+        suffix = "" if category is Category.LIVE else f"-{category}"
+        _make_backup_file(cat_dir, f"enshrouded-20260501-120000{suffix}.tar.zst")
+        _make_backup_file(cat_dir, f"enshrouded-20260502-120000{suffix}.tar.zst")
+    config = RetentionConfig(last=1)
+    # WHEN pruning every Category
+    deleted = prune_all(config, base)
+    # THEN each Category is keyed and its older Backup is removed
+    assert set(deleted) == set(CATEGORIES)
+    for category, paths in deleted.items():
+        suffix = "" if category is Category.LIVE else f"-{category}"
+        assert [p.name for p in paths] == [f"enshrouded-20260501-120000{suffix}.tar.zst"]
 
 
 def test_prune_cascade_order(tmp_path: Path) -> None:

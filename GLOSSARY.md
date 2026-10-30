@@ -25,8 +25,12 @@ _Avoid_: Manifest
 ### Backups
 
 **Backup**:
-Stored copy of world save data matching the backup filename grammar, with its metadata.
+Stored copy of world save data carrying a Backup name, with its metadata.
 _Avoid_: Snapshot, Archive, Backup file
+
+**Backup name**:
+Filename identifying a Backup by timestamp, optional Category suffix, and format extension.
+_Avoid_: Archive name
 
 **Category**:
 Storage location of a Backup: `live`, `cold`, or `emergency`.

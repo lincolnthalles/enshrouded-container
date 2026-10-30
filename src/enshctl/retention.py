@@ -6,12 +6,13 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import BackupInfo, scan_dir
-from enshctl.paths import BACKUP_DIRS
+from enshctl.backup.category import CATEGORIES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from enshctl.backup.category import Category
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def _apply_time_bucket(
     for i, bi in enumerate(backups):
         if max_count > 0 and len(seen) >= max_count:
             break
-        k = key_fn(bi.timestamp)
+        k = key_fn(bi.name.timestamp)
         if k is not None and k not in seen:
             seen.add(k)
             keep.add(i)
@@ -130,14 +131,14 @@ def prune_category(category_dir: Path, config: RetentionConfig, dry_run: bool = 
     return to_delete
 
 
-def prune_all(config: RetentionConfig, base_dir: Path, dry_run: bool = False) -> dict[str, list[Path]]:
+def prune_all(config: RetentionConfig, base_dir: Path, dry_run: bool = False) -> dict[Category, list[Path]]:
     """Apply retention to all categories.
 
-    Returns dict mapping category name to list of deleted paths.
+    Returns dict mapping Category to list of deleted paths.
     """
-    results: dict[str, list[Path]] = {}
+    results: dict[Category, list[Path]] = {}
 
-    for cat in BACKUP_DIRS:
+    for cat in CATEGORIES:
         cat_dir = base_dir / cat
         deleted = prune_category(cat_dir, config, dry_run=dry_run)
         results[cat] = deleted

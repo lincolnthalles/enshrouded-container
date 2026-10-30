@@ -13,12 +13,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl import backup, config, install, mods
+from enshctl.backup.category import Category
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.download import InstallError
 from enshctl.paths import (
     BACKUP_BASE_DIR,
-    BACKUP_DIR_COLD,
-    BACKUP_DIR_EMERGENCY,
     CONFIG_DIR,
     GAME_EXE,
     LOG_DIR,
@@ -256,7 +255,7 @@ def _make_sigterm_handler(
             if settings.backup_cold and backup.backup_needed():
                 logger.info("Creating cold shutdown backup")
                 request = BackupRequest(
-                    category=BACKUP_DIR_COLD,
+                    category=Category.COLD,
                     wait_seconds=settings.shutdown_backup_wait,
                     detach=True,
                 )
@@ -508,6 +507,6 @@ def run(settings: AppSettings | None = None) -> None:
         _cleanup_wineserver(settings)
         if settings.backup_emergency and backup.backup_needed():
             logger.info("Creating emergency backup")
-            _run_backup(BackupRequest(category=BACKUP_DIR_EMERGENCY, detach=True))
+            _run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
         PIDFILE.unlink(missing_ok=True)
         sys.exit(exit_code)

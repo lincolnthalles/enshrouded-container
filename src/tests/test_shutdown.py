@@ -2,10 +2,14 @@
 
 import subprocess
 import threading
+from argparse import Namespace
 from dataclasses import replace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from enshctl.backup.category import Category
+from enshctl.backup_protocol import BackupRequest
 from enshctl.commands.start import ServerContext, _make_sigterm_handler, _scheduler_loop
 from enshctl.settings import AppSettings
 
@@ -51,7 +55,7 @@ def test_shutdown_orders_sigint_before_cold_before_wineserver() -> None:
     from enshctl.backup_protocol import BackupRequest
 
     mock_backup.assert_called_once_with(
-        BackupRequest(category="cold", wait_seconds=5, detach=True),
+        BackupRequest(category=Category.COLD, wait_seconds=5, detach=True),
     )
 
 
@@ -80,13 +84,12 @@ def test_shutdown_sigkills_stubborn_server_after_grace() -> None:
 
 def test_cold_and_emergency_backups_detached() -> None:
     import enshctl.commands.start as st
-    from enshctl.backup_protocol import BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY, BackupRequest
 
     # GIVEN shutdown and emergency paths
     with patch.object(st.subprocess, "run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
         # WHEN a detached cold backup runs
-        st._run_backup(BackupRequest(category=BACKUP_DIR_COLD, detach=True))
+        st._run_backup(BackupRequest(category=Category.COLD, detach=True))
         # THEN it survives the parent's process group
         assert mock_run.call_args.kwargs["start_new_session"] is True
 
@@ -100,9 +103,35 @@ def test_cold_and_emergency_backups_detached() -> None:
     with patch.object(st.subprocess, "run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
         # WHEN a detached emergency backup runs
-        st._run_backup(BackupRequest(category=BACKUP_DIR_EMERGENCY, detach=True))
+        st._run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
         # THEN it survives the parent's process group
         assert mock_run.call_args.kwargs["start_new_session"] is True
+
+
+@pytest.mark.parametrize(
+    ("category", "flag"),
+    [
+        (Category.LIVE, []),
+        (Category.COLD, ["--cold"]),
+        (Category.EMERGENCY, ["--emergency"]),
+    ],
+)
+def test_backup_request_argv_round_trip(category: Category, flag: list[str]) -> None:
+    # GIVEN a typed Backup request
+    request = BackupRequest(category=category, wait_seconds=7)
+    # WHEN it crosses the child-process seam
+    assert request.to_argv() == [*flag, "--wait", "7"]
+    args = Namespace(cold=category is Category.COLD, emergency=category is Category.EMERGENCY, wait=7)
+    # THEN the child reconstructs the same request
+    assert BackupRequest.from_argv(args) == request
+
+
+def test_backup_request_rejects_unknown_category() -> None:
+    # GIVEN an unknown Category string at the protocol boundary
+    # WHEN constructing a request
+    # THEN it fails before reaching argv
+    with pytest.raises(ValueError, match="warm"):
+        BackupRequest(category=cast("Category", "warm"))
 
 
 def test_wait_expiry_warns() -> None:

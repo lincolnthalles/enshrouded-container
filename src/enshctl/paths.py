@@ -30,8 +30,3 @@ DEPOT_ID = "2278521"
 CONFIG_FILENAME = "enshrouded_server.json"
 DEPOT_DOWNLOADER = ("/usr/bin/runuser", "-u", "steam", "--", "/opt/depotdownloader/DepotDownloader")
 MANIFEST_TMP_DIR = "/tmp/depotdownloader"
-
-BACKUP_DIR_LIVE = "live"
-BACKUP_DIR_COLD = "cold"
-BACKUP_DIR_EMERGENCY = "emergency"
-BACKUP_DIRS = (BACKUP_DIR_LIVE, BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY)

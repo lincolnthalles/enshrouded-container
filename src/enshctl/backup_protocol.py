@@ -4,7 +4,7 @@ import argparse  # noqa: TC003 — add_arguments builds a real parser at runtime
 from dataclasses import dataclass
 from enum import IntEnum
 
-from enshctl.paths import BACKUP_DIR_COLD, BACKUP_DIR_EMERGENCY, BACKUP_DIR_LIVE
+from enshctl.backup.category import Category
 
 
 class BackupOutcome(IntEnum):
@@ -15,15 +15,19 @@ class BackupOutcome(IntEnum):
 
 @dataclass(frozen=True)
 class BackupRequest:
-    category: str = BACKUP_DIR_LIVE
+    category: Category = Category.LIVE
     wait_seconds: int = 0
     detach: bool = False
 
+    def __post_init__(self) -> None:
+        """Coerce a raw Category string into the enum."""
+        object.__setattr__(self, "category", Category(self.category))
+
     def to_argv(self) -> list[str]:
         argv: list[str] = []
-        if self.category == BACKUP_DIR_COLD:
+        if self.category == Category.COLD:
             argv.append("--cold")
-        elif self.category == BACKUP_DIR_EMERGENCY:
+        elif self.category == Category.EMERGENCY:
             argv.append("--emergency")
         if self.wait_seconds > 0:
             argv.extend(["--wait", str(self.wait_seconds)])
@@ -31,11 +35,11 @@ class BackupRequest:
 
     @classmethod
     def from_argv(cls, args: argparse.Namespace) -> BackupRequest:
-        category = BACKUP_DIR_LIVE
+        category = Category.LIVE
         if args.cold:
-            category = BACKUP_DIR_COLD
+            category = Category.COLD
         elif args.emergency:
-            category = BACKUP_DIR_EMERGENCY
+            category = Category.EMERGENCY
         return cls(category=category, wait_seconds=args.wait)
 
 

@@ -150,21 +150,21 @@ Backups SHALL be stored in Category subdirectories (`live`, `cold`, `emergency`)
 
 ### Requirement: Backup filename format
 
-Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-emergency].<ext>` where `<ext>` is determined by the compression format: `tar.zst`, `tar.gz`, or `zip`. No other files in the Category directories are Backups.
+Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-emergency].<ext>` where `<ext>` is determined by the compression format: `tar.zst`, `tar.gz`, or `zip`. Timestamp components SHALL use the container's local wall-clock time; the default container timezone is UTC. No other files in the Category directories are Backups.
 
 #### Scenario: Live backup filename
 
-- **WHEN** a live Backup is created at 2026-05-29 12:00:00 UTC with zstd format
+- **WHEN** a live Backup is created at 2026-05-29 12:00:00 container-local time with zstd format
 - **THEN** the filename SHALL be `enshrouded-20260529-120000.tar.zst`
 
 #### Scenario: Cold backup filename
 
-- **WHEN** a cold Backup is created at 2026-05-29 18:00:00 UTC with zstd format
+- **WHEN** a cold Backup is created at 2026-05-29 18:00:00 container-local time with zstd format
 - **THEN** the filename SHALL be `enshrouded-20260529-180000-cold.tar.zst`
 
 #### Scenario: Emergency backup filename with gzip
 
-- **WHEN** an emergency Backup is created at 2026-05-29 03:45:22 UTC with gzip format
+- **WHEN** an emergency Backup is created at 2026-05-29 03:45:22 container-local time with gzip format
 - **THEN** the filename SHALL be `enshrouded-20260529-034522-emergency.tar.gz`
 
 ### Requirement: Emergency backup on crash

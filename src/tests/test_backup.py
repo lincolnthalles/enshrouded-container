@@ -3,18 +3,22 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from enshctl.backup import (
+    CATEGORIES,
     BackupFormat,
+    BackupName,
+    Category,
     acquire_lock,
-    parse_backup_filename,
+    create_backup,
     release_lock,
     resolve_format,
     resolve_level,
 )
-from enshctl.backup.catalog import _local_now, _local_tz, scan_all, scan_dir, select
+from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
 from enshctl.settings import AppSettings
 
 
@@ -45,46 +49,102 @@ def test_backup_format_zip() -> None:
 
 
 def test_parse_live_backup() -> None:
-    result = parse_backup_filename("enshrouded-20260529-120000.tar.zst")
-    assert result is not None
-    ts, category, fmt = result
-    assert ts == datetime(2026, 5, 29, 12, 0, 0, tzinfo=_local_tz())
-    assert category == "live"
-    assert fmt == BackupFormat.ZSTD
+    result = BackupName.from_filename("enshrouded-20260529-120000.tar.zst")
+    assert result == BackupName(
+        timestamp=datetime(2026, 5, 29, 12, 0, 0).astimezone(),
+        category=Category.LIVE,
+        fmt=BackupFormat.ZSTD,
+    )
 
 
 def test_parse_cold_backup() -> None:
-    result = parse_backup_filename("enshrouded-20260529-180000-cold.tar.zst")
-    assert result is not None
-    _ts, category, fmt = result
-    assert category == "cold"
-    assert fmt == BackupFormat.ZSTD
+    result = BackupName.from_filename("enshrouded-20260529-180000-cold.tar.zst")
+    assert result == BackupName(
+        timestamp=datetime(2026, 5, 29, 18, 0, 0).astimezone(),
+        category=Category.COLD,
+        fmt=BackupFormat.ZSTD,
+    )
 
 
 def test_parse_emergency_gzip() -> None:
-    result = parse_backup_filename("enshrouded-20260529-034522-emergency.tar.gz")
-    assert result is not None
-    _ts, category, fmt = result
-    assert category == "emergency"
-    assert fmt == BackupFormat.GZIP
+    result = BackupName.from_filename("enshrouded-20260529-034522-emergency.tar.gz")
+    assert result == BackupName(
+        timestamp=datetime(2026, 5, 29, 3, 45, 22).astimezone(),
+        category=Category.EMERGENCY,
+        fmt=BackupFormat.GZIP,
+    )
 
 
 def test_parse_zip() -> None:
-    result = parse_backup_filename("enshrouded-20260529-120000.zip")
-    assert result is not None
-    _, category, fmt = result
-    assert category == "live"
-    assert fmt == BackupFormat.ZIP
+    result = BackupName.from_filename("enshrouded-20260529-120000.zip")
+    assert result == BackupName(
+        timestamp=datetime(2026, 5, 29, 12, 0, 0).astimezone(),
+        category=Category.LIVE,
+        fmt=BackupFormat.ZIP,
+    )
 
 
 def test_parse_invalid() -> None:
-    assert parse_backup_filename("random.txt") is None
-    assert parse_backup_filename("enshrouded-abc.tar.zst") is None
-    assert parse_backup_filename("backup-20260529-120000.tar.zst") is None
+    assert BackupName.from_filename("random.txt") is None
+    assert BackupName.from_filename("enshrouded-abc.tar.zst") is None
+    assert BackupName.from_filename("backup-20260529-120000.tar.zst") is None
+    assert BackupName.from_filename("enshrouded-20260529-120000-warm.tar.zst") is None
 
 
 def test_parse_invalid_date() -> None:
-    assert parse_backup_filename("enshrouded-99999999-999999.tar.zst") is None
+    assert BackupName.from_filename("enshrouded-99999999-999999.tar.zst") is None
+
+
+@pytest.mark.parametrize("category", CATEGORIES)
+@pytest.mark.parametrize("fmt", list(BackupFormat))
+def test_backup_name_round_trips(category: Category, fmt: BackupFormat) -> None:
+    # GIVEN a Backup name at a fixed local timestamp
+    name = BackupName(timestamp=datetime(2026, 5, 29, 12, 0, 0).astimezone(), category=category, fmt=fmt)
+    # WHEN the name is rendered and parsed again
+    parsed = BackupName.from_filename(name.to_filename())
+    # THEN the full value round-trips
+    assert parsed == name
+
+
+def test_backup_name_now_truncates_sub_second_precision() -> None:
+    # GIVEN a clock carrying microseconds
+    fixed = datetime(2026, 5, 29, 12, 0, 0, 123456).astimezone()
+    with patch("enshctl.backup.catalog._local_now", return_value=fixed):
+        # WHEN capturing the current Backup name
+        name = BackupName.now(Category.LIVE, BackupFormat.ZSTD)
+    # THEN the value matches the second-precision grammar
+    assert name.timestamp == fixed.replace(microsecond=0)
+    assert BackupName.from_filename(name.to_filename()) == name
+
+
+@pytest.mark.parametrize(
+    ("is_dst", "expected_offset_hours"),
+    [(1, 2), (0, 1)],
+)
+def test_backup_name_now_uses_dst_offset_in_effect(is_dst: int, expected_offset_hours: int) -> None:
+    # GIVEN a zone whose DST rule is currently active or inactive
+    with (
+        patch("enshctl.backup.catalog.time.localtime") as mock_localtime,
+        patch("enshctl.backup.catalog.time.altzone", -7200),
+        patch("enshctl.backup.catalog.time.timezone", -3600),
+    ):
+        mock_localtime.return_value.tm_isdst = is_dst
+        # WHEN capturing the current Backup name
+        name = BackupName.now(Category.LIVE, BackupFormat.ZSTD)
+    # THEN the offset in effect is used, not the mere presence of a DST rule
+    assert name.timestamp.utcoffset() == timedelta(hours=expected_offset_hours)
+
+
+def test_backup_name_rejects_unknown_category() -> None:
+    # GIVEN an unknown Category value at the grammar boundary
+    # WHEN constructing a Backup name
+    # THEN the category is rejected before rendering
+    with pytest.raises(ValueError, match="warm"):
+        BackupName(
+            timestamp=datetime(2026, 5, 29, 12, 0, 0).astimezone(),
+            category=cast("Category", "warm"),
+            fmt=BackupFormat.ZSTD,
+        )
 
 
 def test_resolve_format_default() -> None:
@@ -217,6 +277,33 @@ def test_select_backup_when_category_qualifier(tmp_path: Path) -> None:
     assert result.name == "enshrouded-20260529-130000-cold.tar.zst"
 
 
+def test_select_backup_empty_category_qualifier_means_all(tmp_path: Path) -> None:
+    # GIVEN a live and a newer cold backup
+    base = tmp_path / "backups"
+    live = base / "live"
+    cold = base / "cold"
+    live.mkdir(parents=True)
+    cold.mkdir(parents=True)
+    (live / "enshrouded-20260529-120000.tar.zst").write_bytes(b"\x00" * 10)
+    (cold / "enshrouded-20260529-130000-cold.tar.zst").write_bytes(b"\x00" * 10)
+    # WHEN selecting the last backup with an empty qualifier
+    result = select(base, when="last:")
+    # THEN the newest Backup across all Categories resolves
+    assert result is not None
+    assert result.name == "enshrouded-20260529-130000-cold.tar.zst"
+
+
+def test_select_backup_unknown_category_qualifier_matches_nothing(tmp_path: Path) -> None:
+    # GIVEN a valid live backup
+    base = tmp_path / "backups"
+    live = base / "live"
+    live.mkdir(parents=True)
+    (live / "enshrouded-20260529-120000.tar.zst").write_bytes(b"\x00" * 10)
+    # WHEN selecting with an unknown Category qualifier
+    # THEN nothing resolves
+    assert select(base, when="last:bogus") is None
+
+
 def test_select_backup_no_match(tmp_path: Path) -> None:
     # GIVEN only a stale backup
     base = tmp_path / "backups"
@@ -292,7 +379,7 @@ def test_select_backup_no_args(tmp_path: Path) -> None:
     assert select(base) is None
 
 
-def test_select_backup_compat_wrapper(tmp_path: Path) -> None:
+def test_select_backup_by_file_via_settings_dir(tmp_path: Path) -> None:
     # GIVEN backups present and settings pointing at them
     base = tmp_path / "backups"
     live = base / "live"
@@ -335,14 +422,18 @@ def test_scan_all_with_when_filter(tmp_path: Path) -> None:
     now = _local_now()
     name1 = _make_backup_filename(now)
     name2 = _make_backup_filename(now + timedelta(seconds=60))
+    old_name = _make_backup_filename(now - timedelta(days=2))
     f1 = live / name1
     f2 = live / name2
+    old = live / old_name
     f1.write_bytes(b"\x00" * 10)
     f2.write_bytes(b"\x00" * 10)
+    old.write_bytes(b"\x00" * 10)
     all_backups = scan_all(base)
-    assert len(all_backups) == 2
+    assert len(all_backups) == 3
     recent = scan_all(base, when=timedelta(hours=1))
     assert len(recent) == 2
+    assert old_name not in {info.path.name for info in recent}
 
 
 def test_scan_all_empty_dir(tmp_path: Path) -> None:
@@ -371,12 +462,12 @@ def test_scan_all_category_filter(tmp_path: Path) -> None:
     cold_f = cold / "enshrouded-20260529-130000-cold.tar.zst"
     live_f.write_bytes(b"\x00" * 10)
     cold_f.write_bytes(b"\x00" * 10)
-    live_only = scan_all(base, category="live")
+    live_only = scan_all(base, category=Category.LIVE)
     assert len(live_only) == 1
-    assert live_only[0].category == "live"
-    cold_only = scan_all(base, category="cold")
+    assert live_only[0].name.category == Category.LIVE
+    cold_only = scan_all(base, category=Category.COLD)
     assert len(cold_only) == 1
-    assert cold_only[0].category == "cold"
+    assert cold_only[0].name.category == Category.COLD
 
 
 # --- Lock tests (11.4) ---
@@ -533,12 +624,11 @@ class TestCreateBackupDiskSpace:
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
-            mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
-            result = create_backup("live", BackupPlan.from_settings(settings))
+            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
             # THEN compression runs and a path returns
             mock_compress.assert_called_once()
             assert result is not None
@@ -558,7 +648,7 @@ class TestCreateBackupDiskSpace:
         mock_disk_usage.return_value.free = 500 * 1024**2
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating a backup
-        result = create_backup("live", BackupPlan.from_settings(settings))
+        result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
         # THEN the backup is skipped
         assert result is None
 
@@ -583,12 +673,11 @@ class TestCreateBackupDiskSpace:
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
-            mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup
-            result = create_backup("live", BackupPlan.from_settings(settings))
+            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
             # THEN compression still runs
             mock_compress.assert_called_once()
             assert result is not None
@@ -612,7 +701,7 @@ class TestCreateBackupDiskSpace:
         mock_disk_usage.return_value.free = 500 * 1024**2
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating an emergency backup
-        result = create_backup("emergency", BackupPlan.from_settings(settings))
+        result = create_backup(Category.EMERGENCY, BackupPlan.from_settings(settings))
         # THEN it is skipped
         assert result is None
 
@@ -640,13 +729,12 @@ class TestCreateBackupOverrides:
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_zstd,
             patch("enshctl.backup.format._compress_gzip") as mock_gzip,
         ):
-            mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with an explicit format
-            result = create_backup("live", BackupPlan.from_settings(settings, fmt=BackupFormat.ZSTD))
+            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings, fmt=BackupFormat.ZSTD))
             # THEN the explicit format's compressor runs
             mock_zstd.assert_called_once()
             mock_gzip.assert_not_called()
@@ -673,15 +761,44 @@ class TestCreateBackupOverrides:
 
         with (
             patch("enshctl.backup.core.SAVE_DIR", saves),
-            patch("enshctl.backup.core._local_now") as mock_now,
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
-            mock_now.return_value.strftime.return_value = "20260531-120000"
             # WHEN creating a backup with explicit level 0
-            result = create_backup("live", BackupPlan.from_settings(settings, level=0))
+            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings, level=0))
             # THEN level 0 reaches the compressor, not the configured 9
             mock_compress.assert_called_once_with(saves, result, 0)
             assert result is not None
+
+
+@pytest.mark.parametrize("category", CATEGORIES)
+def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Category) -> None:
+    from enshctl.backup.core import BackupPlan
+
+    # GIVEN a fixed clock and a compressor that writes a file
+    settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+    timestamp = datetime(2026, 5, 31, 12, 0, 0).astimezone()
+
+    def _write_empty(_source: Path, output: Path, _level: int) -> None:
+        output.write_bytes(b"")
+
+    with (
+        patch("enshctl.backup.core.backup_needed", return_value=True),
+        patch("enshctl.backup.core.shutil.disk_usage") as mock_disk_usage,
+        patch("enshctl.backup.catalog._local_now", return_value=timestamp),
+        patch("enshctl.backup.format._compress_zstd", side_effect=_write_empty),
+    ):
+        mock_disk_usage.return_value.free = 5 * 1024**3
+        # WHEN creating a backup in the Category
+        created = create_backup(category, BackupPlan.from_settings(settings))
+
+    # THEN scan_dir discovers the same Backup name
+    assert created is not None
+    suffix = "" if category is Category.LIVE else f"-{category}"
+    assert created.name == f"enshrouded-20260531-120000{suffix}.tar.zst"
+    found = scan_dir(Path(settings.backup_dir) / category)
+    assert [info.path for info in found] == [created]
+    assert found[0].name == BackupName(timestamp=timestamp, category=category, fmt=BackupFormat.ZSTD)
 
 
 class TestBackupRunnerFormatFlag:

@@ -9,12 +9,6 @@ from typing import TYPE_CHECKING
 
 import zstandard
 
-from enshctl.paths import (
-    BACKUP_DIR_COLD,
-    BACKUP_DIR_EMERGENCY,
-    BACKUP_DIR_LIVE,
-)
-
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -203,6 +197,11 @@ class BackupFormat(Enum):
                 return _verify_zip
 
 
+ARCHIVE_EXTENSIONS: tuple[str, ...] = tuple(fmt.get_extension() for fmt in BackupFormat)
+ARCHIVE_SUFFIXES: tuple[str, ...] = tuple(
+    dict.fromkeys(f".{extension.rsplit('.', 1)[-1]}" for extension in ARCHIVE_EXTENSIONS)
+)
+
 _EXTENSION_MAP: dict[str, BackupFormat] = {fmt.get_extension(): fmt for fmt in BackupFormat}
 
 
@@ -213,19 +212,3 @@ def detect_format(path: Path) -> BackupFormat:
             return fmt
     msg = f"Cannot detect backup format for {path}"
     raise ValueError(msg)
-
-
-def category_suffix(category: str) -> str:
-    if category == BACKUP_DIR_COLD:
-        return "-cold"
-    if category == BACKUP_DIR_EMERGENCY:
-        return "-emergency"
-    return ""
-
-
-def suffix_category(suffix: str) -> str:
-    if suffix == "-cold":
-        return BACKUP_DIR_COLD
-    if suffix == "-emergency":
-        return BACKUP_DIR_EMERGENCY
-    return BACKUP_DIR_LIVE

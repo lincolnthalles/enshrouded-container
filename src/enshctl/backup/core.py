@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup.archive import ARCHIVE_ERRORS
-from enshctl.backup.catalog import _local_now
-from enshctl.backup.format import BackupFormat, category_suffix
+from enshctl.backup.catalog import BackupName
+from enshctl.backup.format import BackupFormat
 from enshctl.paths import SAVE_DIR
 from enshctl.utils import human_size
 
 if TYPE_CHECKING:
+    from enshctl.backup.category import Category
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def resolve_level(fmt: BackupFormat, raw: str) -> int:
 
 
 def create_backup(
-    category: str,
+    category: Category,
     plan: BackupPlan,
 ) -> Path | None:
     if not backup_needed():
@@ -97,13 +98,8 @@ def create_backup(
             "Disk space low: %s free (warning threshold %s)", human_size(free), human_size(plan.min_free_warn)
         )
 
-    timestamp = _local_now().strftime("%Y%m%d-%H%M%S")
-
-    suffix = category_suffix(category)
-
-    ext = plan.fmt.get_extension()
-    filename = f"enshrouded-{timestamp}{suffix}{ext}"
-    output_path = backup_dir / filename
+    name = BackupName.now(category, plan.fmt)
+    output_path = backup_dir / name.to_filename()
 
     compress = plan.fmt.compress()
 
