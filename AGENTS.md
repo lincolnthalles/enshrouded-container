@@ -32,8 +32,9 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 
 - Specs own observable _what_ + _why_; code owns _how_. Mechanics in `openspec/config.yaml: rules.specs`.
 - One owning capability per behavior. When code changes behavior, update the owning spec in the same change; limit cleanup to touched capabilities.
-- Terms follow `GLOSSARY.md` (per domain-modeling skill); durable _why_ goes to `docs/adr/` only when hard to reverse, surprising, and traded off.
+- Terms follow `GLOSSARY.md` (per domain-modeling skill; domain-only, never general programming concepts). Architecture terms (`module`, `interface`, `seam`, `adapter`, `depth`, `leverage`, `locality`) follow codebase-design skill and never enter `GLOSSARY.md`; durable _why_ goes to `docs/adr/` only when hard to reverse, surprising, and traded off. This triple gate overrules any skill suggestion to record more.
 - Spec change is done only when `openspec validate --specs` passes and every touched requirement passes the refactor test in `openspec/config.yaml` (`rules.specs`).
+- Architecture reviews stay report-only until a candidate is chosen; implementation follows ownership and the Workflow gate above.
 
 ## Rules
 
@@ -55,11 +56,14 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 - Do NOT create or expand catch-all `utils`/`helpers` modules; place logic in its domain module.
 - Separate pure domain logic from I/O and platform integration. Make dependencies explicit through signatures.
 - Split on diverging responsibilities. Extract a helper only if reused or independently meaningful through a public contract.
+- Design for depth: much behavior behind a small interface (deletion test). Seam placement is distinct from what sits behind it; tier-spanning slices keep pure domain separate from I/O.
+- One adapter is hypothetical, two is real; a test adapter counts as the second, so explicit dependencies at the system seam are real seams. Never expose internal seams through the external interface.
 
-## API & Error Handling
+## Interfaces & Error Handling
 
+- Interface means everything a caller must know: signature plus invariants, ordering, error modes, config, and performance.
 - Add context when propagating errors. No silent failures.
-- Catch at architectural boundaries, not randomly. Fail fast.
+- Catch at architectural seams, not randomly. Fail fast.
 - Warnings for recoverable errors; descriptive errors for fatal failures.
 - Unicode ellipsis in user-facing status output: `...` -> `…`.
 
@@ -81,7 +85,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 - Do NOT change tests to match a wrong implementation; double-check the implementation and the expected behavior before proceeding, flagging the issue if the behavior is unclear.
 - Do NOT weaken existing assertions unless the expected behavior has genuinely changed and the reason is clear.
 - Deterministic: no wall-clock, network, or environment coupling unless the behavior under test requires it.
-- Isolation: inject env-derived values as arguments; do NOT mutate `os.environ`. Mock only at the system boundary (subprocess, filesystem, network), never domain logic.
+- Isolation: inject env-derived values as arguments; do NOT mutate `os.environ`. Mock only at the system seam (subprocess, filesystem, network), never domain logic. The interface is the test surface; on deepening, replace-don't-layer (delete superseded shallow unit tests once deep interface coverage exists, without weakening observable-behavior coverage).
 - Inline BDD-style comments `# GIVEN` / `# WHEN` / `# THEN` (`# AND` as needed) + high-signal description, splitting each test into logical blocks whenever it doesn't get redundant and improves readability.
 - Only high-value regression tests covering success, failure, and edge cases. No tests for statically defined values, no negative tests for removed logic.
 
