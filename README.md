@@ -148,11 +148,11 @@ See [Environment Variable Config Reference](./docs/env-config-reference.md) for 
 
 ## Custom Config File
 
-<details>
-<summary>Click to expand</summary>
-
 > [!TIP]
 > The recommended way to configure the server is to use only the environment variables.
+
+<details>
+<summary>Click to expand</summary>
 
 You can mount a base `enshrouded_server.json` at `/data/config/enshrouded_server.json`. Environment variables override any values in this file. The final config is symlinked into the game server directory.
 
@@ -161,15 +161,15 @@ volumes:
   - ./enshrouded_server.json:/data/config/enshrouded_server.json
 ```
 
-> [!IMPORTANT]
-> The config file can be modified at runtime by the game server (e.g. banned players).
-> Do not assume the file will remain unchanged.
-
 Configuration reference:
 
 - [Enshrouded Knowledge Base: Server Gameplay Settings](https://enshrouded.zendesk.com/hc/en-us/articles/20453241249821-Server-Gameplay-Settings)
 
 </details>
+
+> [!IMPORTANT]
+> The config file can be modified at runtime by the game server (e.g. banned players).
+> Do not assume the file will remain unchanged.
 
 ## Container Volumes
 

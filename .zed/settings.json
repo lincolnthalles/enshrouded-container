@@ -13,15 +13,14 @@
     "**/__pycache__",
     "..."
   ],
+  "file_scan_inclusions": ["**/.env*"],
   "file_types": {
-    "GitHub Actions": [
-      ".github/workflows/*.yml"
-    ]
+    "GitHub Actions": [".github/workflows/*.yml"]
   },
   "format_on_save": "on",
   "formatter": {
     "external": {
-      "command": "dprint",
+      "command": ".venv/bin/dprint",
       "arguments": ["fmt", "--config", ".dprint.jsonc", "--stdin", "{buffer_path}"]
     }
   },
@@ -38,13 +37,25 @@
       ]
     }
   },
+  "language_servers": [
+    "dprint",
+    "json-language-server",
+    "just-lsp",
+    "markdownlint",
+    "pyrefly",
+    "ruff"
+  ],
   "lsp": {
+    "dprint": {
+      "binary": {
+        "path": ".venv/bin/dprint",
+        "arguments": ["lsp"]
+      }
+    },
     "pyrefly": {
       "binary": {
         "path": ".venv/bin/pyrefly",
-        "arguments": [
-          "lsp"
-        ]
+        "arguments": ["lsp"]
       },
       "settings": {
         "python": {
@@ -55,13 +66,5 @@
         }
       }
     }
-  },
-  "language_servers": [
-    "dprint",
-    "json-language-server",
-    "just-lsp",
-    "markdownlint",
-    "pyrefly",
-    "ruff"
-  ]
+  }
 }

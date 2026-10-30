@@ -15,6 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "dprint-py>=0.64.1.0",
     "pyrefly>=1.1.0",
     "pytest>=9.0.3",
     "ruff>=0.15.14",
@@ -33,38 +34,38 @@ pythonpath = ["src"]
 [tool.ruff]
 src = ["src/enshctl", "src/tests"]
 line-length = 120
-target-version = 'py314'
+target-version = "py314"
 fix = true
 extend-exclude = [
-    '__pycache__',
-    'dist',
-    'enshrouded-data',
+    "__pycache__",
+    "dist",
+    "enshrouded-data",
 ]
 
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    'COM812', # Missing trailing comma. Redundant with formatter usage.
-    'D101',
-    'D102',
-    'D103', # Missing docstring in public function.
-    'S603', # `subprocess` call: check for execution of untrusted input.
-    'S202',
-    'S607',
-    'PLR0911', # Too many return statements.
-    'PLR0912',
-    'PLR0913', # install.download_version groups auth/env/deps overrides; splitting would scatter the strategy.
-    'PLR2004', # Magic value used in comparison.
-    'S108', # Probable insecure usage of temporary file or directory.
-    'S310', # Audit URL open for permitted schemes. Allowing use of `file:` or custom schemes is often unexpected.
-    'T201', # print found.
-    'TRY003', # Avoid specifying long messages outside the exception class.
-    'FBT001',
-    'FBT002',
-    'C901',
-    'ANN001',
-    'ARG001',
-    'PERF401',
+    "COM812", # Missing trailing comma. Redundant with formatter usage.
+    "D101",
+    "D102",
+    "D103", # Missing docstring in public function.
+    "S603", # `subprocess` call: check for execution of untrusted input.
+    "S202",
+    "S607",
+    "PLR0911", # Too many return statements.
+    "PLR0912",
+    "PLR0913", # install.download_version groups auth/env/deps overrides; splitting would scatter the strategy.
+    "PLR2004", # Magic value used in comparison.
+    "S108", # Probable insecure usage of temporary file or directory.
+    "S310", # Audit URL open for permitted schemes. Allowing use of `file:` or custom schemes is often unexpected.
+    "T201", # print found.
+    "TRY003", # Avoid specifying long messages outside the exception class.
+    "FBT001",
+    "FBT002",
+    "C901",
+    "ANN001",
+    "ARG001",
+    "PERF401",
 ]
 
 # Allow unused variables when underscore-prefixed.
@@ -75,28 +76,28 @@ docstring-quotes = "double"
 
 [tool.ruff.lint.per-file-ignores]
 "src/enshctl/backup/catalog.py" = [
-    'TC003', # BackupInfo is a runtime dataclass: Path must stay a runtime import.
+    "TC003", # BackupInfo is a runtime dataclass: Path must stay a runtime import.
 ]
 "test_*.py" = [
-    'S101', # Use of `assert` detected.
-    'S105', # Possible hardcoded password assigned to: "password".
-    'S106', # Possible hardcoded password assigned to argument: "steam_password".
-    'PLC0415', # Local imports for env isolation.
-    'SLF001', # Private member accessed.
-    'PT019', # Fixture `_mock_discover` without value is injected as parameter.
+    "S101", # Use of `assert` detected.
+    "S105", # Possible hardcoded password assigned to: "password".
+    "S106", # Possible hardcoded password assigned to argument: "steam_password".
+    "PLC0415", # Local imports for env isolation.
+    "SLF001", # Private member accessed.
+    "PT019", # Fixture `_mock_discover` without value is injected as parameter.
 ]
 "src/enshctl/commands/*.py" = [
-    'PLC0415', # argparse and Rich imports kept local for CLI dispatch.
+    "PLC0415", # argparse and Rich imports kept local for CLI dispatch.
 ]
 "src/enshctl/backup_runner.py" = [
-    'PLC0415', # Local imports in start_scheduler to avoid circular imports.
-    'TRY300', # Return in try/except is intentional.
+    "PLC0415", # Local imports in start_scheduler to avoid circular imports.
+    "TRY300", # Return in try/except is intentional.
 ]
 "src/enshctl/install.py" = [
-    'PLR0915', # download_version strategy branches each carry distinct user-facing errors; extracting one branch would scatter the selection.
+    "PLR0915", # download_version strategy branches each carry distinct user-facing errors; extracting one branch would scatter the selection.
 ]
 "src/enshctl/backup/__init__.py" = [
-    'ANN401', # PEP 562 __getattr__ must return Any for lazy parse_cron re-export.
+    "ANN401", # PEP 562 __getattr__ must return Any for lazy parse_cron re-export.
 ]
 
 [tool.ruff.lint.pydocstyle]

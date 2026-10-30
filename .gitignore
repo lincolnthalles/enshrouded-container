@@ -1,8 +1,6 @@
 # Data volumes
 enshrouded-data/
 
-tmp
-
 # Env
 .env
 .env.local
@@ -25,8 +23,5 @@ Thumbs.db
 *.swo
 *~
 
-# Agent tooling
-!AGENTS.md
-openspec/*
-!openspec/specs/
-!openspec/config.yaml
+# OpenSpec changes have low value after the implementation
+openspec/changes
