@@ -39,12 +39,17 @@ All environment-derived configuration SHALL flow through a single frozen setting
 
 ### Requirement: Settings cross the backup subprocess seam
 
-Across the backup subprocess seam, the child SHALL observe the same `BACKUP_*`, `PUID`, and `PGID` values the parent configured. The parent SHALL forward those settings-bearing environment keys (plus the base allowlist) so the child reloads identical backup settings from its inherited environment rather than receiving them over IPC. Keys the backup path never consumes (`MANIFESTHUB_*`, `STEAM_*`, `LOG_TAIL`, `WINE*`, `PERSIST_FILES`) are not forwarded.
+Across the backup subprocess seam, the child SHALL observe the same declared settings-bearing `BACKUP_*`, `PUID`, and `PGID` values the parent configured. The parent SHALL forward those declared settings-bearing environment keys (plus the base allowlist) so the child reloads identical backup settings from its inherited environment rather than receiving them over IPC. Keys the backup path never consumes (`MANIFESTHUB_*`, `STEAM_*`, `LOG_TAIL`, `WINE*`, `PERSIST_FILES`) and undeclared `BACKUP_*` keys are not forwarded.
 
 #### Scenario: Reload across the backup subprocess seam
 
 - **WHEN** `start` spawns a backup child process
-- **THEN** the child SHALL observe the same `BACKUP_*`, `PUID`, and `PGID` values the parent configured
+- **THEN** the child SHALL observe the same declared settings-bearing `BACKUP_*`, `PUID`, and `PGID` values the parent configured
+
+#### Scenario: Undeclared BACKUP_* keys are excluded
+
+- **WHEN** the parent environment contains a `BACKUP_*` key that is not a declared setting
+- **THEN** the backup child SHALL NOT receive that key
 
 ### Requirement: PUID/PGID identity
 

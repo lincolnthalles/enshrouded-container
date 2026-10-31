@@ -77,12 +77,12 @@ class TestMakeToolEnv:
 class TestResolveDllOverrides:
     """Tests for _resolve_dll_overrides() user-provided value handling."""
 
-    def test_empty_env_value_suppresses_generated(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # GIVEN WINEDLLOVERRIDES set to an empty string in the environment
-        monkeypatch.setenv("WINEDLLOVERRIDES", "")
-        # WHEN resolving overrides from a freshly loaded settings object
+    def test_empty_override_suppresses_generated(self) -> None:
+        # GIVEN an explicitly empty WINEDLLOVERRIDES setting
+        settings = replace(AppSettings(), winedlloverrides="")
+        # WHEN resolving overrides from the settings object
         # THEN the empty value passes through verbatim instead of generated overrides
-        assert _resolve_dll_overrides(AppSettings()) == ""
+        assert _resolve_dll_overrides(settings) == ""
 
     def test_unset_settings_value_generates(self) -> None:
         # GIVEN winedlloverrides unset

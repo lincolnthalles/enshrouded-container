@@ -1,6 +1,5 @@
 """Tests for config module."""
 
-from os import environ
 from typing import TYPE_CHECKING, Any, cast
 
 from enshctl.config import (
@@ -83,49 +82,61 @@ def test_deep_merge_new_key() -> None:
     assert result["port"] == 9999
 
 
-def test_env_to_dict_simple() -> None:
-    environ["ENSHROUDED_NAME"] = "Test Server"
-    try:
+def test_env_to_dict_without_source_reads_process_environment() -> None:
+    from unittest.mock import patch
+
+    # GIVEN a process environment carrying an ENSHROUDED_* value
+    with patch("enshctl.config.environ", {"ENSHROUDED_NAME": "Ambient"}):
+        # WHEN parsing without an explicit mapping
         result = env_to_dict()
-        assert result["name"] == "Test Server"
-    finally:
-        del environ["ENSHROUDED_NAME"]
+    # THEN the ambient value is used
+    assert result["name"] == "Ambient"
+
+
+def test_env_to_dict_with_explicit_source_ignores_process_environment() -> None:
+    from unittest.mock import patch
+
+    # GIVEN ambient and explicit values that differ
+    with patch(
+        "enshctl.config.environ",
+        {"ENSHROUDED_NAME": "Ambient", "ENSHROUDED_SAVE_DIRECTORY": "/ambient/saves"},
+    ):
+        # WHEN parsing an explicit mapping
+        result = env_to_dict({"ENSHROUDED_NAME": "Explicit"})
+    # THEN only the supplied mapping contributes
+    assert result == {"name": "Explicit"}
+
+
+def test_env_to_dict_ignores_empty_prefix_remainder() -> None:
+    # GIVEN a prefixed variable whose remainder is empty
+    # WHEN parsing it
+    # THEN it does not produce a config key
+    assert env_to_dict({"ENSHROUDED_": "ignored"}) == {}
+
+
+def test_env_to_dict_simple() -> None:
+    result = env_to_dict({"ENSHROUDED_NAME": "Test Server"})
+    assert result["name"] == "Test Server"
 
 
 def test_env_to_dict_snake_case_key() -> None:
-    environ["ENSHROUDED_SLOT_COUNT"] = "8"
-    try:
-        result = env_to_dict()
-        assert result["slotCount"] == 8
-    finally:
-        del environ["ENSHROUDED_SLOT_COUNT"]
+    result = env_to_dict({"ENSHROUDED_SLOT_COUNT": "8"})
+    assert result["slotCount"] == 8
 
 
 def test_env_to_dict_nested() -> None:
-    environ["ENSHROUDED_GAME_SETTINGS__IS_PVP"] = "true"
-    try:
-        result = env_to_dict()
-        assert result["gameSettings"]["isPvp"] is True
-    finally:
-        del environ["ENSHROUDED_GAME_SETTINGS__IS_PVP"]
+    result = env_to_dict({"ENSHROUDED_GAME_SETTINGS__IS_PVP": "true"})
+    assert result["gameSettings"]["isPvp"] is True
 
 
 def test_env_to_dict_ignores_non_enshrouded() -> None:
-    environ["SERVER_NAME"] = "ignored"
-    try:
-        result = env_to_dict()
-        assert "serverName" not in result
-    finally:
-        del environ["SERVER_NAME"]
+    result = env_to_dict({"SERVER_NAME": "ignored"})
+    assert result == {}
 
 
 def test_env_to_dict_mixed_case_prefix() -> None:
-    environ["Enshrouded_MIXED_case_TEST"] = "1"
-    try:
-        result = env_to_dict()
-        assert result["mixedCaseTest"] == 1
-    finally:
-        del environ["Enshrouded_MIXED_case_TEST"]
+    result = env_to_dict({"Enshrouded_MIXED_case_TEST": "1"})
+    assert result["mixedCaseTest"] == 1
 
 
 def test_resolve_array_overrides() -> None:
@@ -159,6 +170,38 @@ def test_resolve_array_overrides_nested() -> None:
     assert by_name["b"]["value"] == 2
 
 
+def test_generate_config_without_source_reads_process_environment() -> None:
+    from unittest.mock import patch
+
+    # GIVEN an ambient ENSHROUDED_* value and an empty base config
+    with (
+        patch("enshctl.config.environ", {"ENSHROUDED_NAME": "Ambient"}),
+        patch("enshctl.config.load_base_config", return_value={}),
+    ):
+        # WHEN generating without an explicit mapping
+        result = generate_config()
+    # THEN the ambient override is applied
+    assert result["name"] == "Ambient"
+
+
+def test_generate_config_with_explicit_source_ignores_process_environment() -> None:
+    from unittest.mock import patch
+
+    # GIVEN ambient values that differ from the supplied mapping
+    with (
+        patch(
+            "enshctl.config.environ",
+            {"ENSHROUDED_NAME": "Ambient", "ENSHROUDED_SAVE_DIRECTORY": "/ambient/saves"},
+        ),
+        patch("enshctl.config.load_base_config", return_value={}),
+    ):
+        # WHEN generating from an explicit mapping
+        result = generate_config({"ENSHROUDED_NAME": "Explicit"})
+    # THEN only the supplied mapping contributes
+    assert result["name"] == "Explicit"
+    assert result["saveDirectory"] == "/data/saves"
+
+
 def test_generate_config_remaps_relative_save_directory(caplog: pytest.LogCaptureFixture) -> None:
     from unittest.mock import patch
 
@@ -168,7 +211,7 @@ def test_generate_config_remaps_relative_save_directory(caplog: pytest.LogCaptur
         caplog.at_level("WARNING", logger="enshctl.config"),
     ):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config({})
     # THEN it remaps to the volume path with a warning naming the value
     assert result["saveDirectory"] == "/data/saves"
     assert "./savegame" in caplog.text
@@ -180,31 +223,31 @@ def test_generate_config_remaps_relative_log_directory() -> None:
     # GIVEN a base config with a relative logDirectory
     with patch("enshctl.config.load_base_config", return_value={"logDirectory": "logs"}):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config({})
     # THEN it remaps to the volume path
     assert result["logDirectory"] == "/data/logs"
 
 
-def test_generate_config_remaps_env_relative_save_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_config_remaps_env_relative_save_directory() -> None:
     from unittest.mock import patch
 
-    # GIVEN a relative save directory via env var
-    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "./savegame")
+    # GIVEN a relative save directory in the supplied mapping
+    source = {"ENSHROUDED_SAVE_DIRECTORY": "./savegame"}
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config(source)
     # THEN the env value is remapped, not passed through
     assert result["saveDirectory"] == "/data/saves"
 
 
-def test_generate_config_empty_save_directory_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_config_empty_save_directory_falls_back_to_default() -> None:
     from unittest.mock import patch
 
-    # GIVEN an empty save directory via env var
-    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "")
+    # GIVEN an empty save directory in the supplied mapping
+    source = {"ENSHROUDED_SAVE_DIRECTORY": ""}
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config(source)
     # THEN the default volume path is used, not the empty string
     assert result["saveDirectory"] == "/data/saves"
 
@@ -215,20 +258,22 @@ def test_generate_config_whitespace_base_save_directory_falls_back_to_default() 
     # GIVEN a whitespace-only save directory in the base config
     with patch("enshctl.config.load_base_config", return_value={"saveDirectory": "   "}):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config({})
     # THEN the default volume path is used
     assert result["saveDirectory"] == "/data/saves"
 
 
-def test_generate_config_keeps_absolute_custom_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_config_keeps_absolute_custom_paths() -> None:
     from unittest.mock import patch
 
-    # GIVEN absolute custom paths via env vars
-    monkeypatch.setenv("ENSHROUDED_SAVE_DIRECTORY", "/mnt/nfs/saves")
-    monkeypatch.setenv("ENSHROUDED_LOG_DIRECTORY", "/mnt/nfs/logs")
+    # GIVEN absolute custom paths in the supplied mapping
+    source = {
+        "ENSHROUDED_SAVE_DIRECTORY": "/mnt/nfs/saves",
+        "ENSHROUDED_LOG_DIRECTORY": "/mnt/nfs/logs",
+    }
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config()
+        result = generate_config(source)
     # THEN they pass through untouched
     assert result["saveDirectory"] == "/mnt/nfs/saves"
     assert result["logDirectory"] == "/mnt/nfs/logs"

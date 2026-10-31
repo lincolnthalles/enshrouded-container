@@ -1,13 +1,16 @@
-"""Dynamic Enshrouded server config generation from environment variables."""
+"""Dynamic Enshrouded server config generation from an environment mapping."""
 
 import json
 import logging
 import re
 from contextlib import suppress
 from os import chown, environ
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from enshctl.paths import CONFIG_FILE, GAME_CONFIG_EXAMPLE, LOG_DIR, OUTPUT_CONFIG, SAVE_DIR
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +77,13 @@ def _set_at(container: dict[str, Any] | list[Any], key: str, value: object) -> N
         container[key] = value
 
 
-def env_to_dict() -> dict[str, Any]:
-    """Parse ENSHROUDED_* env vars into a nested dict.
+def env_to_dict(source: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Parse ENSHROUDED_* values from an environment mapping into a nested dict.
+
+    Uses the process environment when `source` is omitted.
 
     Supports nested keys via double underscores (__):
-      ENSHROUDED_GAME_SETTINGS__IS_PVP=true -> {"gameSettings": {"isPVP": true}}
+      ENSHROUDED_GAME_SETTINGS__IS_PVP=true -> {"gameSettings": {"isPvp": true}}
 
     Supports array indexing via numeric segments:
       ENSHROUDED_USER_GROUPS__0__NAME=Admin -> {"userGroups": [{"name": "Admin"}]}
@@ -88,7 +93,7 @@ def env_to_dict() -> dict[str, Any]:
     """
     result: dict[str, Any] = {}
     prefix_re = re.compile(r"^enshrouded_", re.IGNORECASE)
-    for key, value in environ.items():
+    for key, value in (environ if source is None else source).items():
         if not prefix_re.match(key):
             continue
         stripped = prefix_re.sub("", key, count=1)
@@ -191,9 +196,13 @@ def _resolve_persisted_dir(key: str, value: object, default: str) -> str:
     return value
 
 
-def generate_config() -> dict[str, Any]:
+def generate_config(source: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Merge Base config with ENSHROUDED_* overrides from the given mapping.
+
+    Uses the process environment when `source` is omitted.
+    """
     base = load_base_config()
-    overrides = env_to_dict()
+    overrides = env_to_dict(source)
     config = deep_merge(base, overrides)
     _resolve_array_overrides(base, config)
     set_defaults(config)

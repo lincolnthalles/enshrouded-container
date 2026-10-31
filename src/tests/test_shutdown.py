@@ -4,7 +4,7 @@ import subprocess
 import threading
 from argparse import Namespace
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,8 +15,6 @@ from enshctl.settings import AppSettings
 
 
 def _settings(**kwargs: object) -> AppSettings:
-    from typing import Any, cast
-
     return replace(AppSettings(), **cast("dict[str, Any]", kwargs))
 
 
@@ -85,27 +83,28 @@ def test_shutdown_sigkills_stubborn_server_after_grace() -> None:
 def test_cold_and_emergency_backups_detached() -> None:
     import enshctl.commands.start as st
 
-    # GIVEN shutdown and emergency paths
-    with patch.object(st.subprocess, "run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
-        # WHEN a detached cold backup runs
-        st._run_backup(BackupRequest(category=Category.COLD, detach=True))
-        # THEN it survives the parent's process group
-        assert mock_run.call_args.kwargs["start_new_session"] is True
+    # GIVEN shutdown and emergency paths without ambient settings
+    with patch.object(st, "environ", {"PATH": "/usr/bin"}):
+        with patch.object(st.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+            # WHEN a detached cold backup runs
+            st._run_backup(BackupRequest(category=Category.COLD, detach=True))
+            # THEN it survives the parent's process group
+            assert mock_run.call_args.kwargs["start_new_session"] is True
 
-    with patch.object(st.subprocess, "run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
-        # WHEN a non-detached scheduled backup runs
-        st._run_backup()
-        # THEN it stays in the parent's process group
-        assert mock_run.call_args.kwargs["start_new_session"] is False
+        with patch.object(st.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+            # WHEN a non-detached scheduled backup runs
+            st._run_backup()
+            # THEN it stays in the parent's process group
+            assert mock_run.call_args.kwargs["start_new_session"] is False
 
-    with patch.object(st.subprocess, "run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
-        # WHEN a detached emergency backup runs
-        st._run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
-        # THEN it survives the parent's process group
-        assert mock_run.call_args.kwargs["start_new_session"] is True
+        with patch.object(st.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+            # WHEN a detached emergency backup runs
+            st._run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
+            # THEN it survives the parent's process group
+            assert mock_run.call_args.kwargs["start_new_session"] is True
 
 
 @pytest.mark.parametrize(
@@ -161,6 +160,9 @@ def test_run_backup_forwards_settings_env() -> None:
         "BACKUP_KEEP_LAST": "7",
         "PUID": "1001",
         "PGID": "1002",
+        "BACKUP_FUTURE_UNKNOWN": "nope",
+        "PERSIST_FILES": "world.db",
+        "WINEARCH": "win64",
         "STEAM_PASSWORD": "s3cret",
         "UNRELATED_SECRET": "nope",
     }
@@ -169,12 +171,16 @@ def test_run_backup_forwards_settings_env() -> None:
         # WHEN a backup subprocess is spawned
         with patch.object(st, "environ", source):
             st._run_backup()
-        # THEN the settings keys cross the seam but unrelated vars and secrets do not
+        # THEN the declared settings keys cross the seam but unknown and unrelated vars do not
         env = mock_run.call_args.kwargs["env"]
         assert env["BACKUP_DIR"] == "/mnt/nfs/backups"
         assert env["BACKUP_KEEP_LAST"] == "7"
         assert env["PUID"] == "1001"
         assert env["PGID"] == "1002"
+        assert env["ORCHESTRATOR_LOG_FILE"] == ""
+        assert "BACKUP_FUTURE_UNKNOWN" not in env
+        assert "PERSIST_FILES" not in env
+        assert "WINEARCH" not in env
         assert "UNRELATED_SECRET" not in env
         assert "STEAM_PASSWORD" not in env
 

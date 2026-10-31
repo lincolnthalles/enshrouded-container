@@ -31,7 +31,7 @@ from enshctl.paths import (
 )
 from enshctl.resources import start_resource_poller
 from enshctl.scheduling import parse_cron
-from enshctl.settings import AppSettings, load_settings
+from enshctl.settings import AppSettings, backup_child_env, load_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -156,15 +156,10 @@ def _stream_output(proc: subprocess.Popen[bytes]) -> None:
     proc.stdout.close()
 
 
-def _settings_env() -> dict[str, str]:
-    """Settings-bearing keys the backup child reloads — never whole `environ`."""
-    return {key: value for key, value in environ.items() if key.startswith("BACKUP_") or key in ("PUID", "PGID")}
-
-
 def _run_backup(request: BackupRequest | None = None) -> None:
     """Run a backup subprocess for the given request (live by default)."""
     request = request or BackupRequest()
-    env = {**_base_env(), **_settings_env(), "ORCHESTRATOR_LOG_FILE": ""}
+    env = {**_base_env(), **backup_child_env(environ), "ORCHESTRATOR_LOG_FILE": ""}
     try:
         cmd = ["enshctl", "backup", *request.to_argv()]
         result = subprocess.run(
