@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from enshctl.backup import (
     CATEGORIES,
+    ArchiveError,
     BackupFormat,
     BackupName,
     Category,
@@ -17,6 +18,7 @@ from enshctl.backup import (
     release_lock,
     resolve_format,
     resolve_level,
+    verify_archive,
 )
 from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
 from enshctl.disk_space import SpaceGuard
@@ -25,32 +27,6 @@ from enshctl.settings import AppSettings
 
 def _space(free: int) -> SpaceGuard:
     return SpaceGuard(disk_free=lambda _path: free)
-
-
-def test_backup_format_zstd() -> None:
-    fmt = BackupFormat.ZSTD
-    assert fmt.get_extension() == ".tar.zst"
-    assert fmt.get_max_level() == 22
-    assert fmt.clamp_level(19) == 19
-    assert fmt.clamp_level(25) == 22
-    assert fmt.clamp_level(0) == 0
-
-
-def test_backup_format_gzip() -> None:
-    fmt = BackupFormat.GZIP
-    assert fmt.get_extension() == ".tar.gz"
-    assert fmt.get_max_level() == 9
-    assert fmt.clamp_level(9) == 9
-    assert fmt.clamp_level(15) == 9
-    assert fmt.clamp_level(0) == 0
-
-
-def test_backup_format_zip() -> None:
-    fmt = BackupFormat.ZIP
-    assert fmt.get_extension() == ".zip"
-    assert fmt.get_max_level() == 9
-    assert fmt.clamp_level(3) == 3
-    assert fmt.clamp_level(12) == 9
 
 
 def test_parse_live_backup() -> None:
@@ -622,19 +598,16 @@ class TestCreateBackupDiskSpace:
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
-        with (
-            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
-            patch("enshctl.backup.format._compress_zstd") as mock_compress,
-        ):
+        with patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()):
             # WHEN creating a backup
             result = create_backup(
                 Category.LIVE,
                 BackupPlan.from_settings(settings, saves_dir=saves),
                 space=_space(5 * 1024**3),
             )
-            # THEN compression runs and a path returns
-            mock_compress.assert_called_once()
+            # THEN a valid archive is written
             assert result is not None
+            assert verify_archive(result) is True
 
     def test_backup_skipped_below_stop_threshold(
         self,
@@ -671,10 +644,7 @@ class TestCreateBackupDiskSpace:
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
-        with (
-            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
-            patch("enshctl.backup.format._compress_zstd") as mock_compress,
-        ):
+        with patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()):
             # WHEN creating a backup
             result = create_backup(
                 Category.LIVE,
@@ -682,8 +652,8 @@ class TestCreateBackupDiskSpace:
                 space=_space(1536 * 1024**2),
             )
             # THEN compression still runs
-            mock_compress.assert_called_once()
             assert result is not None
+            assert verify_archive(result) is True
 
         # AND a low-space warning was logged
         warnings = [r for r in caplog.records if r.levelno == 30 and "Disk space low" in r.message]
@@ -724,6 +694,77 @@ class TestCreateBackupDiskSpace:
         assert not (tmp_path / "backups" / Category.LIVE).exists()
 
 
+class TestCreateBackupCompressionFailure:
+    """Tests for handled archive failures during backup creation."""
+
+    def test_compression_failure_leaves_no_partial_backup(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
+
+        # GIVEN a save tree and a compressor that writes a partial file before failing
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+
+        def _fail_after_write(_self: BackupFormat, _source: Path, output: Path, _level: int) -> None:
+            output.write_bytes(b"partial")
+            msg = "disk full"
+            raise ArchiveError(msg)
+
+        with (
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
+            patch.object(BackupFormat, "compress", autospec=True, side_effect=_fail_after_write),
+            caplog.at_level("WARNING", logger="enshctl.backup.core"),
+        ):
+            # WHEN creating a backup
+            result = create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves),
+                space=_space(5 * 1024**3),
+            )
+
+        # THEN the failure is logged with the failed path and the partial Backup is removed
+        expected_path = tmp_path / "backups" / Category.LIVE / "enshrouded-20260531-120000.tar.zst"
+        assert any(str(expected_path) in record.message for record in caplog.records)
+        assert result is None
+        assert list((tmp_path / "backups" / Category.LIVE).iterdir()) == []
+
+    def test_value_error_failure_cleans_partial_and_propagates(self, tmp_path: Path) -> None:
+        from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
+
+        # GIVEN a save tree and a compressor that writes a partial file before a value error
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+
+        def _fail_after_write(_self: BackupFormat, _source: Path, output: Path, _level: int) -> None:
+            output.write_bytes(b"partial")
+            msg = "bad level"
+            raise ValueError(msg)
+
+        with (
+            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
+            patch.object(BackupFormat, "compress", autospec=True, side_effect=_fail_after_write),
+            pytest.raises(ValueError, match="bad level"),
+        ):
+            # WHEN creating a backup
+            create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves),
+                space=_space(5 * 1024**3),
+            )
+
+        # THEN the value error propagates as an error and the partial Backup is removed
+        assert list((tmp_path / "backups" / Category.LIVE).iterdir()) == []
+
+
 class TestCreateBackupOverrides:
     """Tests for create_backup() explicit format/level overrides."""
 
@@ -739,23 +780,17 @@ class TestCreateBackupOverrides:
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_format="gzip", backup_level=6)
+        plan = BackupPlan.from_settings(settings, saves_dir=saves, fmt=BackupFormat.ZSTD)
 
-        with (
-            patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
-            patch("enshctl.backup.format._compress_zstd") as mock_zstd,
-            patch("enshctl.backup.format._compress_gzip") as mock_gzip,
-        ):
+        with patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()):
             # WHEN creating a backup with an explicit format
-            result = create_backup(
-                Category.LIVE,
-                BackupPlan.from_settings(settings, saves_dir=saves, fmt=BackupFormat.ZSTD),
-                space=_space(5 * 1024**3),
-            )
-            # THEN the explicit format's compressor runs
-            mock_zstd.assert_called_once()
-            mock_gzip.assert_not_called()
-            assert result is not None
-            assert result.suffixes == [".tar", ".zst"]
+            result = create_backup(Category.LIVE, plan, space=_space(5 * 1024**3))
+
+        # THEN the explicit format wins and the archive is valid
+        assert plan.fmt is BackupFormat.ZSTD
+        assert result is not None
+        assert result.suffixes == [".tar", ".zst"]
+        assert verify_archive(result) is True
 
     def test_explicit_level_zero_honored(
         self,
@@ -769,40 +804,34 @@ class TestCreateBackupOverrides:
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_level=9)
+        plan = BackupPlan.from_settings(settings, saves_dir=saves, level=0)
 
         with (
             patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
-            patch("enshctl.backup.format._compress_zstd") as mock_compress,
+            patch.object(BackupFormat, "compress", autospec=True, wraps=BackupFormat.compress) as mock_compress,
         ):
             # WHEN creating a backup with explicit level 0
-            result = create_backup(
-                Category.LIVE,
-                BackupPlan.from_settings(settings, saves_dir=saves, level=0),
-                space=_space(5 * 1024**3),
-            )
-            # THEN level 0 reaches the compressor, not the configured 9
-            mock_compress.assert_called_once_with(saves, result, 0)
-            assert result is not None
+            result = create_backup(Category.LIVE, plan, space=_space(5 * 1024**3))
+
+        # THEN level 0 reaches compression instead of the configured 9 and the archive is valid
+        assert result is not None
+        assert plan.level == 0
+        mock_compress.assert_called_once_with(BackupFormat.ZSTD, saves, result, 0)
+        assert verify_archive(result) is True
 
 
 @pytest.mark.parametrize("category", CATEGORIES)
 def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Category) -> None:
     from enshctl.backup.core import BackupPlan
 
-    # GIVEN a fixed clock, save data, and a compressor that writes a file
+    # GIVEN a fixed clock and save data
     saves = tmp_path / "saves"
     saves.mkdir()
     (saves / "world.db").write_bytes(b"data")
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
     timestamp = datetime(2026, 5, 31, 12, 0, 0).astimezone()
 
-    def _write_empty(_source: Path, output: Path, _level: int) -> None:
-        output.write_bytes(b"")
-
-    with (
-        patch("enshctl.backup.catalog._local_now", return_value=timestamp),
-        patch("enshctl.backup.format._compress_zstd", side_effect=_write_empty),
-    ):
+    with patch("enshctl.backup.catalog._local_now", return_value=timestamp):
         # WHEN creating a backup in the Category
         created = create_backup(
             category,
@@ -875,3 +904,24 @@ class TestBackupRunnerFormatFlag:
         ):
             br.main()
         assert exc.value.code == 2
+
+    def test_value_error_reports_error_outcome(self, tmp_path: Path) -> None:
+        import enshctl.backup_runner as br
+        from enshctl.backup_protocol import BackupOutcome
+
+        # GIVEN a backup whose compression raises a value error
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        with (
+            patch("sys.argv", ["prog"]),
+            patch.object(br, "_lower_priority"),
+            patch.object(br, "load_settings", return_value=settings),
+            patch.object(br, "generated_save_dir", return_value=tmp_path / "saves"),
+            patch.object(br, "acquire_lock", return_value=3),
+            patch.object(br, "create_backup", side_effect=ValueError("bad level")),
+            patch.object(br, "release_lock"),
+        ):
+            # WHEN running the backup runner
+            result = br.main()
+
+        # THEN the value error maps to the error outcome
+        assert result == BackupOutcome.ERROR

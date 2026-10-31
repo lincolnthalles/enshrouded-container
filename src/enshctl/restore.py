@@ -4,7 +4,7 @@ import logging
 import shutil
 from typing import TYPE_CHECKING
 
-from enshctl.backup import ARCHIVE_ERRORS, decompress_archive
+from enshctl.backup import ArchiveError, decompress_archive
 from enshctl.disk_space import SpaceVerdict
 from enshctl.utils import human_size
 
@@ -57,7 +57,10 @@ def restore_backup(
     space: SpaceGuard,
     extract: Callable[[Path, Path], None] = decompress_archive,
 ) -> None:
-    """Extract to temp, verify space, clear saves, move, cleanup."""
+    """Extract to temp, verify space, clear saves, move, cleanup.
+
+    The extract callable raises ArchiveError when extraction fails.
+    """
     if saves_dir.is_symlink():
         logger.error("Restore refuses symlinked saves directory %s", saves_dir)
         raise RestoreError
@@ -81,7 +84,7 @@ def restore_backup(
     logger.info("Extracting backup to temporary directory...")
     try:
         extract(backup_path, tmp_dir)
-    except (*ARCHIVE_ERRORS, ValueError):
+    except ArchiveError:
         logger.exception("Restore extraction failed")
         free = space.disk_free(tmp_dir)
         logger.exception(

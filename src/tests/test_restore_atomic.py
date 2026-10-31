@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from enshctl.backup import ArchiveError
 from enshctl.disk_space import SpaceGuard
 from enshctl.restore import RestoreError, restore_backup
 
@@ -52,7 +53,7 @@ class TestRestoreAtomicSwap:
 
         def _fail(_src: Path, _dst: Path) -> None:
             msg = "ENOSPC"
-            raise OSError(msg)
+            raise ArchiveError(msg)
 
         # WHEN restoring
         with pytest.raises(RestoreError):
@@ -325,6 +326,25 @@ class TestRestoreAtomicSwap:
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
         assert not tmp_dir.exists(), "tmp should be cleaned up on corrupt zip"
+
+    def test_unknown_suffix_cleans_tmp_and_aborts(self, tmp_path: Path) -> None:
+        # GIVEN a backup whose suffix matches no known format
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"old")
+        backup_path = tmp_path / "backup.bin"
+        backup_path.write_bytes(b"not an archive")
+        tmp_dir = tmp_path / "saves-restore-tmp"
+
+        # WHEN restoring the unreadable archive with the real extractor
+        with pytest.raises(RestoreError):
+            restore_backup(
+                backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3)
+            )
+
+        # THEN saves are untouched and tmp is cleaned up
+        assert (saves_dir / "old_save.db").read_bytes() == b"old"
+        assert not tmp_dir.exists(), "tmp should be cleaned up on unreadable format"
 
     def test_swap_failure_cleans_tmp_and_raises(self, tmp_path: Path) -> None:
         from unittest.mock import patch

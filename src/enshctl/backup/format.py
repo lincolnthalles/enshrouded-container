@@ -1,58 +1,46 @@
-"""Backup format registry — one home for extensions, levels, and archive operations."""
+"""Backup format registry — one home for extensions, levels, detection, and archive operations."""
 
 import gzip
 import logging
 import tarfile
 import zipfile
+import zlib
 from enum import Enum
 from typing import TYPE_CHECKING
 
 import zstandard
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_ERRORS: tuple[type[BaseException], ...] = (
+
+class ArchiveError(Exception):
+    """Raised for expected archive-format and I/O failures.
+
+    Compression value errors are deliberately not handled here; they propagate
+    so the backup run reports an error.
+    """
+
+
+_ARCHIVE_ERRORS: tuple[type[BaseException], ...] = (
     OSError,
     EOFError,
     tarfile.TarError,
     zstandard.ZstdError,
     zipfile.BadZipFile,
+    zlib.error,
+)
+
+_READ_ERRORS: tuple[type[BaseException], ...] = (
+    *_ARCHIVE_ERRORS,
+    ValueError,
+    RuntimeError,
+    NotImplementedError,
 )
 
 _CHUNK = 65536
-
-
-def _compress_zstd(source_dir: Path, output_path: Path, level: int) -> None:
-    cctx = zstandard.ZstdCompressor(level=level)
-    logger.info("Creating zstd backup at level %d", level)
-    with (
-        output_path.open("wb") as f_out,
-        cctx.stream_writer(f_out) as compressor,
-        tarfile.open(fileobj=compressor, mode="w|") as tar,
-    ):
-        tar.add(str(source_dir), arcname=".")
-
-
-def _compress_gzip(source_dir: Path, output_path: Path, level: int) -> None:
-    logger.info("Creating gzip backup at level %d", level)
-    with (
-        output_path.open("wb") as f_out,
-        gzip.GzipFile(fileobj=f_out, mode="wb", compresslevel=level) as gz,
-        tarfile.open(fileobj=gz, mode="w|") as tar,
-    ):
-        tar.add(str(source_dir), arcname=".")
-
-
-def _compress_zip(source_dir: Path, output_path: Path, level: int) -> None:
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
-        for file_path in source_dir.rglob("*"):
-            if file_path.is_file():
-                arcname = str(file_path.relative_to(source_dir))
-                zf.write(file_path, arcname)
 
 
 def _extract_tar(tar: tarfile.TarFile, target_dir: Path) -> None:
@@ -64,34 +52,6 @@ def _extract_tar(tar: tarfile.TarFile, target_dir: Path) -> None:
         tar.extract(member, path=str(target_dir))
 
 
-def _decompress_zstd(archive_path: Path, target_dir: Path) -> None:
-    dctx = zstandard.ZstdDecompressor()
-    with (
-        archive_path.open("rb") as f_in,
-        dctx.stream_reader(f_in) as decompressor,
-        tarfile.open(fileobj=decompressor, mode="r|") as tar,
-    ):
-        _extract_tar(tar, target_dir)
-
-
-def _decompress_gzip(archive_path: Path, target_dir: Path) -> None:
-    with (
-        archive_path.open("rb") as f_in,
-        gzip.GzipFile(fileobj=f_in, mode="rb") as gz,
-        tarfile.open(fileobj=gz, mode="r|") as tar,
-    ):
-        _extract_tar(tar, target_dir)
-
-
-def _decompress_zip(archive_path: Path, target_dir: Path) -> None:
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        for info in zf.infolist():
-            info.filename = info.filename.removeprefix("saves/")
-            if not info.filename:
-                continue
-            zf.extract(info, path=str(target_dir))
-
-
 def _verify_tar_stream(tar: tarfile.TarFile) -> None:
     """Read every member's data to EOF to verify archive integrity."""
     for member in tar:
@@ -100,32 +60,6 @@ def _verify_tar_stream(tar: tarfile.TarFile) -> None:
             if f:
                 while f.read(_CHUNK):
                     pass
-
-
-def _verify_zstd(path: Path) -> bool:
-    dctx = zstandard.ZstdDecompressor()
-    with path.open("rb") as f_in, dctx.stream_reader(f_in) as reader, tarfile.open(fileobj=reader, mode="r|") as tar:
-        _verify_tar_stream(tar)
-    return True
-
-
-def _verify_gzip(path: Path) -> bool:
-    with (
-        path.open("rb") as f_in,
-        gzip.GzipFile(fileobj=f_in, mode="rb") as gz,
-        tarfile.open(fileobj=gz, mode="r|") as tar,
-    ):
-        _verify_tar_stream(tar)
-    return True
-
-
-def _verify_zip(path: Path) -> bool:
-    with zipfile.ZipFile(path, "r") as zf:
-        bad = zf.testzip()
-        if bad is not None:
-            logger.warning("Zip verification failed for member: %s", bad)
-            return False
-    return True
 
 
 class BackupFormat(Enum):
@@ -169,32 +103,95 @@ class BackupFormat(Enum):
             case BackupFormat.ZIP:
                 return 6
 
-    def compress(self) -> Callable[[Path, Path, int], None]:
-        match self:
-            case BackupFormat.ZSTD:
-                return _compress_zstd
-            case BackupFormat.GZIP:
-                return _compress_gzip
-            case BackupFormat.ZIP:
-                return _compress_zip
+    def compress(self, source_dir: Path, output_path: Path, level: int) -> None:
+        try:
+            match self:
+                case BackupFormat.ZSTD:
+                    cctx = zstandard.ZstdCompressor(level=level)
+                    logger.info("Creating zstd backup at level %d", level)
+                    with (
+                        output_path.open("wb") as f_out,
+                        cctx.stream_writer(f_out) as compressor,
+                        tarfile.open(fileobj=compressor, mode="w|") as tar,
+                    ):
+                        tar.add(str(source_dir), arcname=".")
+                case BackupFormat.GZIP:
+                    logger.info("Creating gzip backup at level %d", level)
+                    with (
+                        output_path.open("wb") as f_out,
+                        gzip.GzipFile(fileobj=f_out, mode="wb", compresslevel=level) as gz,
+                        tarfile.open(fileobj=gz, mode="w|") as tar,
+                    ):
+                        tar.add(str(source_dir), arcname=".")
+                case BackupFormat.ZIP:
+                    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
+                        for file_path in source_dir.rglob("*"):
+                            if file_path.is_file():
+                                arcname = str(file_path.relative_to(source_dir))
+                                zf.write(file_path, arcname)
+        except _ARCHIVE_ERRORS as exc:
+            msg = f"{self.value} compression failed: {exc}"
+            raise ArchiveError(msg) from exc
 
-    def decompress(self) -> Callable[[Path, Path], None]:
-        match self:
-            case BackupFormat.ZSTD:
-                return _decompress_zstd
-            case BackupFormat.GZIP:
-                return _decompress_gzip
-            case BackupFormat.ZIP:
-                return _decompress_zip
+    def decompress(self, archive_path: Path, target_dir: Path) -> None:
+        try:
+            match self:
+                case BackupFormat.ZSTD:
+                    dctx = zstandard.ZstdDecompressor()
+                    with (
+                        archive_path.open("rb") as f_in,
+                        dctx.stream_reader(f_in) as decompressor,
+                        tarfile.open(fileobj=decompressor, mode="r|") as tar,
+                    ):
+                        _extract_tar(tar, target_dir)
+                case BackupFormat.GZIP:
+                    with (
+                        archive_path.open("rb") as f_in,
+                        gzip.GzipFile(fileobj=f_in, mode="rb") as gz,
+                        tarfile.open(fileobj=gz, mode="r|") as tar,
+                    ):
+                        _extract_tar(tar, target_dir)
+                case BackupFormat.ZIP:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        for info in zf.infolist():
+                            info.filename = info.filename.removeprefix("saves/")
+                            if not info.filename:
+                                continue
+                            zf.extract(info, path=str(target_dir))
+        except _READ_ERRORS as exc:
+            msg = f"{self.value} extraction failed: {exc}"
+            raise ArchiveError(msg) from exc
 
-    def verify(self) -> Callable[[Path], bool]:
-        match self:
-            case BackupFormat.ZSTD:
-                return _verify_zstd
-            case BackupFormat.GZIP:
-                return _verify_gzip
-            case BackupFormat.ZIP:
-                return _verify_zip
+    def verify(self, archive_path: Path) -> bool:
+        try:
+            match self:
+                case BackupFormat.ZSTD:
+                    dctx = zstandard.ZstdDecompressor()
+                    with (
+                        archive_path.open("rb") as f_in,
+                        dctx.stream_reader(f_in) as reader,
+                        tarfile.open(fileobj=reader, mode="r|") as tar,
+                    ):
+                        _verify_tar_stream(tar)
+                    return True
+                case BackupFormat.GZIP:
+                    with (
+                        archive_path.open("rb") as f_in,
+                        gzip.GzipFile(fileobj=f_in, mode="rb") as gz,
+                        tarfile.open(fileobj=gz, mode="r|") as tar,
+                    ):
+                        _verify_tar_stream(tar)
+                    return True
+                case BackupFormat.ZIP:
+                    with zipfile.ZipFile(archive_path, "r") as zf:
+                        bad = zf.testzip()
+                        if bad is not None:
+                            logger.warning("Zip verification failed for member: %s", bad)
+                            return False
+                    return True
+        except _READ_ERRORS as exc:
+            logger.warning("Verification failed for %s: %s", archive_path, exc)
+            return False
 
 
 ARCHIVE_EXTENSIONS: tuple[str, ...] = tuple(fmt.get_extension() for fmt in BackupFormat)
@@ -212,3 +209,25 @@ def detect_format(path: Path) -> BackupFormat:
             return fmt
     msg = f"Cannot detect backup format for {path}"
     raise ValueError(msg)
+
+
+def decompress_archive(archive_path: Path, target_dir: Path) -> None:
+    """Extract a Backup archive, raising ArchiveError when it cannot be read."""
+    try:
+        fmt = detect_format(archive_path)
+    except ValueError as exc:
+        raise ArchiveError(str(exc)) from exc
+    fmt.decompress(archive_path, target_dir)
+
+
+def verify_archive(archive_path: Path) -> bool:
+    """Stream all members to EOF to verify archive integrity.
+
+    Returns True if intact, False if corrupt.
+    """
+    try:
+        fmt = detect_format(archive_path)
+    except ValueError as exc:
+        logger.warning("Verification failed for %s: %s", archive_path, exc)
+        return False
+    return fmt.verify(archive_path)

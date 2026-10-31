@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from enshctl.backup.archive import ARCHIVE_ERRORS
 from enshctl.backup.catalog import BackupName
-from enshctl.backup.format import BackupFormat
+from enshctl.backup.format import ArchiveError, BackupFormat
 from enshctl.utils import human_size
 
 if TYPE_CHECKING:
@@ -116,15 +115,18 @@ def create_backup(
     name = BackupName.now(category, plan.fmt)
     output_path = backup_dir / name.to_filename()
 
-    compress = plan.fmt.compress()
-
+    is_complete = False
     try:
-        compress(saves_dir, output_path, plan.level)
-    except ARCHIVE_ERRORS as exc:
+        plan.fmt.compress(saves_dir, output_path, plan.level)
+    except ArchiveError as exc:
         logger.warning("Backup failed for %s: %s", output_path, exc)
-        with suppress(OSError):
-            output_path.unlink()
         return None
     else:
-        logger.info("Backup created: %s", output_path)
-        return output_path
+        is_complete = True
+    finally:
+        if not is_complete:
+            with suppress(OSError):
+                output_path.unlink()
+
+    logger.info("Backup created: %s", output_path)
+    return output_path

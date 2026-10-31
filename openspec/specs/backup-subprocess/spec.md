@@ -75,6 +75,11 @@ The backup process SHALL exit 0 on success, 1 when lock-held, 2 on error. The pa
 - **WHEN** compression fails with a handled archive error while writing a Backup
 - **THEN** the partial file SHALL NOT remain, the failure SHALL be logged naming the failed path, and the run SHALL still report success
 
+#### Scenario: Unhandled compression failure cleans partial and reports error
+
+- **WHEN** compression fails with a value error outside handled archive errors
+- **THEN** the partial file SHALL NOT remain and the run SHALL exit with code 2
+
 #### Scenario: Error outside compression reports error
 
 - **WHEN** the backup process hits an I/O or value error outside handled archive errors (e.g. the Category directory cannot be created)
