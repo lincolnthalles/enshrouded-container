@@ -2,13 +2,14 @@
 
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 from enshctl import install
 from enshctl.disk_space import SpaceGuard
-from enshctl.download import InstallError
-from enshctl.install import DownloadDeps, InstallEnv
+from enshctl.download import DownloadIO, HostIO, InstallError, download_version
+from enshctl.paths import DEPOT_ID, STATUS_FILE
 from enshctl.settings import AppSettings
 
 
@@ -16,25 +17,31 @@ def _settings(**overrides: object) -> AppSettings:
     return replace(AppSettings(), **overrides)  # type: ignore[arg-type]
 
 
+def _host(free: int = 12 * 1024**3) -> MagicMock:
+    host = MagicMock(spec=HostIO)
+    host.space = SpaceGuard(disk_free=lambda _p: free)
+    host.is_file.side_effect = Path.is_file
+    host.is_symlink.side_effect = Path.is_symlink
+    host.mkdir.side_effect = lambda path: path.mkdir(parents=True, exist_ok=True)
+    host.touch.side_effect = Path.touch
+    return host
+
+
+def _download() -> MagicMock:
+    download = MagicMock(spec=DownloadIO)
+    download.check_manifest_support.return_value = True
+    download.discover_depots.return_value = [(DEPOT_ID, "12345")]
+
+    def _write_exe(_mid: str, target: Path, _config: object, _pinned: object = None) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "enshrouded_server.exe").write_bytes(b"")
+
+    download.download_depots.side_effect = _write_exe
+    return download
+
+
 class TestDownloadVersionQuota:
     """Tests for download_version() disk space checks."""
-
-    def _env(self, free: int) -> InstallEnv:
-        return InstallEnv(
-            space=SpaceGuard(disk_free=lambda _p: free),
-            chown=lambda *_args, **_kwargs: None,
-            chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
-        )
-
-    def _deps(self, **overrides: object) -> DownloadDeps:
-        base: dict[str, object] = {
-            "hub_download": lambda _a, _b, _c, _d, _e: Path("/nonexistent"),
-            "support": lambda: False,
-            "depot_download": lambda _mid, _target, _config, _pinned=None: None,
-            "discover": lambda: [("2278521", "12345")],
-        }
-        base.update(overrides)
-        return DownloadDeps(**base)  # type: ignore[arg-type]
 
     def test_install_quota_sufficient_space(
         self,
@@ -46,18 +53,13 @@ class TestDownloadVersionQuota:
         target_dir.mkdir(parents=True)
         (target_dir / "enshrouded_server.exe").write_bytes(b"")
 
-        def _fake_hub_download(_a: str, _b: str, _c: Path, _d: str, _e: str) -> Path:
-            path = manifests_dir / "existing.manifest"
-            path.write_bytes(b"")
-            return path
-
         # WHEN downloading with sufficient space
-        result = install.download_version(
+        result = download_version(
             "999",
             _settings(version="999", force_install=True),
             manifests_dir=manifests_dir,
-            env=self._env(12 * 1024**3),
-            download=self._deps(hub_download=_fake_hub_download),
+            host=cast("HostIO", _host(12 * 1024**3)),
+            source=cast("DownloadIO", _download()),
         )
 
         # THEN the install completes
@@ -73,11 +75,12 @@ class TestDownloadVersionQuota:
         # WHEN downloading without enough space
         # THEN the install aborts
         with pytest.raises(InstallError):
-            install.download_version(
+            download_version(
                 "999",
                 _settings(version="999", force_install=True),
                 manifests_dir=manifests_dir,
-                env=self._env(8 * 1024**3),
+                host=cast("HostIO", _host(8 * 1024**3)),
+                source=cast("DownloadIO", _download()),
             )
 
     def test_install_quota_same_manifest_partial_counts(
@@ -93,12 +96,12 @@ class TestDownloadVersionQuota:
 
         # WHEN the threshold sits just above free but below free+partial
         # THEN the download proceeds
-        result = install.download_version(
+        result = download_version(
             "999",
             _settings(version="999", force_install=True, min_free_space=9 * 1024**3 + 1),
             manifests_dir=manifests_dir,
-            env=self._env(9 * 1024**3),
-            download=self._deps(),
+            host=cast("HostIO", _host(9 * 1024**3)),
+            source=cast("DownloadIO", _download()),
         )
 
         # THEN the partial data counted toward the quota
@@ -118,23 +121,129 @@ class TestDownloadVersionQuota:
         # WHEN downloading with insufficient space
         # THEN the install aborts
         with pytest.raises(InstallError):
-            install.download_version(
+            download_version(
                 "999",
                 _settings(version="999", force_install=True),
                 manifests_dir=manifests_dir,
-                env=self._env(7 * 1024**3),
+                host=cast("HostIO", _host(7 * 1024**3)),
+                source=cast("DownloadIO", _download()),
             )
 
 
-def test_ensure_install_forwards_manifests_dir(tmp_path: Path) -> None:
-    from unittest.mock import patch
-
-    # GIVEN a custom manifests directory
+def test_ensure_install_uses_custom_manifests_dir_and_seams(tmp_path: Path) -> None:
+    # GIVEN a custom manifests directory and injected host/download adapters
     settings = _settings(version="999")
-    with patch("enshctl.install.download_version", return_value=tmp_path / "target") as mock_download:
-        # WHEN ensuring an install
-        result = install.ensure_install(settings, manifests_dir=tmp_path, resolve=lambda _spec: "999")
+    host = _host()
+    download = _download()
+    manifests_dir = tmp_path / "manifests"
 
-    # THEN the download receives the same manifests directory
-    assert result == tmp_path / "target"
-    mock_download.assert_called_once_with("999", settings, manifests_dir=tmp_path)
+    # WHEN ensuring the install
+    result = install.ensure_install(
+        settings,
+        manifests_dir=manifests_dir,
+        resolve=lambda _spec: "999",
+        host=cast("HostIO", host),
+        source=cast("DownloadIO", download),
+    )
+
+    # THEN the exact version directory is downloaded through the injected seams
+    assert result == manifests_dir / "999"
+    download.download_depots.assert_called_once()
+    host.chown.assert_called_once()
+
+
+class TestDownloadVersionLifecycle:
+    """Tests for the installed marker and ownership behavior."""
+
+    def test_installed_version_skips_download(self, tmp_path: Path) -> None:
+        # GIVEN an installed version marker and server binary
+        manifests_dir = tmp_path / "manifests"
+        target_dir = manifests_dir / "999"
+        target_dir.mkdir(parents=True)
+        (target_dir / STATUS_FILE).write_bytes(b"")
+        (target_dir / "enshrouded_server.exe").write_bytes(b"")
+        host = _host()
+        download = _download()
+
+        # WHEN downloading without force
+        result = download_version(
+            "999",
+            _settings(version="999"),
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", download),
+        )
+
+        # THEN no download, probe, or ownership work runs
+        assert result == target_dir
+        download.download_depots.assert_not_called()
+        download.check_manifest_support.assert_not_called()
+        host.chown.assert_not_called()
+
+    def test_missing_server_binary_fails_without_marker(self, tmp_path: Path) -> None:
+        # GIVEN a download that produces no server binary
+        manifests_dir = tmp_path / "manifests"
+        host = _host()
+        download = _download()
+        download.download_depots.side_effect = None
+
+        # WHEN downloading
+        # THEN the install fails before writing the marker
+        with pytest.raises(InstallError, match="not found"):
+            download_version(
+                "999",
+                _settings(version="999", force_install=True, min_free_space=0),
+                manifests_dir=manifests_dir,
+                host=cast("HostIO", host),
+                source=cast("DownloadIO", download),
+            )
+        assert not (manifests_dir / "999" / STATUS_FILE).exists()
+
+    def test_chown_failure_is_install_error(self, tmp_path: Path) -> None:
+        # GIVEN a host that cannot change ownership
+        host = _host()
+        host.chown.side_effect = OSError("boom")
+
+        # WHEN downloading
+        # THEN the ownership failure is a descriptive install error
+        with pytest.raises(InstallError, match="ownership"):
+            download_version(
+                "999",
+                _settings(version="999", force_install=True, min_free_space=0),
+                manifests_dir=tmp_path / "manifests",
+                host=cast("HostIO", host),
+                source=cast("DownloadIO", _download()),
+            )
+
+    def test_chown_targets_only_version_dir(self, tmp_path: Path) -> None:
+        # GIVEN a successful download
+        manifests_dir = tmp_path / "manifests"
+        target_dir = manifests_dir / "999"
+        host = _host()
+        settings = _settings(version="999", force_install=True, min_free_space=0)
+
+        # WHEN downloading
+        download_version(
+            "999",
+            settings,
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", _download()),
+        )
+
+        # THEN only the version directory is chowned
+        host.chown.assert_called_once_with(target_dir, uid=settings.puid, gid=settings.pgid)
+
+
+def test_system_host_make_readonly(tmp_path: Path) -> None:
+    from enshctl.download.io import SystemHostIO
+
+    # GIVEN a system host adapter
+    host = SystemHostIO()
+
+    # WHEN marking an install read-only
+    with patch("enshctl.download.io.subprocess.run") as mock_run:
+        host.make_readonly(tmp_path)
+
+    # THEN chmod runs recursively on that path
+    mock_run.assert_called_once_with(["chmod", "-R", "a-w", str(tmp_path)], check=False)

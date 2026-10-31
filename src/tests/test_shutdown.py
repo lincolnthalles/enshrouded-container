@@ -70,7 +70,7 @@ def test_prepare_install_and_config_creates_custom_save_dir(tmp_path: Path) -> N
     target.name = "999"
 
     with (
-        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.download_flow, "prepare_manifests"),
         patch.object(st.install, "ensure_install", return_value=target),
         patch.object(st.mods, "build_game_tree"),
         patch.object(st.config, "generate_config", return_value={"saveDirectory": str(saves)}),
@@ -96,7 +96,7 @@ def test_prepare_install_and_config_rewrites_unsafe_save_dir(tmp_path: Path) -> 
     new_config = {"saveDirectory": "/data"}
 
     with (
-        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.download_flow, "prepare_manifests"),
         patch.object(st.install, "ensure_install", return_value=target),
         patch.object(st.mods, "build_game_tree"),
         patch.object(st.config, "generate_config", return_value=new_config),
@@ -126,7 +126,7 @@ def test_prepare_install_and_config_warns_on_ownership_failure(
     target.name = "999"
 
     with (
-        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.download_flow, "prepare_manifests"),
         patch.object(st.install, "ensure_install", return_value=target),
         patch.object(st.mods, "build_game_tree"),
         patch.object(st.config, "generate_config", return_value={"saveDirectory": str(saves)}),

@@ -1,11 +1,11 @@
-"""DepotDownloader download orchestration — shared depot-iteration loop."""
+"""DepotDownloader invocation — depot discovery and per-depot execution."""
 
 import logging
 import re
 import subprocess
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from enshctl.download.types import DownloadConfig, InstallError
 from enshctl.paths import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, MANIFEST_TMP_DIR
 
 if TYPE_CHECKING:
@@ -13,28 +13,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-class InstallError(Exception):
-    """Raised when game installation cannot be completed."""
-
-
 DEPOT_KEY_PATTERN = re.compile(r"Got depot key for (\d+) result: OK")
 MANIFEST_PATTERN = re.compile(r"Manifest\s+(\d+)\s+\((\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})\)")
-
-
-@dataclass(frozen=True)
-class DownloadConfig:
-    """Strategy-specific parameters for DepotDownloader invocation."""
-
-    username: str | None = None
-    password: str | None = None
-    use_manifestfile: bool = False
-    depot_keys_path: Path | None = None
-    manifest_file: Path | None = None
-    use_qr: bool = False
-    print_qr_message: bool = False
-    timeout: int = 3600
-    max_downloads: int = 8
 
 
 def discover_depots() -> list[tuple[str, str]]:
@@ -56,8 +36,7 @@ def discover_depots() -> list[tuple[str, str]]:
     output = result.stdout + result.stderr
     depot_ids = DEPOT_KEY_PATTERN.findall(output)
     if not depot_ids:
-        logger.warning("No depots discovered, falling back to default depot %s", DEPOT_ID)
-        return [(DEPOT_ID, "")]
+        return []
 
     depot_manifests: list[tuple[str, str]] = []
     for depot_id in depot_ids:
@@ -86,7 +65,7 @@ def discover_depots() -> list[tuple[str, str]]:
     return depot_manifests
 
 
-def _with_manifest_override(
+def with_manifest_override(
     depot_manifests: list[tuple[str, str]],
     manifest_id: str,
 ) -> list[tuple[str, str]]:
@@ -113,7 +92,7 @@ def download_depots(
         )
 
     depot_manifests = (
-        _with_manifest_override(discover_depots(), manifest_id) if depot_manifests is None else depot_manifests
+        with_manifest_override(discover_depots(), manifest_id) if depot_manifests is None else depot_manifests
     )
 
     strategy_label = (
@@ -155,14 +134,13 @@ def download_depots(
         if config.use_qr:
             depot_cmd.append("-qr")
 
-        logger.info("Downloading depot %s (%s)...", depot_id, strategy_label)
+        logger.info("Downloading depot %s (%s)…", depot_id, strategy_label)
 
         try:
             result = subprocess.run(depot_cmd, check=False, timeout=config.timeout)
         except subprocess.TimeoutExpired as e:
             msg = f"DepotDownloader timed out ({config.timeout}s) for depot {depot_id}"
             raise InstallError(msg) from e
-        else:
-            if result.returncode != 0:
-                msg = f"DepotDownloader exited with code {result.returncode} for depot {depot_id}"
-                raise InstallError(msg)
+        if result.returncode != 0:
+            msg = f"DepotDownloader exited with code {result.returncode} for depot {depot_id}"
+            raise InstallError(msg)

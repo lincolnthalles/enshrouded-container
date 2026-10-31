@@ -12,10 +12,11 @@ from os import chown, environ
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from enshctl import backup, config, install, mods
+from enshctl import backup, config, download as download_flow, install, mods
 from enshctl.backup.category import Category
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.download import InstallError
+from enshctl.files import chown_tree
 from enshctl.paths import (
     BACKUP_BASE_DIR,
     CONFIG_DIR,
@@ -105,10 +106,7 @@ def _setup_directories(settings: AppSettings) -> None:
     for p in paths:
         p.mkdir(parents=True, exist_ok=True)
         with suppress(OSError):
-            chown(p, uid, gid)
-        for child in p.rglob("*"):
-            with suppress(OSError):
-                chown(child, uid, gid)
+            chown_tree(p, uid=uid, gid=gid)
 
 
 def _setup_x11_socket() -> None:
@@ -119,7 +117,7 @@ def _setup_x11_socket() -> None:
 
 def _prepare_install_and_config(settings: AppSettings) -> None:
     try:
-        install.prepare_manifests(settings)
+        download_flow.prepare_manifests(settings)
         target = install.ensure_install(settings)
     except InstallError:
         logger.exception("Start failed")

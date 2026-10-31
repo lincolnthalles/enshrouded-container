@@ -5,7 +5,8 @@ import logging
 import subprocess
 from typing import TYPE_CHECKING
 
-from enshctl.download import MANIFEST_PATTERN, InstallError
+from enshctl.download.runner import MANIFEST_PATTERN
+from enshctl.download.types import InstallError
 from enshctl.paths import APP_ID, DEPOT_DOWNLOADER, DEPOT_ID, LATEST_MANIFEST_FILE, MANIFEST_TMP_DIR
 
 if TYPE_CHECKING:
@@ -172,6 +173,9 @@ def resolve_manifest(
 
     if version_spec.startswith("build:"):
         build_id = version_spec.removeprefix("build:")
+        if not build_id:
+            msg = "Build ID is empty"
+            raise InstallError(msg)
         try:
             manifests = fetch()
         except subprocess.SubprocessError as exc:
@@ -181,6 +185,9 @@ def resolve_manifest(
             if m.get("branch") == build_id or m.get("manifest_id", "").endswith(build_id):
                 logger.info("Resolved build:%s to manifest %s", build_id, m["manifest_id"])
                 return m["manifest_id"]
+        if not (build_id.isascii() and build_id.isdigit()):
+            msg = f"Build {build_id} not found in manifests and is not a numeric Manifest ID"
+            raise InstallError(msg)
         logger.warning("Build %s not found in manifests, treating as manifest ID", build_id)
         return build_id
 

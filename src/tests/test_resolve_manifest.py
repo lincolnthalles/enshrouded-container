@@ -109,6 +109,28 @@ def test_resolve_manifest_build_unknown_id_warns_with_id(tmp_path: Path, caplog:
     assert "999" in caplog.text
 
 
+def test_resolve_manifest_build_non_numeric_rejected(tmp_path: Path) -> None:
+    # GIVEN a non-numeric build ID matching no listed manifest
+    control = tmp_path / ".latest-manifest"
+    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+
+    # WHEN resolving the unknown build ID
+    # THEN it fails instead of using the value as a Manifest ID
+    with pytest.raises(InstallError, match="numeric Manifest ID"):
+        manifests.resolve_manifest("build:not-a-number", control_file=control, fetch=lambda: found)
+
+
+def test_resolve_manifest_empty_build_rejected(tmp_path: Path) -> None:
+    # GIVEN an empty build ID
+    control = tmp_path / ".latest-manifest"
+    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+
+    # WHEN resolving the empty build ID
+    # THEN it fails instead of matching the first manifest
+    with pytest.raises(InstallError, match="Build ID is empty"):
+        manifests.resolve_manifest("build:", control_file=control, fetch=lambda: found)
+
+
 def test_resolve_manifest_latest_fetch_failure_uses_cache(tmp_path: Path) -> None:
     import subprocess
 

@@ -1,12 +1,14 @@
 """Depot key acquisition — VDF fetch, parse, and depot.keys generation."""
 
+import http.client
 import logging
 import re
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
 
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
+from enshctl.files import write_bytes_atomic
 from enshctl.paths import APP_ID
 
 if TYPE_CHECKING:
@@ -35,6 +37,9 @@ def _fetch_url(url: str, timeout: int = 30) -> str:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8")
     except urllib.error.URLError as e:
+        msg = f"Failed to fetch {url}: {e}"
+        raise InstallError(msg) from e
+    except (OSError, UnicodeDecodeError, http.client.HTTPException) as e:
         msg = f"Failed to fetch {url}: {e}"
         raise InstallError(msg) from e
 
@@ -66,16 +71,20 @@ def parse_key_vdf(content: str) -> dict[str, str]:
 
 
 def generate_depot_keys(depot_keys: dict[str, str], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{depot_id};{hex_key}" for depot_id, hex_key in sorted(depot_keys.items())]
     content = "\n".join(lines) + "\n" if lines else "\n"
-    output_path.write_text(content)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_bytes_atomic(output_path, content.encode())
+    except OSError as e:
+        msg = f"Failed to write depot.keys at {output_path}: {e}"
+        raise InstallError(msg) from e
     logger.info("Generated depot.keys at %s (%d entries)", output_path, len(lines))
 
 
 def ensure_depot_keys(manifests_dir: Path, repo_url: str | None) -> Path:
     output_path = manifests_dir / "depot.keys"
-    if output_path.exists():
+    if output_path.is_file():
         logger.info("depot.keys already exists at %s", output_path)
         return output_path
     if repo_url:

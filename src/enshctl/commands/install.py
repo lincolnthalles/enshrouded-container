@@ -3,7 +3,7 @@
 import logging
 import sys
 
-from enshctl import install
+from enshctl import download as download_flow, install
 from enshctl.download import InstallError
 from enshctl.settings import AppSettings, load_settings
 
@@ -15,7 +15,7 @@ def run(settings: AppSettings | None = None) -> None:
     settings = settings or load_settings()
     logger.info("Installing game version: %s (force=%s)", settings.version, settings.force_install)
     try:
-        install.prepare_manifests(settings)
+        download_flow.prepare_manifests(settings)
         target = install.ensure_install(settings)
     except InstallError:
         logger.exception("Install failed")

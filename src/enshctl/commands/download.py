@@ -5,7 +5,7 @@ import logging
 import sys
 from dataclasses import replace
 
-from enshctl import install
+from enshctl import download as download_flow
 from enshctl.download import InstallError
 from enshctl.settings import AppSettings, load_settings, normalize_api_url
 
@@ -41,25 +41,17 @@ def run(settings: AppSettings | None = None) -> None:
         depot_keys_repo=args.depot_keys_repo or base.depot_keys_repo,
     )
 
-    username = settings.steam_username
-    password = settings.steam_password
-
     logger.info(
         "Downloading manifest %s (auth: %s, token: %s)",
         args.manifest_id,
-        "yes" if username else "no",
+        "yes" if settings.steam_username else "no",
         "yes" if settings.manifesthub_api_token else "no",
     )
 
     try:
-        install.prepare_manifests(settings)
-        from enshctl.install import DownloadAuth as _DownloadAuth
-
-        target = install.download_version(
-            args.manifest_id,
-            settings,
-            auth=_DownloadAuth(username=username, password=password),
-        )
+        download_flow.validate_manifest_id(args.manifest_id)
+        download_flow.prepare_manifests(settings)
+        target = download_flow.download_version(args.manifest_id, settings, version_spec=args.manifest_id)
     except InstallError:
         logger.exception("Download failed")
         sys.exit(1)

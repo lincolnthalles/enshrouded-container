@@ -30,7 +30,12 @@ The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: 
 #### Scenario: Build ID resolution
 
 - **WHEN** `VERSION=build:<id>` is set
-- **THEN** the Manifest ID whose branch matches the build, or whose value ends with the build, SHALL be used; if none matches, the entrypoint SHALL warn and treat the build value itself as the Manifest ID
+- **THEN** the Manifest ID whose branch matches the build, or whose value ends with the build, SHALL be used; if none matches and the build value is numeric, the entrypoint SHALL warn and treat the build value itself as a Manifest ID
+
+#### Scenario: Non-numeric build fallback rejected
+
+- **WHEN** `VERSION=build:<id>` is set, no listed Manifest matches, and `<id>` is not numeric
+- **THEN** the entrypoint SHALL exit with an error naming the invalid build value instead of using it as a Manifest ID
 
 #### Scenario: Build resolution listing failure
 
@@ -73,7 +78,7 @@ Install SHALL resolve the Version spec to a Manifest ID and ensure the matching 
 
 ### Requirement: Auth strategy selection
 
-The Download SHALL use exactly one credential strategy, selected by availability: Steam username/password when a username is set; auth-free Manifest file plus depot keys when both exist and support is available; anonymous for `latest` when no Manifest file exists; interactive QR login otherwise. When a Manifest file exists without depot keys, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
+The Download SHALL use exactly one credential strategy, selected by availability: Steam username/password when a username is set; auth-free Manifest file plus depot keys when both exist and support is available; anonymous for `latest` or an empty/unset Version spec when no Manifest file exists; interactive QR login otherwise. When a Manifest file exists without depot keys and no Steam username is set, the Install SHALL fail with an error naming key setup and Steam login as alternatives.
 
 #### Scenario: Auth-free preferred when material present
 
@@ -82,12 +87,12 @@ The Download SHALL use exactly one credential strategy, selected by availability
 
 #### Scenario: Steam auth when credentials set
 
-- **WHEN** a Steam username is set, even when depot keys and the Manifest file exist
+- **WHEN** a Steam username is set, even when depot keys and the Manifest file exist, or the Manifest file exists without depot keys
 - **THEN** the Download SHALL authenticate with the Steam credentials
 
 #### Scenario: Error when manifest exists without keys
 
-- **WHEN** the Manifest file exists for the requested Manifest ID but no depot keys are available
+- **WHEN** the Manifest file exists for the requested Manifest ID, no depot keys are available, and no Steam username is set
 - **THEN** the entrypoint SHALL exit with an error naming key setup and Steam login as alternatives
 
 ### Requirement: Unsupported downloader fails fast
@@ -102,16 +107,31 @@ When depot keys and the Manifest file exist but the DepotDownloader lacks Manife
 #### Scenario: Interactive login otherwise
 
 - **WHEN** the requested Manifest ID is not installed, no Manifest file exists, and no credentials are available
-- **THEN** the Download SHALL print login instructions and authenticate interactively (anonymous when the Version spec is `latest`)
+- **THEN** the Download SHALL print login instructions and authenticate interactively (anonymous when the Version spec is `latest` or empty)
+
+#### Scenario: Explicit download ID does not use anonymous fallback
+
+- **WHEN** `download <manifest_id>` is invoked with no Manifest file, credentials, or token
+- **THEN** the Download SHALL use interactive login instead of the anonymous latest fallback
 
 ### Requirement: Install-time guards and immutability
 
-Before Downloading, the Install SHALL verify sufficient disk space accounting for any partial download of the same Manifest ID (see `disk-space-guards`). After a successful Download, the Manifest install SHALL be marked read-only (see `game-tree-rebuild`). An interrupted download SHALL resume within quota on the next attempt.
+Before Downloading, the Install SHALL verify sufficient disk space accounting for any partial download of the same Manifest ID (see `disk-space-guards`). The Install SHALL reject a symlinked Manifest install directory. A non-numeric Manifest ID SHALL be rejected before any filesystem path is constructed. After a successful Download, the Manifest install SHALL be marked read-only (see `game-tree-rebuild`). An interrupted download SHALL resume within quota on the next attempt.
 
 #### Scenario: Resume partial download within quota
 
 - **WHEN** the same Manifest ID has a partial download and effective free space meets the minimum
 - **THEN** the Download SHALL proceed and resume
+
+#### Scenario: Symlinked Manifest install refused
+
+- **WHEN** the Manifest install directory for the requested Manifest ID is a symlink
+- **THEN** the Install SHALL fail with an error naming the symlinked directory and SHALL NOT download through it
+
+#### Scenario: Non-numeric Manifest ID rejected
+
+- **WHEN** `download <manifest-id>` is invoked with a non-numeric ID
+- **THEN** the command SHALL fail with an error naming the invalid Manifest ID before touching the filesystem
 
 ### Requirement: Volume-based version switching
 
