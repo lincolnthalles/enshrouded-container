@@ -1,4 +1,4 @@
-"""Restore subcommand — restore backup to /data/saves/."""
+"""Restore subcommand — restore a Backup to the configured saves directory."""
 
 import logging
 import sys
@@ -7,13 +7,14 @@ from typing import ClassVar, override
 
 from enshctl.backup import (
     LOCK_FILE,
-    SAVE_DIR,
     BackupInfo,
     acquire_lock,
     release_lock,
 )
 from enshctl.backup.catalog import scan_all, select
-from enshctl.paths import PIDFILE, RESTORE_TMP_DIR
+from enshctl.config import generated_save_dir
+from enshctl.disk_space import SpaceGuard
+from enshctl.paths import PIDFILE
 from enshctl.restore import RestoreError, restore_backup
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
@@ -25,18 +26,18 @@ def _check_server_running() -> bool:
     return PIDFILE.exists()
 
 
-def _confirm_restore(filename: str, size: int) -> bool:
+def _confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
     try:
         from rich.console import Console
         from rich.prompt import Confirm
 
         Console()
         return Confirm.ask(
-            f"Restore [bold]{filename}[/bold] ({human_size(size)}) to /data/saves? This will erase current saves."
+            f"Restore [bold]{filename}[/bold] ({human_size(size)}) to {saves_dir}? This will erase current saves."
         )
     except ImportError:
         response = input(
-            f"Restore {filename} ({human_size(size)}) to /data/saves? This will erase current saves. [y/N]: "
+            f"Restore {filename} ({human_size(size)}) to {saves_dir}? This will erase current saves. [y/N]: "
         )
         return response.strip().lower() == "y"
 
@@ -44,7 +45,7 @@ def _confirm_restore(filename: str, size: int) -> bool:
 def run(settings: AppSettings | None = None) -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Restore a backup to /data/saves/")
+    parser = argparse.ArgumentParser(description="Restore a Backup to the configured saves directory")
     parser.add_argument("--file", default=None, help="Backup filename to restore")
     parser.add_argument("--when", default=None, help="Direction: last, 30m, 1h, 30d, 3M [:<category>]")
     parser.add_argument("--yes", action="store_true", default=False, help="Skip confirmation prompt")
@@ -83,7 +84,8 @@ def run(settings: AppSettings | None = None) -> None:
         sys.exit(1)
 
     # Confirm
-    if not args.yes and not _confirm_restore(backup_path.name, backup_path.stat().st_size):
+    saves_dir = generated_save_dir(backup_dir=base_dir)
+    if not args.yes and not _confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
         logger.info("Restore cancelled")
         return
 
@@ -95,7 +97,12 @@ def run(settings: AppSettings | None = None) -> None:
         sys.exit(1)
 
     try:
-        restore_backup(backup_path, saves_dir=SAVE_DIR, tmp_dir=RESTORE_TMP_DIR)
+        restore_backup(
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=saves_dir.parent / "saves-restore-tmp",
+            space=SpaceGuard(),
+        )
     except RestoreError:
         sys.exit(1)
     finally:

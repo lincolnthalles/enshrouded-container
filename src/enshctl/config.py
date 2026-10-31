@@ -5,9 +5,21 @@ import logging
 import re
 from contextlib import suppress
 from os import chown, environ
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from enshctl.paths import CONFIG_FILE, GAME_CONFIG_EXAMPLE, LOG_DIR, OUTPUT_CONFIG, SAVE_DIR
+from enshctl.paths import (
+    BACKUP_BASE_DIR,
+    CONFIG_DIR,
+    CONFIG_FILE,
+    GAME_CONFIG_EXAMPLE,
+    LOG_DIR,
+    MANIFESTS_DIR,
+    MODS_DIR,
+    OUTPUT_CONFIG,
+    SAVE_DIR,
+    WINE_PREFIX,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -136,6 +148,60 @@ def load_base_config() -> dict[str, Any]:
 
     logger.warning("No base config found, starting from empty config")
     return {}
+
+
+def generated_save_dir(config_path: Path = OUTPUT_CONFIG, *, backup_dir: Path) -> Path:
+    """Return the Generated config's safe, absolute save directory.
+
+    Missing, empty, unreadable, relative, or protected-path values fall back
+    to the saves volume.
+    """
+    try:
+        generated = json.loads(config_path.read_text())
+    except FileNotFoundError:
+        return SAVE_DIR
+    except OSError, ValueError:
+        logger.warning("Could not read Generated config %s; using %s for saves", config_path, SAVE_DIR)
+        return SAVE_DIR
+
+    if not isinstance(generated, dict):
+        logger.warning("Generated config %s is not an object; using %s for saves", config_path, SAVE_DIR)
+        return SAVE_DIR
+
+    raw = generated.get("saveDirectory")
+    if not isinstance(raw, str):
+        logger.warning("Generated saveDirectory %r is not a string; using %s", raw, SAVE_DIR)
+        return SAVE_DIR
+    if not raw.strip():
+        return SAVE_DIR
+    if "\x00" in raw:
+        logger.warning("Generated saveDirectory contains a NUL byte; using %s", SAVE_DIR)
+        return SAVE_DIR
+
+    try:
+        configured = Path(raw.strip())
+        if not configured.is_absolute():
+            logger.warning("Generated saveDirectory %r is not absolute; using %s", raw, SAVE_DIR)
+            return SAVE_DIR
+        saves_dir = configured.resolve(strict=False)
+    except OSError, RuntimeError, ValueError:
+        logger.warning("Generated saveDirectory %r is not a valid path; using %s", raw, SAVE_DIR)
+        return SAVE_DIR
+
+    protected = (backup_dir, BACKUP_BASE_DIR, CONFIG_DIR, LOG_DIR, MANIFESTS_DIR, MODS_DIR, WINE_PREFIX)
+    for path in protected:
+        try:
+            protected_path = path.resolve(strict=False)
+        except OSError, RuntimeError, ValueError:
+            protected_path = path
+        if (
+            saves_dir == Path("/")
+            or saves_dir.is_relative_to(protected_path)
+            or protected_path.is_relative_to(saves_dir)
+        ):
+            logger.warning("Generated saveDirectory %s overlaps protected path %s; using %s", saves_dir, path, SAVE_DIR)
+            return SAVE_DIR
+    return saves_dir
 
 
 def _is_name_keyed_dict(d: dict[str, Any]) -> bool:

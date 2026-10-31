@@ -59,7 +59,7 @@ When free space in the backup directory falls below the stop threshold (default 
 
 ### Requirement: Restore disk space check
 
-After extracting the Backup to the temporary directory and before clearing saves, the restore SHALL verify that free space plus the current saves size covers the extracted data. On shortfall, the temporary directory SHALL be cleaned up and the command SHALL exit 1 without modifying saves.
+Before extracting the Backup, the restore SHALL measure free space on the saves filesystem. After extracting to the temporary directory and before clearing saves, the restore SHALL verify that the pre-extraction free space plus the current saves size covers the extracted data. On shortfall, the temporary directory SHALL be cleaned up and the command SHALL exit 1 without modifying saves.
 
 #### Scenario: Sufficient space after extraction
 

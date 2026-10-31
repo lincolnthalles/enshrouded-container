@@ -25,7 +25,7 @@ The container SHALL expose the saves directory as a volume for persistent world 
 
 #### Scenario: Absolute save directory preserved
 
-- **WHEN** an env override provides an absolute save path
+- **WHEN** an env override provides an absolute, non-protected save path
 - **THEN** the save directory field SHALL be that absolute path with no warning
 
 #### Scenario: Save directory is writable
@@ -37,6 +37,39 @@ The container SHALL expose the saves directory as a volume for persistent world 
 
 - **WHEN** the container is stopped and restarted with the same volume
 - **THEN** previously saved world data SHALL still be present in the saves volume
+
+### Requirement: Save directory consumers
+
+Backup and Restore SHALL target the save directory from the Generated config, defaulting to the saves volume. The configured save directory SHALL exist before the server starts. Startup SHALL attempt to apply `PUID`/`PGID` ownership and warn once if it cannot.
+
+#### Scenario: Backup and Restore follow configured saves
+
+- **WHEN** the Generated config's save directory is an absolute path outside `/data`
+- **THEN** Backups SHALL read that directory and Restores SHALL write to it
+
+#### Scenario: Configured save directory prepared at start
+
+- **WHEN** the Generated config selects a save directory that does not exist
+- **THEN** startup SHALL create it and attempt to apply the configured ownership before launching the server
+
+#### Scenario: Ownership failure warns and continues
+
+- **WHEN** startup cannot apply the configured ownership to the save directory
+- **THEN** it SHALL log a warning and continue starting the server
+
+### Requirement: Generated save directory resolution
+
+A missing, empty, or unreadable Generated config SHALL fall back to the saves volume. A relative, malformed, non-string, NUL-containing, or protected-path save directory SHALL fall back to the saves volume with a warning. The configured path SHALL be canonicalized before overlap checks, so traversal and symlink aliases cannot target protected paths. Protected paths are the filesystem root and the backups, config, manifests, logs, mods, and wine prefix locations.
+
+#### Scenario: Missing Generated config defaults to volume
+
+- **WHEN** Backup or Restore runs without a readable Generated config
+- **THEN** the saves volume SHALL be used
+
+#### Scenario: Unsafe save directory falls back
+
+- **WHEN** the Generated config's save directory is the filesystem root or resolves onto a protected path
+- **THEN** the saves volume SHALL be used with a warning
 
 ### Requirement: Log directory
 

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from enshctl import install
+from enshctl.disk_space import SpaceGuard
 from enshctl.download import InstallError
 from enshctl.install import DownloadDeps, InstallEnv
 from enshctl.settings import AppSettings
@@ -20,7 +21,7 @@ class TestDownloadVersionQuota:
 
     def _env(self, free: int) -> InstallEnv:
         return InstallEnv(
-            disk_free=lambda _p: free,
+            space=SpaceGuard(disk_free=lambda _p: free),
             chown=lambda *_args, **_kwargs: None,
             chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
         )
@@ -123,3 +124,17 @@ class TestDownloadVersionQuota:
                 manifests_dir=manifests_dir,
                 env=self._env(7 * 1024**3),
             )
+
+
+def test_ensure_install_forwards_manifests_dir(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a custom manifests directory
+    settings = _settings(version="999")
+    with patch("enshctl.install.download_version", return_value=tmp_path / "target") as mock_download:
+        # WHEN ensuring an install
+        result = install.ensure_install(settings, manifests_dir=tmp_path, resolve=lambda _spec: "999")
+
+    # THEN the download receives the same manifests directory
+    assert result == tmp_path / "target"
+    mock_download.assert_called_once_with("999", settings, manifests_dir=tmp_path)

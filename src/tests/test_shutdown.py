@@ -4,6 +4,7 @@ import subprocess
 import threading
 from argparse import Namespace
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ import pytest
 from enshctl.backup.category import Category
 from enshctl.backup_protocol import BackupRequest
 from enshctl.commands.start import ServerContext, _make_sigterm_handler, _scheduler_loop
+from enshctl.paths import SAVE_DIR
 from enshctl.settings import AppSettings
 
 
@@ -39,6 +41,7 @@ def test_shutdown_orders_sigint_before_cold_before_wineserver() -> None:
 
     with (
         patch.object(st.backup, "backup_needed", return_value=True),
+        patch.object(st.config, "generated_save_dir", return_value=Path("/data/saves")),
         patch.object(st, "_run_backup", side_effect=record_cold) as mock_backup,
         patch.object(st, "_cleanup_wineserver", side_effect=lambda _s: order.append("wine")),
         patch("pathlib.Path.unlink"),
@@ -55,6 +58,90 @@ def test_shutdown_orders_sigint_before_cold_before_wineserver() -> None:
     mock_backup.assert_called_once_with(
         BackupRequest(category=Category.COLD, wait_seconds=5, detach=True),
     )
+
+
+def test_prepare_install_and_config_creates_custom_save_dir(tmp_path: Path) -> None:
+    import enshctl.commands.start as st
+
+    # GIVEN a Generated config selecting a custom save directory
+    saves = tmp_path / "custom" / "saves"
+    settings = _settings(backup_dir=str(tmp_path / "backups"))
+    target = MagicMock()
+    target.name = "999"
+
+    with (
+        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.install, "ensure_install", return_value=target),
+        patch.object(st.mods, "build_game_tree"),
+        patch.object(st.config, "generate_config", return_value={"saveDirectory": str(saves)}),
+        patch.object(st.config, "write_config"),
+        patch.object(st.config, "generated_save_dir", return_value=saves),
+        patch.object(st, "chown") as mock_chown,
+    ):
+        # WHEN preparing the install and config
+        st._prepare_install_and_config(settings)
+
+    # THEN the configured save directory exists before the server starts
+    assert saves.is_dir()
+    assert mock_chown.call_count >= 1
+
+
+def test_prepare_install_and_config_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
+    import enshctl.commands.start as st
+
+    # GIVEN a Generated config with an unsafe save directory that resolves to the volume
+    settings = _settings(backup_dir=str(tmp_path / "backups"))
+    target = MagicMock()
+    target.name = "999"
+    new_config = {"saveDirectory": "/data"}
+
+    with (
+        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.install, "ensure_install", return_value=target),
+        patch.object(st.mods, "build_game_tree"),
+        patch.object(st.config, "generate_config", return_value=new_config),
+        patch.object(st.config, "write_config") as mock_write,
+        patch.object(st.config, "generated_save_dir", return_value=SAVE_DIR),
+        patch.object(st, "chown"),
+    ):
+        # WHEN preparing the install and config
+        st._prepare_install_and_config(settings)
+
+    # THEN the safe path is written back to the Generated config
+    assert new_config["saveDirectory"] == str(SAVE_DIR)
+    assert mock_write.call_count == 2
+    assert mock_write.call_args.args[0]["saveDirectory"] == str(SAVE_DIR)
+
+
+def test_prepare_install_and_config_warns_on_ownership_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import enshctl.commands.start as st
+
+    # GIVEN a custom save directory whose ownership cannot be applied
+    saves = tmp_path / "custom" / "saves"
+    settings = _settings(backup_dir=str(tmp_path / "backups"))
+    target = MagicMock()
+    target.name = "999"
+
+    with (
+        patch.object(st.install, "prepare_manifests"),
+        patch.object(st.install, "ensure_install", return_value=target),
+        patch.object(st.mods, "build_game_tree"),
+        patch.object(st.config, "generate_config", return_value={"saveDirectory": str(saves)}),
+        patch.object(st.config, "write_config"),
+        patch.object(st.config, "generated_save_dir", return_value=saves),
+        patch.object(st, "chown", side_effect=OSError("nope")),
+        caplog.at_level("WARNING", logger="enshctl.commands.start"),
+    ):
+        # WHEN preparing the install and config
+        st._prepare_install_and_config(settings)
+
+    # THEN the failure is surfaced once without blocking startup
+    warnings = [record for record in caplog.records if "Could not set ownership" in record.message]
+    assert len(warnings) == 1
+    assert saves.is_dir()
 
 
 def test_shutdown_sigkills_stubborn_server_after_grace() -> None:

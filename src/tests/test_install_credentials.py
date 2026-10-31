@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from enshctl import install
+from enshctl.disk_space import SpaceGuard
 from enshctl.download import DownloadConfig, InstallError
 from enshctl.install import DownloadDeps, InstallEnv
 from enshctl.paths import DEPOT_ID
@@ -60,7 +61,7 @@ class TestDownloadVersionCredentials:
             (target / "enshrouded_server.exe").write_bytes(b"")
 
         env = InstallEnv(
-            disk_free=lambda _p: 12 * 1024**3,
+            space=SpaceGuard(disk_free=lambda _p: 12 * 1024**3),
             chown=lambda *_args, **_kwargs: None,
             chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
         )
@@ -204,7 +205,7 @@ class TestDownloadVersionCredentials:
             (target / "enshrouded_server.exe").write_bytes(b"")
 
         env = InstallEnv(
-            disk_free=lambda _p: 12 * 1024**3,
+            space=SpaceGuard(disk_free=lambda _p: 12 * 1024**3),
             chown=lambda *_args, **_kwargs: None,
             chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
         )
@@ -253,7 +254,7 @@ def test_no_support_with_material_fails_with_mod_fork_guidance(tmp_path: Path) -
     (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
     (manifests_dir / f"{DEPOT_ID}_999.manifest").write_bytes(b"manifest")
     env = InstallEnv(
-        disk_free=lambda _p: 12 * 1024**3,
+        space=SpaceGuard(disk_free=lambda _p: 12 * 1024**3),
         chown=lambda *_args, **_kwargs: None,
         chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
     )
@@ -283,7 +284,7 @@ def test_no_support_with_material_fails_for_latest_version(tmp_path: Path) -> No
     (manifests_dir / "depot.keys").write_bytes(b"2278521;deadbeef")
     (manifests_dir / f"{DEPOT_ID}_999.manifest").write_bytes(b"manifest")
     env = InstallEnv(
-        disk_free=lambda _p: 12 * 1024**3,
+        space=SpaceGuard(disk_free=lambda _p: 12 * 1024**3),
         chown=lambda *_args, **_kwargs: None,
         chmod=lambda *_args, **_kwargs: MagicMock(returncode=0),
     )

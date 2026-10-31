@@ -133,9 +133,9 @@ After selection and the server guard pass, and before acquiring the lock, the co
 - **WHEN** the confirmation prompt is declined
 - **THEN** the command SHALL exit without modifying the saves directory
 
-### Requirement: Atomic restore swap
+### Requirement: Restore extraction and swap
 
-The restore SHALL extract the Backup to the temporary directory (`/data/saves-restore-tmp/`), verify space (see `disk-space-guards`), then clear the saves directory and move the extracted contents in. While a restore runs, no Backup operation SHALL acquire the lock concurrently (see `backup-subprocess`). A failure during clear or move SHALL clean up the temporary directory, log the error, and exit 1; the saves directory may be partially modified in that case.
+The restore SHALL extract the Backup to a sibling temporary directory under the saves parent (`/data/saves-restore-tmp/` for the default saves path), verify space (see `disk-space-guards`), then clear the saves directory and move the extracted contents in. The saves directory is defined by `save-management`. When the temporary directory is on a different filesystem, the final move SHALL copy the extracted data. While a restore runs, no Backup operation SHALL acquire the lock concurrently (see `backup-subprocess`). A failure during clear or move SHALL clean up the temporary directory, log the error, and exit 1; the saves directory may be partially modified in that case.
 
 #### Scenario: Successful extraction then swap
 

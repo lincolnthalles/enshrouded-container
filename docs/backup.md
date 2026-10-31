@@ -1,6 +1,6 @@
 # Backup system
 
-The orchestrator backs up `/data/saves/` as compressed archives. Backups run as separate subprocesses with lowered CPU/IO priority and file locking preventing concurrent runs.
+The orchestrator backs up the save directory selected by the Generated config (default `/data/saves/`) as compressed archives. Backups run as separate subprocesses with lowered CPU/IO priority and file locking preventing concurrent runs.
 
 ## Categories
 
@@ -34,12 +34,12 @@ When ALL `BACKUP_KEEP_*` are `0`, pruning is skipped entirely — nothing is del
 
 ## Subcommands
 
-| Command   | Description                                                        |
-| --------- | ------------------------------------------------------------------ |
-| `backup`  | Run a manual backup now (`--cold`, `--emergency` flags)            |
-| `restore` | Interactive TUI restore (or `--file`/`--when` for non-interactive) |
-| `prune`   | Enforce retention rules (`--dry-run` supported)                    |
-| `verify`  | Check archive integrity (`--file` or `--all`)                      |
+| Command   | Description                                                                                         |
+| --------- | --------------------------------------------------------------------------------------------------- |
+| `backup`  | Run a manual backup now (`--cold`, `--emergency` flags)                                             |
+| `restore` | Interactive TUI restore (or `--file`/`--when` for non-interactive) to the configured save directory |
+| `prune`   | Enforce retention rules (`--dry-run` supported)                                                     |
+| `verify`  | Check archive integrity (`--file` or `--all`)                                                       |
 
 ## Configuration
 

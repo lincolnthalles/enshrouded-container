@@ -26,13 +26,11 @@ from enshctl.backup.locking import (
     acquire_lock,
     release_lock,
 )
-from enshctl.paths import SAVE_DIR
 
 __all__ = [
     "ARCHIVE_ERRORS",
     "CATEGORIES",
     "LOCK_FILE",
-    "SAVE_DIR",
     "BackupFormat",
     "BackupInfo",
     "BackupName",

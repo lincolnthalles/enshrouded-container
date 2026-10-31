@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from enshctl.disk_space import SpaceGuard
 from enshctl.restore import RestoreError, restore_backup
 
 if TYPE_CHECKING:
@@ -28,7 +29,11 @@ class TestRestoreAtomicSwap:
 
         # WHEN restoring with ample free space
         restore_backup(
-            backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, extract=_extract_new, disk_free=lambda _p: 10 * 1024**3
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=tmp_dir,
+            extract=_extract_new,
+            space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3),
         )
 
         # THEN new saves replace old and tmp is cleaned up
@@ -51,7 +56,13 @@ class TestRestoreAtomicSwap:
 
         # WHEN restoring
         with pytest.raises(RestoreError):
-            restore_backup(backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, extract=_fail, disk_free=lambda _p: 0)
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_dir,
+                extract=_fail,
+                space=SpaceGuard(disk_free=lambda _p: 0),
+            )
 
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
@@ -73,12 +84,179 @@ class TestRestoreAtomicSwap:
         # WHEN restoring with no free space
         with pytest.raises(RestoreError):
             restore_backup(
-                backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, extract=_extract_bigger, disk_free=lambda _p: 0
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_dir,
+                extract=_extract_bigger,
+                space=SpaceGuard(disk_free=lambda _p: 0),
             )
 
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
         assert not tmp_dir.exists(), "tmp should be cleaned up on space check failure"
+
+    def test_missing_saves_dir_is_created_and_restored(self, tmp_path: Path) -> None:
+        # GIVEN a configured saves path whose parent directories do not exist
+        saves_dir = tmp_path / "nested" / "saves"
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+        tmp_dir = saves_dir.parent / "saves-restore-tmp"
+
+        # WHEN restoring with ample free space
+        restore_backup(
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=tmp_dir,
+            extract=_extract_new,
+            space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3),
+        )
+
+        # THEN the saves directory is created and populated
+        assert (saves_dir / "new_save.db").read_bytes() == b"new"
+        assert not tmp_dir.exists()
+
+    def test_space_failure_removes_created_empty_saves_dir(self, tmp_path: Path) -> None:
+        # GIVEN a missing saves directory and no free space
+        saves_dir = tmp_path / "nested" / "saves"
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+        tmp_dir = saves_dir.parent / "saves-restore-tmp"
+
+        def _extract_bigger(_src: Path, dst: Path) -> None:
+            dst.mkdir(parents=True, exist_ok=True)
+            (dst / "bigger_file.db").write_bytes(b"bigger")
+
+        # WHEN the space check fails
+        with pytest.raises(RestoreError):
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_dir,
+                extract=_extract_bigger,
+                space=SpaceGuard(disk_free=lambda _p: 0),
+            )
+
+        # THEN the temporary directory and the empty created saves directory are removed
+        assert not tmp_dir.exists()
+        assert not saves_dir.exists()
+
+    def test_space_check_uses_pre_extraction_free_space(self, tmp_path: Path) -> None:
+        # GIVEN a same-filesystem temp directory and free space that shrinks during extraction
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"x" * 20)
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+        tmp_dir = tmp_path / "saves-restore-tmp"
+        state = {"extracted": False}
+        free_calls = 0
+
+        def _free(_path: Path) -> int:
+            nonlocal free_calls
+            free_calls += 1
+            return 10 if state["extracted"] else 70
+
+        def _extract_80(_src: Path, dst: Path) -> None:
+            state["extracted"] = True
+            dst.mkdir(parents=True, exist_ok=True)
+            (dst / "new_save.db").write_bytes(b"x" * 80)
+
+        # WHEN restoring with pre-extraction free space covering the extracted data
+        restore_backup(
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=tmp_dir,
+            extract=_extract_80,
+            space=SpaceGuard(disk_free=_free),
+        )
+
+        # THEN free space is measured once before extraction
+        assert free_calls == 1
+        assert (saves_dir / "new_save.db").read_bytes() == b"x" * 80
+        assert not tmp_dir.exists()
+
+    def test_tmp_equal_saves_is_rejected(self, tmp_path: Path) -> None:
+        # GIVEN a temp path that is the saves directory itself
+        saves_dir = tmp_path / "saves-restore-tmp"
+        saves_dir.mkdir()
+        (saves_dir / "old_save.db").write_bytes(b"old")
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+
+        # WHEN restoring
+        # THEN the overlap is rejected before any deletion
+        with pytest.raises(RestoreError):
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=saves_dir,
+                space=SpaceGuard(disk_free=lambda _path: 10 * 1024**3),
+            )
+        assert (saves_dir / "old_save.db").read_bytes() == b"old"
+
+    def test_symlink_in_saves_is_unlinked_not_followed(self, tmp_path: Path) -> None:
+        # GIVEN a symlink inside saves pointing at data outside it
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "keep.db").write_bytes(b"keep")
+        (saves_dir / "link").symlink_to(target, target_is_directory=True)
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+        tmp_dir = tmp_path / "saves-restore-tmp"
+
+        # WHEN restoring
+        restore_backup(
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=tmp_dir,
+            extract=_extract_new,
+            space=SpaceGuard(disk_free=lambda _path: 10 * 1024**3),
+        )
+
+        # THEN only the symlink is removed and its target is untouched
+        assert not (saves_dir / "link").exists()
+        assert (target / "keep.db").read_bytes() == b"keep"
+
+    def test_saves_inside_tmp_is_rejected(self, tmp_path: Path) -> None:
+        # GIVEN a temp directory that contains the saves directory
+        tmp_dir = tmp_path / "outer"
+        saves_dir = tmp_dir / "saves"
+        saves_dir.mkdir(parents=True)
+        (saves_dir / "old_save.db").write_bytes(b"old")
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+
+        # WHEN restoring
+        # THEN the overlap is rejected before any deletion
+        with pytest.raises(RestoreError):
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_dir,
+                space=SpaceGuard(disk_free=lambda _path: 10 * 1024**3),
+            )
+        assert (saves_dir / "old_save.db").read_bytes() == b"old"
+
+    def test_tmp_preparation_failure_is_restore_error(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        # GIVEN a temp directory that cannot be created
+        saves_dir = tmp_path / "saves"
+        saves_dir.mkdir()
+        backup_path = tmp_path / "backup.tar.zst"
+        backup_path.write_bytes(b"")
+
+        # WHEN restoring
+        with patch("pathlib.Path.mkdir", side_effect=OSError("nope")), pytest.raises(RestoreError):
+            # THEN the failure surfaces as RestoreError
+            restore_backup(
+                backup_path,
+                saves_dir=saves_dir,
+                tmp_dir=tmp_path / "saves-restore-tmp",
+                space=SpaceGuard(disk_free=lambda _path: 10 * 1024**3),
+            )
 
     def test_pre_existing_tmp_removed_before_extract(self, tmp_path: Path) -> None:
         # GIVEN a stale tmp directory and existing saves
@@ -97,7 +275,11 @@ class TestRestoreAtomicSwap:
 
         # WHEN restoring with ample free space
         restore_backup(
-            backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, extract=_extract_fresh, disk_free=lambda _p: 10 * 1024**3
+            backup_path,
+            saves_dir=saves_dir,
+            tmp_dir=tmp_dir,
+            extract=_extract_fresh,
+            space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3),
         )
 
         # THEN the restore completes
@@ -117,7 +299,9 @@ class TestRestoreAtomicSwap:
 
         # WHEN restoring the corrupt archive with the real extractor
         with pytest.raises(RestoreError):
-            restore_backup(backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, disk_free=lambda _p: 10 * 1024**3)
+            restore_backup(
+                backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3)
+            )
 
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
@@ -134,7 +318,9 @@ class TestRestoreAtomicSwap:
 
         # WHEN restoring the corrupt archive with the real extractor
         with pytest.raises(RestoreError):
-            restore_backup(backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, disk_free=lambda _p: 10 * 1024**3)
+            restore_backup(
+                backup_path, saves_dir=saves_dir, tmp_dir=tmp_dir, space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3)
+            )
 
         # THEN saves are untouched and tmp is cleaned up
         assert (saves_dir / "old_save.db").read_bytes() == b"old"
@@ -165,7 +351,7 @@ class TestRestoreAtomicSwap:
                 saves_dir=saves_dir,
                 tmp_dir=tmp_dir,
                 extract=_extract_new,
-                disk_free=lambda _p: 10 * 1024**3,
+                space=SpaceGuard(disk_free=lambda _p: 10 * 1024**3),
             )
 
         # THEN tmp is cleaned up and the failure surfaces as RestoreError

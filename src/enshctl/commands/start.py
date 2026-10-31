@@ -117,6 +117,40 @@ def _setup_x11_socket() -> None:
     x11_dir.chmod(0o1777)
 
 
+def _prepare_install_and_config(settings: AppSettings) -> None:
+    try:
+        install.prepare_manifests(settings)
+        target = install.ensure_install(settings)
+    except InstallError:
+        logger.exception("Start failed")
+        sys.exit(1)
+
+    mods.build_game_tree(mods.GameTreePlan.from_settings(target.name, settings))
+    new_config = config.generate_config()
+    config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
+    saves_dir = config.generated_save_dir(backup_dir=Path(settings.backup_dir))
+    configured = Path(str(new_config["saveDirectory"]))
+    if saves_dir != configured:
+        logger.warning("Using save directory %s instead of %s", saves_dir, configured)
+        new_config["saveDirectory"] = str(saves_dir)
+        config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
+    if saves_dir == SAVE_DIR:
+        return
+    try:
+        saves_dir.mkdir(parents=True, exist_ok=True)
+    except OSError, ValueError:
+        logger.exception("Cannot create save directory %s", saves_dir)
+        sys.exit(1)
+    ownership_failed = False
+    for path in (saves_dir, *saves_dir.rglob("*")):
+        try:
+            chown(path, settings.puid, settings.pgid, follow_symlinks=False)
+        except OSError as exc:
+            if not ownership_failed:
+                logger.warning("Could not set ownership on %s: %s", path, exc)
+                ownership_failed = True
+
+
 def _resolve_dll_overrides(settings: AppSettings) -> str:
     if settings.winedlloverrides is not None:
         logger.info("Using user-provided WINEDLLOVERRIDES: %s", settings.winedlloverrides)
@@ -247,7 +281,9 @@ def _make_sigterm_handler(
                     with suppress(OSError):
                         context.server_process.wait()
 
-            if settings.backup_cold and backup.backup_needed():
+            if settings.backup_cold and backup.backup_needed(
+                config.generated_save_dir(backup_dir=Path(settings.backup_dir))
+            ):
                 logger.info("Creating cold shutdown backup")
                 request = BackupRequest(
                     category=Category.COLD,
@@ -450,17 +486,7 @@ def run(settings: AppSettings | None = None) -> None:
     _setup_directories(settings)
     _setup_x11_socket()
     _ensure_wineprefix(settings)
-
-    try:
-        install.prepare_manifests(settings)
-        target = install.ensure_install(settings)
-    except InstallError:
-        logger.exception("Start failed")
-        sys.exit(1)
-
-    mods.build_game_tree(mods.GameTreePlan.from_settings(target.name, settings))
-    new_config = config.generate_config()
-    config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
+    _prepare_install_and_config(settings)
 
     handler = _make_sigterm_handler(context, settings, stop_event)
     signal.signal(signal.SIGTERM, handler)
@@ -500,7 +526,9 @@ def run(settings: AppSettings | None = None) -> None:
     if not context.shutdown_requested:
         logger.error("Server exited unexpectedly (code %d)", exit_code)
         _cleanup_wineserver(settings)
-        if settings.backup_emergency and backup.backup_needed():
+        if settings.backup_emergency and backup.backup_needed(
+            config.generated_save_dir(backup_dir=Path(settings.backup_dir))
+        ):
             logger.info("Creating emergency backup")
             _run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
         PIDFILE.unlink(missing_ok=True)

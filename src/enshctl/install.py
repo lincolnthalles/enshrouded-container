@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from enshctl.disk_space import SpaceGuard
 from enshctl.download import (
     DownloadConfig,
     InstallError,
@@ -12,7 +13,7 @@ from enshctl.download import (
     discover_depots,
     download_depots,
 )
-from enshctl.files import chown_tree, disk_free_bytes, read_tree_size
+from enshctl.files import chown_tree
 from enshctl.hub import download_manifest_from_hub, fetch_missing_manifests
 from enshctl.keys import ensure_depot_keys
 from enshctl.manifests import (
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class InstallEnv:
-    disk_free: Callable[[Path], int] = disk_free_bytes
+    space: SpaceGuard = field(default_factory=SpaceGuard)
     chown: Callable[..., None] = chown_tree
     chmod: Callable[..., object] = field(default_factory=lambda: subprocess.run)
 
@@ -160,14 +161,13 @@ def download_version(
         return target_dir
 
     # Disk space check: account for partial downloads of the same manifest
-    partial_size = read_tree_size(target_dir)
-    free = fs.disk_free(manifests_dir)
-    effective_free = free + partial_size
-    min_free = settings.min_free_space
-    if effective_free < min_free:
+    partial_size = fs.space.tree_size(target_dir)
+    verdict = fs.space.check(manifests_dir, required_bytes=settings.min_free_space, existing_bytes=partial_size)
+    if not verdict.is_sufficient:
         msg = (
-            f"Insufficient disk space for install. Need {human_size(min_free)}, have {human_size(effective_free)} "
-            f"effective ({human_size(free)} free + {human_size(partial_size)} from partial download)."
+            f"Insufficient disk space for install. Need {human_size(verdict.required_bytes)}, "
+            f"have {human_size(verdict.available_bytes)} effective "
+            f"({human_size(verdict.free_bytes)} free + {human_size(verdict.existing_bytes)} from partial download)."
         )
         raise InstallError(msg)
 
@@ -245,4 +245,4 @@ def ensure_install(
             "Will attempt anonymous download (latest only).",
             manifest_id,
         )
-    return download_version(manifest_id, settings)
+    return download_version(manifest_id, settings, manifests_dir=manifests_dir)

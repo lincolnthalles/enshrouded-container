@@ -6,7 +6,7 @@ Scheduled, shutdown-triggered, and crash-triggered backups of the saves director
 
 ### Requirement: Scheduled live backups
 
-The container SHALL run periodic Backups of `/data/saves` in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup.
+The container SHALL run periodic Backups of the saves directory (see `save-management`) in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup.
 
 #### Scenario: Default backup schedule
 
@@ -25,7 +25,7 @@ The container SHALL run periodic Backups of `/data/saves` in the live Category o
 
 #### Scenario: No save data skips scheduled backup
 
-- **WHEN** a scheduled backup triggers with `/data/saves` missing or empty
+- **WHEN** a scheduled backup triggers with the saves directory missing or empty
 - **THEN** that backup SHALL be skipped and the scheduler SHALL continue
 
 #### Scenario: Shutdown stops scheduler

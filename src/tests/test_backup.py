@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from enshctl.backup import (
@@ -19,7 +19,12 @@ from enshctl.backup import (
     resolve_level,
 )
 from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
+from enshctl.disk_space import SpaceGuard
 from enshctl.settings import AppSettings
+
+
+def _space(free: int) -> SpaceGuard:
+    return SpaceGuard(disk_free=lambda _path: free)
 
 
 def test_backup_format_zstd() -> None:
@@ -604,60 +609,56 @@ def test_lower_priority_warns_once_on_ionice_failure(caplog: pytest.LogCaptureFi
 class TestCreateBackupDiskSpace:
     """Tests for create_backup() disk space checks."""
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_normal_backup_proceeds_with_ample_space(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
         from enshctl.backup.core import BackupPlan
 
         # GIVEN ample free space and saves present
-        mock_disk_usage.return_value.free = 5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
         with (
-            patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             # WHEN creating a backup
-            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
+            result = create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves),
+                space=_space(5 * 1024**3),
+            )
             # THEN compression runs and a path returns
             mock_compress.assert_called_once()
             assert result is not None
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_backup_skipped_below_stop_threshold(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
         from enshctl.backup.core import BackupPlan
 
         # GIVEN free space below the stop threshold
-        mock_disk_usage.return_value.free = 500 * 1024**2
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating a backup
-        result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
+        result = create_backup(
+            Category.LIVE,
+            BackupPlan.from_settings(settings, saves_dir=saves),
+            space=_space(500 * 1024**2),
+        )
         # THEN the backup is skipped
         assert result is None
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_backup_warns_below_warn_threshold(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -665,19 +666,21 @@ class TestCreateBackupDiskSpace:
         from enshctl.backup.core import BackupPlan
 
         # GIVEN free space below the warn threshold but above stop
-        mock_disk_usage.return_value.free = 1.5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
         with (
-            patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             # WHEN creating a backup
-            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings))
+            result = create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves),
+                space=_space(1536 * 1024**2),
+            )
             # THEN compression still runs
             mock_compress.assert_called_once()
             assert result is not None
@@ -686,86 +689,97 @@ class TestCreateBackupDiskSpace:
         warnings = [r for r in caplog.records if r.levelno == 30 and "Disk space low" in r.message]
         assert len(warnings) >= 1
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_backup_emergency_also_skipped_on_full_disk(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
         from enshctl.backup.core import BackupPlan
 
         # GIVEN a full disk
-        mock_disk_usage.return_value.free = 500 * 1024**2
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
         # WHEN creating an emergency backup
-        result = create_backup(Category.EMERGENCY, BackupPlan.from_settings(settings))
+        result = create_backup(
+            Category.EMERGENCY,
+            BackupPlan.from_settings(settings, saves_dir=saves),
+            space=_space(500 * 1024**2),
+        )
         # THEN it is skipped
         assert result is None
+
+    def test_backup_skips_missing_saves_dir(self, tmp_path: Path) -> None:
+        from enshctl.backup import create_backup
+        from enshctl.backup.core import BackupPlan
+
+        # GIVEN a missing configured saves directory
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        plan = BackupPlan.from_settings(settings, saves_dir=tmp_path / "missing")
+        # WHEN creating a backup
+        result = create_backup(Category.LIVE, plan, space=_space(5 * 1024**3))
+        # THEN it is skipped without creating a category directory
+        assert result is None
+        assert not (tmp_path / "backups" / Category.LIVE).exists()
 
 
 class TestCreateBackupOverrides:
     """Tests for create_backup() explicit format/level overrides."""
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_explicit_format_wins_over_settings(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import BackupFormat, create_backup
         from enshctl.backup.core import BackupPlan
 
         # GIVEN gzip configured but zstd requested explicitly
-        mock_disk_usage.return_value.free = 5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_format="gzip", backup_level=6)
 
         with (
-            patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_zstd,
             patch("enshctl.backup.format._compress_gzip") as mock_gzip,
         ):
             # WHEN creating a backup with an explicit format
-            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings, fmt=BackupFormat.ZSTD))
+            result = create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves, fmt=BackupFormat.ZSTD),
+                space=_space(5 * 1024**3),
+            )
             # THEN the explicit format's compressor runs
             mock_zstd.assert_called_once()
             mock_gzip.assert_not_called()
             assert result is not None
             assert result.suffixes == [".tar", ".zst"]
 
-    @patch("enshctl.backup.core.shutil.disk_usage")
-    @patch("enshctl.backup.core.backup_needed", return_value=True)
     def test_explicit_level_zero_honored(
         self,
-        _mock_needed: MagicMock,
-        mock_disk_usage: MagicMock,
         tmp_path: Path,
     ) -> None:
         from enshctl.backup import create_backup
         from enshctl.backup.core import BackupPlan
 
         # GIVEN a configured level of 9
-        mock_disk_usage.return_value.free = 5 * 1024**3
         saves = tmp_path / "saves"
         saves.mkdir()
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"), backup_level=9)
 
         with (
-            patch("enshctl.backup.core.SAVE_DIR", saves),
             patch("enshctl.backup.catalog._local_now", return_value=datetime(2026, 5, 31, 12, 0, 0).astimezone()),
             patch("enshctl.backup.format._compress_zstd") as mock_compress,
         ):
             # WHEN creating a backup with explicit level 0
-            result = create_backup(Category.LIVE, BackupPlan.from_settings(settings, level=0))
+            result = create_backup(
+                Category.LIVE,
+                BackupPlan.from_settings(settings, saves_dir=saves, level=0),
+                space=_space(5 * 1024**3),
+            )
             # THEN level 0 reaches the compressor, not the configured 9
             mock_compress.assert_called_once_with(saves, result, 0)
             assert result is not None
@@ -775,7 +789,10 @@ class TestCreateBackupOverrides:
 def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Category) -> None:
     from enshctl.backup.core import BackupPlan
 
-    # GIVEN a fixed clock and a compressor that writes a file
+    # GIVEN a fixed clock, save data, and a compressor that writes a file
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    (saves / "world.db").write_bytes(b"data")
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
     timestamp = datetime(2026, 5, 31, 12, 0, 0).astimezone()
 
@@ -783,14 +800,15 @@ def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Cat
         output.write_bytes(b"")
 
     with (
-        patch("enshctl.backup.core.backup_needed", return_value=True),
-        patch("enshctl.backup.core.shutil.disk_usage") as mock_disk_usage,
         patch("enshctl.backup.catalog._local_now", return_value=timestamp),
         patch("enshctl.backup.format._compress_zstd", side_effect=_write_empty),
     ):
-        mock_disk_usage.return_value.free = 5 * 1024**3
         # WHEN creating a backup in the Category
-        created = create_backup(category, BackupPlan.from_settings(settings))
+        created = create_backup(
+            category,
+            BackupPlan.from_settings(settings, saves_dir=saves),
+            space=_space(5 * 1024**3),
+        )
 
     # THEN scan_dir discovers the same Backup name
     assert created is not None
@@ -803,6 +821,30 @@ def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Cat
 
 class TestBackupRunnerFormatFlag:
     """Tests for backup_runner --format case handling."""
+
+    def test_runner_uses_generated_save_dir(self, tmp_path: Path) -> None:
+        import enshctl.backup_runner as br
+        from enshctl.backup_protocol import BackupOutcome
+
+        # GIVEN a generated save directory and a successful backup invocation
+        saves = tmp_path / "saves"
+        saves.mkdir()
+        (saves / "world.db").write_bytes(b"data")
+        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+        with (
+            patch("sys.argv", ["prog"]),
+            patch.object(br, "load_settings", return_value=settings),
+            patch.object(br, "generated_save_dir", return_value=saves),
+            patch.object(br, "acquire_lock", return_value=3),
+            patch.object(br, "create_backup", return_value=None) as mock_create,
+            patch.object(br, "release_lock"),
+        ):
+            # WHEN the runner builds its Backup plan
+            assert br.main() == BackupOutcome.SUCCESS
+
+        # THEN the plan carries the Generated config save directory
+        plan = mock_create.call_args.args[1]
+        assert plan.saves_dir == saves
 
     def test_uppercase_format_accepted(self, tmp_path: Path) -> None:
         import enshctl.backup_runner as br

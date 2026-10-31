@@ -23,8 +23,6 @@ DEPOT_KEYS_FILE = MANIFESTS_DIR / "depot.keys"
 LATEST_MANIFEST_FILE = MANIFESTS_DIR / ".latest-manifest"
 STATUS_FILE = ".installed"
 
-RESTORE_TMP_DIR = SAVE_DIR.parent / "saves-restore-tmp"
-
 APP_ID = "2278520"
 DEPOT_ID = "2278521"
 CONFIG_FILENAME = "enshrouded_server.json"
