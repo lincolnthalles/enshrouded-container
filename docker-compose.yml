@@ -34,7 +34,7 @@ services:
     # Optional. Ntsync may improve the game server performance.
     #!! If ntsync support is _not_ enabled in your Linux kernel (`lsmod | grep ntsync`),
     #!! comment out this section, or the container will fail to start.
-    # To if ntsync is being used while the server is running: `lsof -p $(pidof wineserver) | grep ntsync`
+    # To check if ntsync is being used while the server is running: `lsof -p $(pidof wineserver) | grep ntsync`
     devices: [/dev/ntsync:/dev/ntsync]
     # Optional. Allow backups to run at a lower priority.
     cap_add: [SYS_NICE]
