@@ -15,7 +15,7 @@ On every container start, the entrypoint SHALL wipe the Game tree and rebuild it
 
 #### Scenario: Mod overlay shadows Manifest install
 
-- **WHEN** the container starts with files in the mods volume
+- **WHEN** the container starts with files in the Mod overlay
 - **THEN** files present in both Manifest install and Mod overlay SHALL resolve to the mod version in the Game tree
 
 #### Scenario: Removed mod restores original
@@ -26,7 +26,7 @@ On every container start, the entrypoint SHALL wipe the Game tree and rebuild it
 #### Scenario: Wipe leaves sources untouched
 
 - **WHEN** the container starts
-- **THEN** all existing contents of the Game tree SHALL be removed before rebuilding, without deleting source files in the Manifest install, the mods volume, or the config directory
+- **THEN** all existing contents of the Game tree SHALL be removed before rebuilding, without deleting source files in the Manifest install, the Mod overlay directory, or the config directory
 
 #### Scenario: Missing Manifest install fails start
 
@@ -37,6 +37,15 @@ On every container start, the entrypoint SHALL wipe the Game tree and rebuild it
 
 - **WHEN** the container receives SIGTERM
 - **THEN** no Game tree cleanup SHALL run; cleanup is implicit in the wipe at the next startup
+
+### Requirement: Overlapping roots rejected
+
+A Game tree directory that equals, contains, or sits inside the Manifest install, the Manifests directory, the Mod overlay directory, the config directory, the saves volume, the logs directory, the backups directory, or the Wine prefix SHALL be rejected with an error naming both paths before anything is deleted. Paths SHALL be canonicalized where they resolve, so relative paths and symlink aliases that resolve to a protected root are rejected too.
+
+#### Scenario: Overlap leaves roots untouched
+
+- **WHEN** the Game tree directory overlaps any protected root
+- **THEN** the start SHALL fail with an error naming both paths, and no file under those roots SHALL be deleted
 
 ### Requirement: Config symlink
 
@@ -54,7 +63,7 @@ The game-server path for the server config SHALL be a symlink to the persisted c
 
 ### Requirement: PERSIST_FILES escape hatch
 
-`PERSIST_FILES` SHALL accept a comma-separated list of relative file paths. Each listed file SHALL be seeded into the config directory from the Manifest install on first run (if not already present) and symlinked from the Game tree to the config directory. Entries that are absolute paths, bare `.`/`..` segments, or contain traversal sequences SHALL be skipped with a warning and create nothing outside the config directory. Entries absent from both Manifest install and Game tree SHALL be skipped. Entries present only in the mods volume SHALL NOT be seeded; the Game tree link SHALL dangle rather than show mod content.
+`PERSIST_FILES` SHALL accept a comma-separated list of relative file paths. Each listed file SHALL be seeded into the config directory from the Manifest install on first run (if not already present) and symlinked from the Game tree to the config directory. Entries that are absolute paths, bare `.`/`..` segments, or contain traversal sequences SHALL be skipped with a warning and create nothing outside the config directory. Entries absent from both Manifest install and Game tree SHALL be skipped. Entries present only in the Mod overlay SHALL NOT be seeded; the Game tree link SHALL dangle rather than show mod content.
 
 #### Scenario: Default persisted file
 

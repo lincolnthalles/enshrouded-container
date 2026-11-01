@@ -17,7 +17,7 @@ from enshctl.paths import (
     CONFIG_DIR,
     LOG_DIR,
     MANIFESTS_DIR,
-    MODS_DIR,
+    MOD_OVERLAY_DIR,
     SAVE_DIR,
     WINE_PREFIX,
 )
@@ -33,7 +33,7 @@ def _setup_directories(settings: AppSettings) -> None:
         SAVE_DIR,
         LOG_DIR,
         BACKUP_BASE_DIR,
-        MODS_DIR,
+        MOD_OVERLAY_DIR,
         MANIFESTS_DIR,
         CONFIG_DIR,
         xdg_dir,
@@ -57,9 +57,10 @@ def _setup_x11_socket() -> None:
 
 def _prepare_install_and_config(settings: AppSettings) -> None:
     download_flow.prepare_manifests(settings)
-    target = install.ensure_install(settings)
+    installed = install.ensure_install(settings)
 
-    mods.build_game_tree(mods.GameTreePlan.from_settings(target.name, settings))
+    plan = mods.GameTreePlan.from_settings(installed.name, settings)
+    mods.build_game_tree(plan)
     new_config = config.generate_config()
     config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
     saves_dir = config.generated_save_dir(backup_dir=Path(settings.backup_dir))
@@ -106,12 +107,14 @@ def run(settings: AppSettings | None = None) -> int:
         logger.warning("BACKUP_RETENTION is ignored. Use BACKUP_KEEP_LAST, BACKUP_KEEP_DAILY, etc. instead.")
 
     try:
+        # Validate the roots before any setup I/O; the install entry is checked on the final plan.
+        mods.GameTreePlan.from_settings("", settings)
         _setup_timezone(settings)
         _setup_directories(settings)
         _setup_x11_socket()
         ensure_wineprefix(settings)
         _prepare_install_and_config(settings)
-    except InstallError, OSError, subprocess.SubprocessError, ValueError:
+    except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
         logger.exception("Start failed")
         return 1
 

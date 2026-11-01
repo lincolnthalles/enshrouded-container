@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from enshctl.commands import start as start_cmd
 from enshctl.download import InstallError
-from enshctl.paths import SAVE_DIR
+from enshctl.paths import GAME_TREE_DIR, SAVE_DIR
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -19,8 +19,6 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
     # GIVEN a Generated config selecting a custom save directory
     saves = tmp_path / "custom" / "saves"
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-    target = MagicMock()
-    target.name = "999"
 
     with (
         patch.object(start_cmd, "_setup_timezone"),
@@ -28,7 +26,7 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd, "_setup_x11_socket"),
         patch.object(start_cmd, "ensure_wineprefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
-        patch.object(start_cmd.install, "ensure_install", return_value=target),
+        patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
         patch.object(start_cmd.config, "write_config"),
@@ -50,8 +48,6 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
 def test_start_run_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
     # GIVEN a Generated config with an unsafe save directory that resolves to the volume
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-    target = MagicMock()
-    target.name = "999"
     new_config = {"saveDirectory": "/data"}
 
     with (
@@ -60,7 +56,7 @@ def test_start_run_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd, "_setup_x11_socket"),
         patch.object(start_cmd, "ensure_wineprefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
-        patch.object(start_cmd.install, "ensure_install", return_value=target),
+        patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value=new_config),
         patch.object(start_cmd.config, "write_config") as mock_write,
@@ -87,8 +83,6 @@ def test_start_run_warns_on_ownership_failure(
     # GIVEN a custom save directory whose ownership cannot be applied
     saves = tmp_path / "custom" / "saves"
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-    target = MagicMock()
-    target.name = "999"
 
     with (
         patch.object(start_cmd, "_setup_timezone"),
@@ -96,7 +90,7 @@ def test_start_run_warns_on_ownership_failure(
         patch.object(start_cmd, "_setup_x11_socket"),
         patch.object(start_cmd, "ensure_wineprefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
-        patch.object(start_cmd.install, "ensure_install", return_value=target),
+        patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
         patch.object(start_cmd.config, "write_config"),
@@ -115,6 +109,50 @@ def test_start_run_warns_on_ownership_failure(
     assert code == 0
     assert len(warnings) == 1
     assert saves.is_dir()
+
+
+def test_start_uses_installed_manifest_id(tmp_path: Path) -> None:
+    # GIVEN a Version spec that resolves to a different install directory name
+    settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd, "ensure_wineprefix"),
+        patch.object(start_cmd.download_flow, "prepare_manifests"),
+        patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
+        patch.object(start_cmd.mods, "build_game_tree") as mock_build,
+        patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(SAVE_DIR)}),
+        patch.object(start_cmd.config, "write_config"),
+        patch.object(start_cmd.config, "generated_save_dir", return_value=SAVE_DIR),
+        patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
+    ):
+        mock_lifecycle.return_value.run.return_value = 0
+
+        # WHEN the start command runs
+        code = start_cmd.run(settings)
+
+    # THEN the Game tree plan targets the resolved Manifest install
+    assert code == 0
+    assert mock_build.call_args.args[0].manifest_id == "999"
+
+
+def test_start_rejects_game_tree_overlapping_backup_dir() -> None:
+    # GIVEN a backup directory equal to the Game tree directory
+    settings = replace(AppSettings(), backup_dir=str(GAME_TREE_DIR))
+
+    with (
+        patch.object(start_cmd, "_setup_directories") as mock_setup,
+        patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(settings)
+
+    # THEN the overlap is rejected before any setup I/O or lifecycle
+    assert code == 1
+    mock_setup.assert_not_called()
+    mock_lifecycle.assert_not_called()
 
 
 def test_run_returns_one_on_install_error() -> None:

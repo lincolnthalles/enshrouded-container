@@ -6,12 +6,9 @@ import tarfile
 import zipfile
 import zlib
 from enum import Enum
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import zstandard
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

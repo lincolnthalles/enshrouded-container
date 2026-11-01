@@ -78,6 +78,9 @@ docstring-quotes = "double"
 "src/enshctl/backup/catalog.py" = [
     "TC003", # BackupInfo is a runtime dataclass: Path must stay a runtime import.
 ]
+"src/enshctl/backup/format.py" = [
+    "TC003", # BackupFormat.compress annotations are introspected, so Path must stay a runtime import.
+]
 "test_*.py" = [
     "S101", # Use of `assert` detected.
     "S105", # Possible hardcoded password assigned to: "password".

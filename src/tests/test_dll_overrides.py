@@ -68,12 +68,12 @@ def test_non_dll_files_ignored(tmp_path: Path) -> None:
     assert result == "mscoree,mshtml=,mylib=n"
 
 
-def test_empty_mods_dir(tmp_path: Path) -> None:
+def test_empty_mod_overlay_dir(tmp_path: Path) -> None:
     result = generate_dll_overrides(tmp_path)
     assert result == "mscoree,mshtml="
 
 
-def test_nonexistent_mods_dir(tmp_path: Path) -> None:
+def test_nonexistent_mod_overlay_dir(tmp_path: Path) -> None:
     nonexistent = tmp_path / "does_not_exist"
     result = generate_dll_overrides(nonexistent)
     assert result == "mscoree,mshtml="

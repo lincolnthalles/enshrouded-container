@@ -46,13 +46,25 @@ _Avoid_: Category
 Live server directory, rebuilt on every start from a Manifest install plus Mod overlay.
 _Avoid_: Mount point, Mount, Overlay
 
+**Game tree directory**:
+Path of the Game tree: `/data/gameserver`.
+_Avoid_: Mount point, Game directory
+
 **Manifest install**:
 Immutable per-version game copy. Never written after download.
 _Avoid_: Pristine install, Pristine game
 
+**Manifests directory**:
+Path holding every Manifest install: `/data/manifests`.
+_Avoid_: Manifests volume, Depot directory
+
 **Mod overlay**:
 User-supplied files shadowing the same relative paths in the Game tree.
 _Avoid_: Mods, Union layer
+
+**Mod overlay directory**:
+Path holding the Mod overlay: `/data/mods`.
+_Avoid_: Mods directory, Mod folder
 
 ### Configuration
 

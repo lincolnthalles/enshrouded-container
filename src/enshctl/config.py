@@ -15,7 +15,7 @@ from enshctl.paths import (
     GAME_CONFIG_EXAMPLE,
     LOG_DIR,
     MANIFESTS_DIR,
-    MODS_DIR,
+    MOD_OVERLAY_DIR,
     OUTPUT_CONFIG,
     SAVE_DIR,
     WINE_PREFIX,
@@ -188,7 +188,7 @@ def generated_save_dir(config_path: Path = OUTPUT_CONFIG, *, backup_dir: Path) -
         logger.warning("Generated saveDirectory %r is not a valid path; using %s", raw, SAVE_DIR)
         return SAVE_DIR
 
-    protected = (backup_dir, BACKUP_BASE_DIR, CONFIG_DIR, LOG_DIR, MANIFESTS_DIR, MODS_DIR, WINE_PREFIX)
+    protected = (backup_dir, BACKUP_BASE_DIR, CONFIG_DIR, LOG_DIR, MANIFESTS_DIR, MOD_OVERLAY_DIR, WINE_PREFIX)
     for path in protected:
         try:
             protected_path = path.resolve(strict=False)

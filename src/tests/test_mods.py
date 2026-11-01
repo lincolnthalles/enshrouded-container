@@ -1,32 +1,24 @@
-"""Tests for symlink-tree mod injection layer."""
+"""Tests for the symlink-tree mod injection layer."""
 
-import contextlib
-from dataclasses import replace
 from typing import TYPE_CHECKING
-from unittest import mock
 
 import pytest
 from enshctl.mods import (
     CONFIG_FILENAME,
+    GameTreeError,
     GameTreePlan,
     build_game_tree,
 )
+from enshctl.paths import GAME_TREE_DIR, SAVE_DIR
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
-_MOD = "enshctl.mods"
 
-
-def _settings(**overrides: object) -> AppSettings:
-    return replace(AppSettings(), **overrides)  # type: ignore[arg-type]
-
-
-def _setup_manifest(tmp_path: Path, version: str = "test-version") -> Path:
+def _setup_manifest(tmp_path: Path, manifest_id: str = "test-version") -> Path:
     """Create a fake manifest directory with test files."""
-    manifest = tmp_path / "manifests" / version
+    manifest = tmp_path / "manifests" / manifest_id
     manifest.mkdir(parents=True)
     (manifest / "enshrouded_server.exe").write_text("exe-content")
     (manifest / "data").mkdir()
@@ -52,15 +44,27 @@ def _tree_context(tmp_path: Path) -> tuple[Path, Path, Path]:
     return manifest, target, config
 
 
-@contextlib.contextmanager
-def _patched_tree(manifest: Path, target: Path, config: Path, mods: Path) -> Iterator[None]:
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", manifest),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", mods),
-        mock.patch(f"{_MOD}.CONFIG_DIR", config),
-    ):
-        yield
+def _build(
+    manifest: Path,
+    target: Path,
+    config: Path,
+    *,
+    mods: Path | None = None,
+    manifest_id: str = "test-version",
+    persist_files: tuple[str, ...] = (),
+) -> None:
+    build_game_tree(
+        GameTreePlan(
+            manifest_id,
+            persist_files,
+            1000,
+            1000,
+            manifests_dir=manifest,
+            game_tree_dir=target,
+            mod_overlay_dir=mods if mods is not None else target.parent / "mods-absent",
+            config_dir=config,
+        )
+    )
 
 
 # --- build_game_tree tests ---
@@ -71,8 +75,7 @@ def test_build_game_tree_creates_symlink_tree(tmp_path: Path) -> None:
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
+    _build(manifest, target, config)
 
     # THEN manifest files are symlinked into the target
     assert (target / "enshrouded_server.exe").read_text() == "exe-content"
@@ -87,8 +90,7 @@ def test_build_game_tree_wipes_existing_directory(tmp_path: Path) -> None:
     (target / "old_file.txt").write_text("stale")
 
     # WHEN rebuilding the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan(version="test-version", persist_files=(), puid=1000, pgid=1000))
+    _build(manifest, target, config)
 
     # THEN stale contents are removed and manifest files present
     assert not (target / "old_file.txt").exists()
@@ -101,8 +103,7 @@ def test_build_game_tree_overlay_mods(tmp_path: Path) -> None:
     mods = _setup_mods(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, mods):
-        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
+    _build(manifest, target, config, mods=mods)
 
     # THEN the mod file is present alongside manifest files
     assert (target / "plugins" / "my_mod.dll").is_symlink()
@@ -115,8 +116,7 @@ def test_build_game_tree_config_symlink(tmp_path: Path) -> None:
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", (), 1000, 1000))
+    _build(manifest, target, config)
 
     # THEN the game config symlinks to the config dir
     game_config = target / CONFIG_FILENAME
@@ -130,13 +130,8 @@ def test_build_game_tree_manifest_not_found(tmp_path: Path) -> None:
 
     # WHEN building a missing version
     # THEN FileNotFoundError propagates
-    with (
-        mock.patch(f"{_MOD}.MANIFESTS_DIR", tmp_path / "nonexistent"),
-        mock.patch(f"{_MOD}.MOUNT_POINT", target),
-        mock.patch(f"{_MOD}.MODS_DIR", tmp_path / "nonexistent"),
-        pytest.raises(FileNotFoundError),
-    ):
-        build_game_tree(GameTreePlan("nonexistent-version", (), 1000, 1000))
+    with pytest.raises(FileNotFoundError):
+        _build(tmp_path / "manifests", target, tmp_path / "config", manifest_id="nonexistent-version")
 
 
 def test_build_game_tree_persist_files(tmp_path: Path) -> None:
@@ -145,8 +140,7 @@ def test_build_game_tree_persist_files(tmp_path: Path) -> None:
     (manifest / "test-version" / "extra.dat").write_bytes(b"\x03\x04")
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", ("extra.dat",), 1000, 1000))
+    _build(manifest, target, config, persist_files=("extra.dat",))
 
     # THEN the file is copied to the config dir and symlinked from the target
     assert (config / "extra.dat").exists()
@@ -160,8 +154,7 @@ def test_build_game_tree_persist_files_skips_path_traversal(tmp_path: Path) -> N
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", ("../../etc/passwd",), 1000, 1000))
+    _build(manifest, target, config, persist_files=("../../etc/passwd",))
 
     # THEN the traversal is rejected
     assert not (tmp_path / "etc" / "passwd").exists()
@@ -175,8 +168,7 @@ def test_build_game_tree_persist_files_skips_absolute_path(tmp_path: Path) -> No
     outside.write_bytes(b"sensitive")
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", (str(outside),), 1000, 1000))
+    _build(manifest, target, config, persist_files=(str(outside),))
 
     # THEN the entry is rejected and the outside file is left untouched
     assert outside.read_bytes() == b"sensitive"
@@ -189,8 +181,7 @@ def test_build_game_tree_persist_files_skips_bare_dots(tmp_path: Path) -> None:
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", (".", ".."), 1000, 1000))
+    _build(manifest, target, config, persist_files=(".", ".."))
 
     # THEN the entries are rejected without touching the tree parents
     assert target.is_dir()
@@ -201,8 +192,7 @@ def test_build_game_tree_persist_files_skips_missing(tmp_path: Path) -> None:
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", ("nonexistent.dat",), 1000, 1000))
+    _build(manifest, target, config, persist_files=("nonexistent.dat",))
 
     # THEN no file is created
     assert not (config / "nonexistent.dat").exists()
@@ -216,8 +206,7 @@ def test_build_game_tree_persist_files_copies_readonly_source(tmp_path: Path) ->
     (manifest / "test-version" / "persist.dat").chmod(0o444)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", ("persist.dat",), 1000, 1000))
+    _build(manifest, target, config, persist_files=("persist.dat",))
 
     # THEN the persisted copy matches the source bytes
     persisted = config / "persist.dat"
@@ -231,9 +220,71 @@ def test_build_game_tree_persist_files_skips_config_filename(tmp_path: Path) -> 
     manifest, target, config = _tree_context(tmp_path)
 
     # WHEN building the game tree
-    with _patched_tree(manifest, target, config, tmp_path / "nonexistent"):
-        build_game_tree(GameTreePlan("test-version", (CONFIG_FILENAME,), 1000, 1000))
+    _build(manifest, target, config, persist_files=(CONFIG_FILENAME,))
 
     # THEN persist handling leaves the config symlink alone and creates nothing
     assert (target / CONFIG_FILENAME).is_symlink()
     assert not (config / CONFIG_FILENAME).exists()
+
+
+def test_game_tree_plan_accepts_production_roots() -> None:
+    # GIVEN the default plan
+    plan = GameTreePlan.from_settings("999", AppSettings())
+
+    # THEN the plan is accepted and targets the production Game tree
+    assert plan.game_tree_dir == GAME_TREE_DIR
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("equal_overlay", "/mods-overlay"),
+        ("nested_overlay", "/mods-overlay"),
+        ("symlink_overlay", "/mods-overlay"),
+        ("contains_config", "/config"),
+        ("backup", "/backups"),
+        ("saves", str(SAVE_DIR)),
+    ],
+)
+def test_game_tree_plan_rejects_overlapping_roots(tmp_path: Path, case: str, expected: str) -> None:
+    # GIVEN a Game tree location that overlaps exactly one protected root
+    overlay = tmp_path / "mods-overlay"
+    backup = tmp_path / "backups"
+    if case == "equal_overlay":
+        game_tree = overlay
+        config_dir = tmp_path / "config"
+    elif case in {"nested_overlay", "symlink_overlay"}:
+        game_tree = overlay / "tree"
+        config_dir = tmp_path / "config"
+    elif case == "contains_config":
+        game_tree = tmp_path / "tree"
+        config_dir = game_tree / "config"
+    elif case == "backup":
+        game_tree = backup
+        config_dir = tmp_path / "config"
+    else:
+        game_tree = SAVE_DIR
+        config_dir = tmp_path / "config"
+    if case == "symlink_overlay":
+        game_tree.parent.mkdir(parents=True, exist_ok=True)
+        game_tree.symlink_to(overlay)
+
+    # WHEN building a plan for those roots
+    # THEN the plan is rejected with an error naming both paths
+    with pytest.raises(GameTreeError) as exc_info:
+        GameTreePlan(
+            "test-version",
+            (),
+            1000,
+            1000,
+            manifests_dir=tmp_path / "manifests",
+            game_tree_dir=game_tree,
+            mod_overlay_dir=overlay,
+            config_dir=config_dir,
+            backup_dir=backup,
+        )
+
+    message = str(exc_info.value)
+    assert "Game tree directory" in message
+    assert str(game_tree) in message
+    assert expected in message
