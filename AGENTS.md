@@ -20,7 +20,11 @@ When sources disagree: specs for intent, code/config for current behavior, this 
 Done means `just gate` passes. Do NOT deliver code changes before it.
 
 ```bash
-just gate       # quiet: test → lint → typecheck; prints one status line — run `just validate` for details
+just gate       # quiet:   test → lint → typecheck; prints one status line to keep the context lean
+just validate   # verbose: test → lint → typecheck; run once if `just gate` fails
+just lint       # ruff lint
+just typecheck  # pyrefly
+just test       # pytest
 just fmt        # dprint fmt (Python via ruff format)
 ```
 

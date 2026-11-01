@@ -41,7 +41,7 @@ docker run -d \
     -v "$PWD/enshrouded-data/config:/data/config" \
     -v "$PWD/enshrouded-data/logs:/data/logs" \
     -v "$PWD/enshrouded-data/mods:/data/mods" \
-    -v "$PWD/enshrouded-data/manifests:/data/manifests \
+    -v "$PWD/enshrouded-data/manifests:/data/manifests" \
     -v enshrouded_wineprefix:/data/wineprefix \
     ghcr.io/lincolnthalles/enshrouded-container:latest
 
