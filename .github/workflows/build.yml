@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@22b48a429f10e1de233237b5c534c9c3d2e41597 # v4.1.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.1.0
 
       - name: Log in to Container Registry
         if: github.event_name != 'pull_request'
@@ -51,7 +51,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push
-        uses: docker/build-push-action@bc3a3a5f72a6dca16c2c2468d1dfc55ee66d2193 # v7.2.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.2.0
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
