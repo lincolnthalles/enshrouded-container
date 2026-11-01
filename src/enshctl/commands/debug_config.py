@@ -7,7 +7,7 @@ from enshctl.config import env_to_dict, generate_config
 from enshctl.settings import AppSettings  # noqa: TC001 — runtime annotation for registry test
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     """Run the debug-config subcommand."""
     _ = settings
     print("=== env_to_dict() ===")
@@ -21,3 +21,4 @@ def run(settings: AppSettings | None = None) -> None:
     print()
 
     print("Preview only — nothing written to /data/config/enshrouded_server.json", file=sys.stderr)
+    return 0

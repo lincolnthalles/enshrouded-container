@@ -2,7 +2,7 @@
 
 import argparse  # noqa: TC003 — add_arguments builds a real parser at runtime
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 from enshctl.backup.category import Category
 
@@ -11,6 +11,22 @@ class BackupOutcome(IntEnum):
     SUCCESS = 0
     LOCK_HELD = 1
     ERROR = 2
+
+
+class Trigger(StrEnum):
+    """Event that caused a Backup, orthogonal to its storage Category."""
+
+    SCHEDULED = "scheduled"
+    SHUTDOWN = "shutdown"
+    CRASH = "crash"
+    MANUAL = "manual"
+
+
+_TRIGGER_CATEGORIES = {
+    Trigger.SCHEDULED: Category.LIVE,
+    Trigger.SHUTDOWN: Category.COLD,
+    Trigger.CRASH: Category.EMERGENCY,
+}
 
 
 @dataclass(frozen=True)
@@ -22,6 +38,19 @@ class BackupRequest:
     def __post_init__(self) -> None:
         """Coerce a raw Category string into the enum."""
         object.__setattr__(self, "category", Category(self.category))
+
+    @classmethod
+    def for_trigger(cls, trigger: Trigger, *, wait_seconds: int = 0) -> BackupRequest:
+        """Build the request for a lifecycle trigger; manual callers pass a Category."""
+        if trigger is Trigger.MANUAL:
+            msg = "Manual backups select a Category explicitly"
+            raise ValueError(msg)
+        category = _TRIGGER_CATEGORIES[trigger]
+        return cls(
+            category=category,
+            wait_seconds=wait_seconds,
+            detach=trigger in (Trigger.SHUTDOWN, Trigger.CRASH),
+        )
 
     def to_argv(self) -> list[str]:
         argv: list[str] = []
@@ -46,8 +75,9 @@ class BackupRequest:
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--format", default=None, type=str.lower, choices=["zstd", "gzip", "zip"])
     parser.add_argument("--level", type=int, default=None)
-    parser.add_argument("--cold", action="store_true", default=False)
-    parser.add_argument("--emergency", action="store_true", default=False)
+    category = parser.add_mutually_exclusive_group()
+    category.add_argument("--cold", action="store_true", default=False)
+    category.add_argument("--emergency", action="store_true", default=False)
     parser.add_argument(
         "--wait",
         type=int,

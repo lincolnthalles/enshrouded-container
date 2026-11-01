@@ -12,7 +12,7 @@ from enshctl.settings import AppSettings, load_settings, normalize_api_url
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     """Run the download subcommand."""
     parser = argparse.ArgumentParser(description="Download a specific game manifest with optional authentication")
     parser.add_argument("manifest_id", help="Steam manifest ID to download")
@@ -54,5 +54,6 @@ def run(settings: AppSettings | None = None) -> None:
         target = download_flow.download_version(args.manifest_id, settings, version_spec=args.manifest_id)
     except InstallError:
         logger.exception("Download failed")
-        sys.exit(1)
+        return 1
     logger.info("Manifest %s downloaded at: %s", args.manifest_id, target)
+    return 0

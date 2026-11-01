@@ -1,12 +1,15 @@
 """Tests for download subcommand credential resolution."""
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import pytest
 from enshctl.commands import download
 from enshctl.download import InstallError
 from enshctl.settings import AppSettings, load_settings
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _settings_with_credentials() -> AppSettings:
@@ -63,11 +66,10 @@ class TestDownloadCredentialResolution:
         mock_flow.validate_manifest_id.side_effect = InstallError("Invalid Manifest ID")
 
         # WHEN running the download command
-        with pytest.raises(SystemExit) as exc_info:
-            download.run(load_settings({}))
+        code = download.run(load_settings({}))
 
-        # THEN it exits before auth-free setup or download
-        assert exc_info.value.code == 1
+        # THEN it returns 1 before auth-free setup or download
+        assert code == 1
         mock_flow.prepare_manifests.assert_not_called()
         mock_flow.download_version.assert_not_called()
 

@@ -14,7 +14,7 @@ from .start import run as cmd_start
 from .verify import run as cmd_verify
 from .version_info import run as cmd_version_info
 
-RunCommand = Callable[[AppSettings | None], None]
+RunCommand = Callable[[AppSettings | None], int]
 
 COMMANDS: dict[str, RunCommand] = {
     "backup": cmd_backup,

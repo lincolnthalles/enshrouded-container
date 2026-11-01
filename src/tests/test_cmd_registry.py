@@ -45,8 +45,3 @@ def test_registry_maps_to_correct_functions() -> None:
     assert COMMANDS["start"] is start_run
     assert COMMANDS["verify"] is verify_run
     assert COMMANDS["version-info"] is version_info_run
-
-
-def test_each_run_returns_none() -> None:
-    for name, func in COMMANDS.items():
-        assert func.__annotations__.get("return") is None, f"{name}.run() does not return None"

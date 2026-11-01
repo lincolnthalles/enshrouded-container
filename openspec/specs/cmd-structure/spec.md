@@ -53,6 +53,30 @@ The entrypoint SHALL dispatch each CLI subcommand (`start`, `install`, `backup`,
 - **WHEN** the container runs `enshctl debug-config`
 - **THEN** the generated configuration SHALL be printed
 
+### Requirement: Command exit contract
+
+Each command module SHALL return an integer process exit code for handled outcomes. Parser usage errors and `--help` SHALL propagate their `SystemExit` code through the entrypoint. The entrypoint SHALL exit with the returned command code or the propagated parser code. Unexpected dispatcher-handled errors SHALL be logged and exit 1.
+
+#### Scenario: Successful command returns zero
+
+- **WHEN** a command completes successfully
+- **THEN** it SHALL return 0 and the entrypoint SHALL exit 0
+
+#### Scenario: Failed command returns non-zero
+
+- **WHEN** a command fails in a way it handles
+- **THEN** it SHALL return a non-zero code and the entrypoint SHALL exit with that code
+
+#### Scenario: Parser usage exit propagates
+
+- **WHEN** a command's parser exits with a usage or help code
+- **THEN** the entrypoint SHALL exit with that code
+
+#### Scenario: Unexpected error exits one
+
+- **WHEN** a dispatcher-handled error escapes a command
+- **THEN** the entrypoint SHALL log the error and exit 1
+
 ### Requirement: Thin entrypoint
 
 The entrypoint SHALL contain only argument parsing, logging setup, CLI-flag-to-settings merging, settings loading, and subcommand dispatch. It SHALL NOT contain business logic, signal handling, or process management code.

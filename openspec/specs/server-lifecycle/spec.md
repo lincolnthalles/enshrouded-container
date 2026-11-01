@@ -21,3 +21,22 @@ The entrypoint SHALL execute the following startup sequence in order: (1) Instal
 
 - **WHEN** any startup step fails (e.g. network error during Download)
 - **THEN** the container SHALL exit with a non-zero code
+
+### Requirement: PID file lifecycle
+
+After launching the server, the entrypoint SHALL write the launched server process PID to the PID file. Every exit after a successful write SHALL clear the PID file. A failed write SHALL NOT remove a marker the process did not write. Presence of the PID file is the restore guard (see `backup-restore`).
+
+#### Scenario: PID file written on launch
+
+- **WHEN** the game server process is launched
+- **THEN** the entrypoint SHALL write the launched process PID to the PID file before supervising it
+
+#### Scenario: PID file cleared on shutdown
+
+- **WHEN** the container shuts down after the server has launched
+- **THEN** the PID file SHALL be cleared
+
+#### Scenario: PID file cleared on crash
+
+- **WHEN** the game server exits unexpectedly
+- **THEN** the PID file SHALL be cleared

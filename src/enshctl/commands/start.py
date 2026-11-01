@@ -1,89 +1,29 @@
-"""Start subcommand — full server lifecycle."""
+"""Start subcommand — startup wiring for the server lifecycle."""
 
 import logging
-import re
-import signal
 import subprocess
-import sys
-import threading
 import time
 from contextlib import suppress
 from os import chown, environ
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from enshctl import backup, config, download as download_flow, install, mods
-from enshctl.backup.category import Category
-from enshctl.backup_protocol import BackupOutcome, BackupRequest
+from enshctl import config, download as download_flow, install, mods
 from enshctl.download import InstallError
 from enshctl.files import chown_tree
+from enshctl.lifecycle import ServerLifecycle
+from enshctl.lifecycle.process import ensure_wineprefix
 from enshctl.paths import (
     BACKUP_BASE_DIR,
     CONFIG_DIR,
-    GAME_EXE,
     LOG_DIR,
     MANIFESTS_DIR,
     MODS_DIR,
-    PIDFILE,
     SAVE_DIR,
     WINE_PREFIX,
-    WINE_PREFIX_INIT_MARKER,
-    WINE_SERVER_BIN,
 )
-from enshctl.resources import start_resource_poller
-from enshctl.scheduling import parse_cron
-from enshctl.settings import AppSettings, backup_child_env, load_settings
+from enshctl.settings import AppSettings, load_settings
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-SERVER = 25
-logging.addLevelName(SERVER, "GAMESERVER")
-BACKUP = 26
-logging.addLevelName(BACKUP, "BACKUP")
 logger = logging.getLogger(__name__)
-
-LOG_SEARCH_TIMEOUT = 120
-
-
-def _base_env() -> dict[str, str]:
-    """Minimal allowlist inherited by child processes — never whole `environ`."""
-    keep = ("PATH", "LANG", "LC_ALL", "TZ", "HOME", "USER", "LOGNAME", "TMPDIR")
-    return {key: value for key in keep if (value := environ.get(key)) is not None}
-
-
-def _make_server_env(settings: AppSettings, dll_overrides: str) -> dict[str, str]:
-    return {
-        **_base_env(),
-        "WINEPREFIX": f"{WINE_PREFIX}",
-        "WINEARCH": settings.winearch,
-        "WINEDEBUG": settings.winedebug,
-        "HOME": settings.home,
-        "LIBGL_ALWAYS_SOFTWARE": "1",
-        "WINEDLLOVERRIDES": dll_overrides,
-        "XDG_RUNTIME_DIR": f"/var/run/user/{settings.puid}",
-    }
-
-
-def _make_tool_env(settings: AppSettings) -> dict[str, str]:
-    return {
-        **_base_env(),
-        "WINEPREFIX": f"{WINE_PREFIX}",
-        "WINEARCH": settings.winearch,
-        "WINEDEBUG": settings.winedebug,
-        "HOME": settings.home,
-        "LIBGL_ALWAYS_SOFTWARE": "1",
-        "WINEDLLOVERRIDES": mods.DEFAULT_DLL_OVERRIDES,
-        "XDG_RUNTIME_DIR": f"/var/run/user/{settings.puid}",
-    }
-
-
-class ServerContext:
-    """Mutable container for server process state, avoiding module-level globals."""
-
-    def __init__(self) -> None:
-        self.server_process: subprocess.Popen[bytes] | None = None
-        self.shutdown_requested = False
 
 
 def _setup_directories(settings: AppSettings) -> None:
@@ -116,12 +56,8 @@ def _setup_x11_socket() -> None:
 
 
 def _prepare_install_and_config(settings: AppSettings) -> None:
-    try:
-        download_flow.prepare_manifests(settings)
-        target = install.ensure_install(settings)
-    except InstallError:
-        logger.exception("Start failed")
-        sys.exit(1)
+    download_flow.prepare_manifests(settings)
+    target = install.ensure_install(settings)
 
     mods.build_game_tree(mods.GameTreePlan.from_settings(target.name, settings))
     new_config = config.generate_config()
@@ -134,11 +70,7 @@ def _prepare_install_and_config(settings: AppSettings) -> None:
         config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
     if saves_dir == SAVE_DIR:
         return
-    try:
-        saves_dir.mkdir(parents=True, exist_ok=True)
-    except OSError, ValueError:
-        logger.exception("Cannot create save directory %s", saves_dir)
-        sys.exit(1)
+    saves_dir.mkdir(parents=True, exist_ok=True)
     ownership_failed = False
     for path in (saves_dir, *saves_dir.rglob("*")):
         try:
@@ -147,291 +79,6 @@ def _prepare_install_and_config(settings: AppSettings) -> None:
             if not ownership_failed:
                 logger.warning("Could not set ownership on %s: %s", path, exc)
                 ownership_failed = True
-
-
-def _resolve_dll_overrides(settings: AppSettings) -> str:
-    if settings.winedlloverrides is not None:
-        logger.info("Using user-provided WINEDLLOVERRIDES: %s", settings.winedlloverrides)
-        return settings.winedlloverrides
-    generated = mods.generate_dll_overrides()
-    logger.info("Generated WINEDLLOVERRIDES: %s", generated)
-    return generated
-
-
-def _start_server(settings: AppSettings) -> subprocess.Popen[bytes]:
-    cmd = [
-        "/usr/bin/runuser",
-        "-u",
-        "steam",
-        "--",
-        "xvfb-run",
-        "--auto-servernum",
-        '--server-args="-screen 0 90x90x1"',  # Lower the allocated memory for the X server.
-        "wine",
-        str(GAME_EXE),
-    ]
-    logger.info("Starting server: %s", cmd)
-    env = {**_base_env(), **_make_server_env(settings, _resolve_dll_overrides(settings))}
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd="/data/gameserver", env=env)
-
-
-def _stream_output(proc: subprocess.Popen[bytes]) -> None:
-    """Stream server stdout line by line to the container console."""
-    if proc.stdout is None:
-        msg = "No stdout to stream"
-        raise RuntimeError(msg)
-
-    for line in iter(proc.stdout.readline, b""):
-        decoded = line.decode(errors="replace").rstrip()
-        if decoded:
-            logger.log(SERVER, decoded, extra={"source": "gameserver"})
-    proc.stdout.close()
-
-
-def _run_backup(request: BackupRequest | None = None) -> None:
-    """Run a backup subprocess for the given request (live by default)."""
-    request = request or BackupRequest()
-    env = {**_base_env(), **backup_child_env(environ), "ORCHESTRATOR_LOG_FILE": ""}
-    try:
-        cmd = ["enshctl", "backup", *request.to_argv()]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            check=False,
-            env=env,
-            start_new_session=request.detach,
-        )
-    except OSError as exc:
-        logger.warning("Failed to spawn backup subprocess: %s", exc)
-        return
-    output = (result.stdout + result.stderr).decode(errors="replace").strip()
-    try:
-        outcome = BackupOutcome(result.returncode)
-    except ValueError:
-        logger.warning("Backup subprocess returned unknown exit code %d: %s", result.returncode, output)
-        return
-    if outcome == BackupOutcome.SUCCESS:
-        for line in output.splitlines():
-            logger.log(BACKUP, _strip_child_prefix(line))
-    elif outcome == BackupOutcome.LOCK_HELD:
-        if request.wait_seconds > 0:
-            logger.warning("%s backup skipped: lock held by another process", request.category.capitalize())
-        else:
-            logger.debug("Backup skipped: lock held by another process")
-    else:
-        for line in output.splitlines():
-            logger.log(BACKUP, _strip_child_prefix(line))
-
-
-def _signal_game(sig: int) -> bool:
-    """Send a signal to the game server process tree, bypassing the runuser wrapper.
-
-    Returns True if at least one signal was delivered.
-    """
-    delivered = False
-    try:
-        result = subprocess.run(
-            [
-                "/usr/bin/runuser",
-                "-u",
-                "steam",
-                "--",
-                "pkill",
-                f"-{sig}",
-                "-f",
-                "enshrouded_server.exe",
-            ],
-            capture_output=True,
-            check=False,
-            timeout=10,
-        )
-    except OSError, subprocess.SubprocessError:
-        logger.warning("Failed to signal game server process")
-        return False
-    else:
-        delivered = result.returncode == 0
-        if not delivered:
-            logger.warning("No game server process matched for signal %d", sig)
-        return delivered
-
-
-def _make_sigterm_handler(
-    context: ServerContext, settings: AppSettings, stop_event: threading.Event
-) -> Callable[[int, object], None]:
-    def handler(_signum: int, _frame: object) -> None:
-        if context.shutdown_requested:
-            return
-        logger.info("Received SIGTERM, initiating graceful shutdown...")
-        context.shutdown_requested = True
-        stop_event.set()
-
-        try:
-            if context.server_process and context.server_process.poll() is None:
-                logger.info("Sending SIGINT to server process")
-                if not _signal_game(signal.SIGINT):
-                    context.server_process.send_signal(signal.SIGINT)
-                try:
-                    context.server_process.wait(timeout=settings.shutdown_timeout)
-                except subprocess.TimeoutExpired:
-                    logger.warning("Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout)
-                    with suppress(OSError):
-                        context.server_process.kill()
-                    with suppress(OSError):
-                        context.server_process.wait()
-
-            if settings.backup_cold and backup.backup_needed(
-                config.generated_save_dir(backup_dir=Path(settings.backup_dir))
-            ):
-                logger.info("Creating cold shutdown backup")
-                request = BackupRequest(
-                    category=Category.COLD,
-                    wait_seconds=settings.shutdown_backup_wait,
-                    detach=True,
-                )
-                _run_backup(request)
-        except OSError:
-            logger.exception("Shutdown signal handling failed")
-        finally:
-            _cleanup_wineserver(settings)
-            PIDFILE.unlink(missing_ok=True)
-            logger.info("Shutdown complete")
-            sys.exit(0)
-
-    return handler
-
-
-def _find_game_log() -> Path | None:
-    """Find the most recently modified game log file."""
-    search_roots = (
-        Path("/data/logs"),
-        Path("/data/gameserver/logs"),
-        MANIFESTS_DIR,
-        WINE_PREFIX / "drive_c/users/steamuser/AppData/Local/Enshrouded/Saved/Logs",
-    )
-    candidates: list[Path] = []
-    for root in search_roots:
-        if root.exists():
-            candidates.extend(root.glob("*.log"))
-            candidates.extend(root.rglob("logs/*.log"))
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
-
-
-def _tail_log_file(log_path: Path, stop_event: threading.Event) -> None:
-    """Tail a log file through the logger, stopping when stop_event is set."""
-    logger.info("Tailing log file: %s", log_path)
-    proc = subprocess.Popen(
-        ["tail", "-f", "-n", "+1", str(log_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    lines_relayed = 0
-    try:
-        if proc.stdout is not None:
-            for line in iter(proc.stdout.readline, b""):
-                if stop_event.is_set():
-                    break
-                decoded = line.decode(errors="replace").rstrip()
-                if decoded:
-                    logger.info(decoded, extra={"source": "gameserver"})
-                    lines_relayed += 1
-    finally:
-        proc.terminate()
-        with suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=3)
-    logger.info("Log tail ended, %d lines relayed", lines_relayed)
-
-
-def _start_log_tail_thread(stop_event: threading.Event) -> threading.Thread:
-    """Start a background thread that tails the game's log file."""
-
-    def tailer() -> None:
-        log_path: Path | None = None
-        for _ in range(LOG_SEARCH_TIMEOUT):
-            log_path = _find_game_log()
-            if log_path is not None:
-                break
-            if stop_event.is_set():
-                return
-            time.sleep(1)
-        if log_path is None:
-            logger.warning("[log-tail] No game log file found after %ds, aborted", LOG_SEARCH_TIMEOUT)
-            return
-        _tail_log_file(log_path, stop_event)
-
-    thread = threading.Thread(target=tailer, daemon=True)
-    thread.start()
-    return thread
-
-
-def _cleanup_wineserver(settings: AppSettings) -> None:
-    env = _make_tool_env(settings)
-    if WINE_SERVER_BIN.exists():
-        logger.info("Cleaning up Wine server")
-        try:
-            subprocess.run(
-                ["/usr/bin/runuser", "-u", "steam", "--", f"{WINE_SERVER_BIN}", "-k"],
-                env=env,
-                timeout=10,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            logger.warning("Wine server cleanup timed out, forcing with -k9")
-            try:
-                subprocess.run(
-                    ["/usr/bin/runuser", "-u", "steam", "--", f"{WINE_SERVER_BIN}", "-k9"],
-                    env=env,
-                    timeout=10,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired:
-                logger.warning("Forced Wine server cleanup also timed out")
-            except OSError:
-                logger.warning("Failed to execute forced Wine server cleanup")
-        except OSError:
-            logger.warning("Failed to execute Wine server cleanup")
-
-
-def _ensure_wineprefix(settings: AppSettings) -> None:
-    """Initialize the Wine prefix if it hasn't been set up yet.
-
-    Checks for system.reg — the registry file Wine creates on first init.
-    Runs as the steam user so all prefix files have correct ownership.
-    """
-    if WINE_PREFIX_INIT_MARKER.exists():
-        logger.info("Wine prefix already initialized")
-        return
-
-    _cleanup_wineserver(settings)
-
-    logger.info("Initializing wine prefix at %s", WINE_PREFIX)
-    try:
-        subprocess.run(
-            [
-                "/usr/bin/runuser",
-                "-u",
-                "steam",
-                "--",
-                "xvfb-run",
-                "--auto-servernum",
-                "wine",
-                "wineboot",
-                "--init",
-            ],
-            env=_make_tool_env(settings),
-            timeout=60,
-            check=True,
-        )
-
-    except subprocess.CalledProcessError:
-        logger.exception("Wine prefix initialization failed")
-        raise
-    except subprocess.TimeoutExpired:
-        logger.exception("Wine prefix initialization timed out after 60s")
-        raise
-    else:
-        WINE_PREFIX_INIT_MARKER.touch()
 
 
 def _setup_timezone(settings: AppSettings) -> None:
@@ -451,83 +98,21 @@ def _setup_timezone(settings: AppSettings) -> None:
         environ["TZ"] = "UTC"
 
 
-def _scheduler_loop(cron_expr: str, stop_event: threading.Event) -> None:
-    """Run scheduled backups as subprocesses. First backup runs immediately."""
-    _run_backup()
-    while not stop_event.is_set():
-        interval = parse_cron(cron_expr)
-        if interval is None:
-            interval = 1200.0
-        if stop_event.wait(interval):
-            break
-        _run_backup()
-
-
-_CHILD_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \[\w+\] ")
-
-
-def _strip_child_prefix(line: str) -> str:
-    return _CHILD_PREFIX_RE.sub("", line)
-
-
-def run(settings: AppSettings | None = None) -> None:
-    """Run the start subcommand — full server lifecycle."""
+def run(settings: AppSettings | None = None) -> int:
+    """Run the start subcommand — setup wiring plus the server lifecycle."""
     settings = settings or load_settings()
-    context = ServerContext()
-    stop_event = threading.Event()
 
-    # Warn about removed BACKUP_RETENTION
     if "BACKUP_RETENTION" in environ:
         logger.warning("BACKUP_RETENTION is ignored. Use BACKUP_KEEP_LAST, BACKUP_KEEP_DAILY, etc. instead.")
 
-    _setup_timezone(settings)
-    _setup_directories(settings)
-    _setup_x11_socket()
-    _ensure_wineprefix(settings)
-    _prepare_install_and_config(settings)
+    try:
+        _setup_timezone(settings)
+        _setup_directories(settings)
+        _setup_x11_socket()
+        ensure_wineprefix(settings)
+        _prepare_install_and_config(settings)
+    except InstallError, OSError, subprocess.SubprocessError, ValueError:
+        logger.exception("Start failed")
+        return 1
 
-    handler = _make_sigterm_handler(context, settings, stop_event)
-    signal.signal(signal.SIGTERM, handler)
-    signal.signal(signal.SIGINT, handler)
-
-    if settings.backup_live:
-        scheduler_thread = threading.Thread(
-            target=_scheduler_loop,
-            args=(settings.backup_cron, stop_event),
-            daemon=True,
-        )
-        scheduler_thread.start()
-    else:
-        logger.info("Live backups disabled")
-
-    context.server_process = _start_server(settings)
-
-    pid = context.server_process.pid
-    PIDFILE.write_text(str(pid))
-    logger.info("Server PID %s written to %s", pid, PIDFILE)
-
-    log_thread: threading.Thread | None = None
-    if settings.log_tail:
-        log_thread = _start_log_tail_thread(stop_event)
-
-    _resource_thread = start_resource_poller(pid, stop_event, interval=settings.resource_poll_interval)
-
-    _stream_output(context.server_process)
-
-    exit_code = context.server_process.wait()
-    logger.info("Server process exited with code %d", exit_code)
-    stop_event.set()
-
-    if log_thread is not None:
-        log_thread.join(timeout=5)
-
-    if not context.shutdown_requested:
-        logger.error("Server exited unexpectedly (code %d)", exit_code)
-        _cleanup_wineserver(settings)
-        if settings.backup_emergency and backup.backup_needed(
-            config.generated_save_dir(backup_dir=Path(settings.backup_dir))
-        ):
-            logger.info("Creating emergency backup")
-            _run_backup(BackupRequest(category=Category.EMERGENCY, detach=True))
-        PIDFILE.unlink(missing_ok=True)
-        sys.exit(exit_code)
+    return ServerLifecycle(settings).run()

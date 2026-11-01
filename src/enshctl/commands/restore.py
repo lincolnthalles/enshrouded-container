@@ -14,7 +14,7 @@ from enshctl.backup import (
 from enshctl.backup.catalog import scan_all, select
 from enshctl.config import generated_save_dir
 from enshctl.disk_space import SpaceGuard
-from enshctl.paths import PIDFILE
+from enshctl.pidfile import PidFile
 from enshctl.restore import RestoreError, restore_backup
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
@@ -22,8 +22,8 @@ from enshctl.utils import human_size
 logger = logging.getLogger(__name__)
 
 
-def _check_server_running() -> bool:
-    return PIDFILE.exists()
+def _check_server_running(pid_file: PidFile | None = None) -> bool:
+    return (pid_file or PidFile()).is_active()
 
 
 def _confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
@@ -42,7 +42,7 @@ def _confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
         return response.strip().lower() == "y"
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Restore a Backup to the configured saves directory")
@@ -61,40 +61,43 @@ def run(settings: AppSettings | None = None) -> None:
         backups = scan_all(base_dir)
         if not backups:
             logger.info("No backups found")
-            return
+            return 0
         _list_backups(backups)
-        return
+        return 0
 
     # Resolve backup to restore
     backup_path: Path | None = None
-    if args.file:
-        backup_path = select(base_dir, file=args.file)
-    elif args.when:
-        backup_path = select(base_dir, when=args.when)
-    elif is_tty:
-        backup_path = _interactive_restore(base_dir)
+    try:
+        if args.file:
+            backup_path = select(base_dir, file=args.file)
+        elif args.when:
+            backup_path = select(base_dir, when=args.when)
+        elif is_tty:
+            backup_path = _interactive_restore(base_dir)
+    except RestoreError:
+        return 1
 
     if backup_path is None:
         logger.error("No matching backup found")
-        sys.exit(1)
+        return 1
 
     # Pre-restore check
     if _check_server_running():
         logger.error("Cannot restore while server is running. Stop the server first.")
-        sys.exit(1)
+        return 1
 
     # Confirm
     saves_dir = generated_save_dir(backup_dir=base_dir)
     if not args.yes and not _confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
         logger.info("Restore cancelled")
-        return
+        return 0
 
     # Perform restore
     lock_path = base_dir / LOCK_FILE
     fd = acquire_lock(str(lock_path), blocking=False)
     if fd is None:
         logger.error("Cannot acquire backup lock. Another backup operation is in progress.")
-        sys.exit(1)
+        return 1
 
     try:
         restore_backup(
@@ -104,9 +107,10 @@ def run(settings: AppSettings | None = None) -> None:
             space=SpaceGuard(),
         )
     except RestoreError:
-        sys.exit(1)
+        return 1
     finally:
         release_lock(fd)
+    return 0
 
 
 def _list_backups(backups: list[BackupInfo]) -> None:
@@ -135,7 +139,8 @@ def _interactive_restore(base_dir: Path) -> Path | None:
         from textual.widgets import Footer, Header, ListItem, ListView, Static
     except ImportError:
         logger.exception("Interactive restore requires Textual. Use --file or --when instead.")
-        sys.exit(1)
+        msg = "Interactive restore requires Textual. Use --file or --when instead."
+        raise RestoreError(msg) from None
 
     class RestoreApp(App[None]):
         BINDINGS: ClassVar[list[BindingType]] = [

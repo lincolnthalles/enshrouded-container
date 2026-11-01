@@ -9,7 +9,7 @@ from enshctl.settings import AppSettings, load_settings
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Prune old backups according to retention rules")
@@ -35,7 +35,7 @@ def run(settings: AppSettings | None = None) -> None:
     total = sum(len(paths) for paths in results.values())
     if total == 0:
         logger.info("No backups to prune")
-        return
+        return 0
 
     if args.dry_run:
         for category, paths in results.items():
@@ -47,3 +47,4 @@ def run(settings: AppSettings | None = None) -> None:
             if paths:
                 logger.info("Pruned %d backup(s) from %s", len(paths), category)
         logger.info("Pruned %d backup(s) total", total)
+    return 0

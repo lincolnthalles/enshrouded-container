@@ -77,3 +77,13 @@ _Avoid_: Download
 **Download**:
 Fetching depot bytes via DepotDownloader.
 _Avoid_: Install
+
+### Lifecycle
+
+**Server lifecycle**:
+Ordered startup, supervision, and shutdown of the game server process.
+_Avoid_: Server run, Server loop
+
+**PID file**:
+File recording the PID of the launched server process; its presence is the restore guard.
+_Avoid_: Lock file, Marker

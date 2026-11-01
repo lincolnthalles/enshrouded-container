@@ -94,16 +94,15 @@ class TestVerifyAllStrayReporting:
         with (
             patch("sys.argv", ["prog"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
-            patch.object(verify_cmd.sys, "exit") as mock_exit,
             caplog.at_level("INFO"),
         ):
-            verify_cmd.run()
+            result = verify_cmd.run()
 
         # THEN the stray is warned about with a skipped count, exit reflects verified archives only
         warnings = [r for r in caplog.records if r.levelno == 30 and "manual-copy.zip" in r.message]
         assert len(warnings) == 1
         assert any("Skipped 1" in r.message for r in caplog.records)
-        mock_exit.assert_called_once_with(0)
+        assert result == 0
 
     def test_only_strays_exits_zero(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         from unittest.mock import patch
@@ -121,13 +120,12 @@ class TestVerifyAllStrayReporting:
         with (
             patch("sys.argv", ["prog"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
-            patch.object(verify_cmd.sys, "exit") as mock_exit,
             caplog.at_level("INFO"),
         ):
-            verify_cmd.run()
+            result = verify_cmd.run()
 
         # THEN exit is 0 with a skipped count reported
-        mock_exit.assert_not_called()
+        assert result == 0
         assert any("Skipped 1" in r.message for r in caplog.records)
         assert any("No backups to verify" in r.message for r in caplog.records)
 
@@ -148,12 +146,11 @@ class TestVerifyAllStrayReporting:
         with (
             patch("sys.argv", ["prog"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
-            patch.object(verify_cmd.sys, "exit") as mock_exit,
         ):
-            verify_cmd.run()
+            result = verify_cmd.run()
 
         # THEN the corrupt verified archive drives exit 1
-        mock_exit.assert_called_once_with(1)
+        assert result == 1
 
     def test_verify_file_accepts_stray_name(self, tmp_path: Path) -> None:
         from unittest.mock import patch
@@ -172,12 +169,11 @@ class TestVerifyAllStrayReporting:
         with (
             patch("sys.argv", ["prog", "--file", "manual-copy.zip"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
-            patch.object(verify_cmd.sys, "exit") as mock_exit,
         ):
-            verify_cmd.run()
+            result = verify_cmd.run()
 
         # THEN it verifies OK instead of reporting not found
-        mock_exit.assert_called_once_with(0)
+        assert result == 0
 
     def test_verify_file_unknown_suffix_reports_corrupt(self, tmp_path: Path) -> None:
         from unittest.mock import patch
@@ -195,9 +191,8 @@ class TestVerifyAllStrayReporting:
         with (
             patch("sys.argv", ["prog", "--file", "manual-copy.zst"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
-            patch.object(verify_cmd.sys, "exit") as mock_exit,
         ):
-            verify_cmd.run()
+            result = verify_cmd.run()
 
         # THEN it reports CORRUPT (exit 1) instead of raising
-        mock_exit.assert_called_once_with(1)
+        assert result == 1

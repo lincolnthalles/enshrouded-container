@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from enshctl.commands import COMMANDS
+from enshctl.download import InstallError
 from enshctl.settings import load_settings, normalize_api_url
 
 if TYPE_CHECKING:
@@ -93,11 +94,15 @@ def main() -> None:
         file_handler.setLevel(log_level)
         logging.getLogger().addHandler(file_handler)
 
+    exit_code = 0
     try:
-        COMMANDS[args.command](settings)
-    except OSError, RuntimeError, subprocess.SubprocessError, ValueError:
+        exit_code = COMMANDS[args.command](settings)
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+    except InstallError, OSError, RuntimeError, subprocess.SubprocessError, ValueError:
         logger.exception("Fatal error during %s", args.command)
-        sys.exit(1)
+        exit_code = 1
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

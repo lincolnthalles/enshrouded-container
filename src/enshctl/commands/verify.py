@@ -12,7 +12,7 @@ from enshctl.utils import human_size
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Verify backup archive integrity")
@@ -31,7 +31,7 @@ def run(settings: AppSettings | None = None) -> None:
             targets.append(found)
         if not targets:
             logger.error("Backup file not found: %s", args.file)
-            sys.exit(1)
+            return 1
     else:
         for info in scan_all(base_dir):
             targets.append(info.path)
@@ -44,7 +44,7 @@ def run(settings: AppSettings | None = None) -> None:
 
     if not targets:
         logger.info("No backups to verify")
-        return
+        return 0
 
     is_tty = sys.stdout.isatty()
     results: list[tuple[str, int, str]] = []
@@ -79,4 +79,4 @@ def run(settings: AppSettings | None = None) -> None:
         for name, size, status in results:
             print(f"{name}  {human_size(size)}  {status}")
 
-    sys.exit(1 if any_corrupt else 0)
+    return 1 if any_corrupt else 0

@@ -88,22 +88,27 @@ Backups SHALL support configurable compression formats (zstd, gzip, zip) and com
 
 ### Requirement: Shutdown-triggered cold backup
 
-When the container receives SIGTERM or SIGINT and cold backups are enabled (`BACKUP_COLD=1`), the shutdown sequence SHALL be: stop the scheduler, send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit (force-killing after the timeout), create a detached cold backup after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s; see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, unless saves are absent.
+When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: stop the scheduler, send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit (force-killing after the timeout), create a detached cold backup when `BACKUP_COLD=1` and save data exists after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s; see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, then clean up Wine, clear the PID file, and exit 0.
 
 #### Scenario: Cold backup on shutdown
 
 - **WHEN** the container receives SIGTERM with `BACKUP_COLD=1` and save data present
-- **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup, surviving the parent's process group
+- **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup, surviving the parent's process group, and the PID file SHALL be cleared before the entrypoint exits 0
 
 #### Scenario: Cold backup disabled or no saves
 
 - **WHEN** the container receives SIGTERM with `BACKUP_COLD=0`, or with no save data present
-- **THEN** no cold Backup SHALL be created and the entrypoint SHALL exit cleanly
+- **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit cleanly
+
+#### Scenario: Shutdown clears PID file
+
+- **WHEN** the container receives SIGTERM after the server has launched
+- **THEN** the PID file SHALL be cleared before the entrypoint exits 0
 
 #### Scenario: Force kill after timeout
 
 - **WHEN** the game server does not exit within the shutdown timeout after SIGINT
-- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup and Wine cleanup steps
+- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup, Wine cleanup, and PID clear steps
 
 #### Scenario: Cold backup waits for in-progress backup
 
@@ -169,14 +174,28 @@ Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-eme
 
 ### Requirement: Emergency backup on crash
 
-When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before exiting with the server's exit code.
+When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before Wine cleanup and PID clear, then exit with the server's exit code.
 
 #### Scenario: Emergency backup spawned
 
 - **WHEN** the game server exits unexpectedly with emergency backups enabled and save data present
-- **THEN** a detached emergency backup SHALL be created and the entrypoint SHALL exit with the server's exit code
+- **THEN** a detached emergency backup SHALL be created and the entrypoint SHALL exit with the server's exit code after clearing the PID file
 
 #### Scenario: Emergency backup skipped
 
 - **WHEN** the game server exits unexpectedly with `BACKUP_EMERGENCY=0`, or with no save data present
-- **THEN** no emergency Backup SHALL be created
+- **THEN** no emergency Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit with the server's code
+
+### Requirement: Exit after unexpected failure
+
+When an unexpected error occurs after the server has launched, the entrypoint SHALL stop the server, apply the emergency backup policy, clean up Wine, clear the PID file, and exit 1.
+
+#### Scenario: Unexpected failure cleans up
+
+- **WHEN** an unexpected error occurs after the server has launched
+- **THEN** the server SHALL be stopped, the emergency backup policy applied, Wine cleaned up, the PID file cleared, and the entrypoint SHALL exit 1
+
+#### Scenario: Cleanup failure still clears PID
+
+- **WHEN** Wine cleanup fails during any exit after launch
+- **THEN** the failure SHALL be logged and the PID file SHALL still be cleared

@@ -24,7 +24,7 @@ def _list_versions() -> list[dict[str, str]]:
     return versions
 
 
-def run(settings: AppSettings | None = None) -> None:
+def run(settings: AppSettings | None = None) -> int:
     """Run the version-info subcommand."""
     _ = settings
     print()
@@ -32,10 +32,11 @@ def run(settings: AppSettings | None = None) -> None:
     versions = _list_versions()
     if not versions:
         print("No versions installed.")
-        return
+        return 0
     print(f"{'Manifest ID':<22} {'Branch':<12} {'Installed At'}")
     print("-" * 60)
     for v in versions:
         mid = v.get("manifest_id", "")
         ts = v.get("installed_at", "unknown")
         print(f"{mid:<22} {'<filesystem>':<12} {ts}")
+    return 0
