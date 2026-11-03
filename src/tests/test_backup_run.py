@@ -71,9 +71,9 @@ def _seams(
     return BackupSeams(
         lock=lock or FakeLock(),
         clock=clock or FakeClock([0.0]),
-        space=SpaceGuard(),
-        saves_dir=lambda _settings: saves_dir,
-        create=create or FakeCreator(),
+        space_guard=SpaceGuard(),
+        resolve_saves_dir=lambda _settings: saves_dir,
+        create_backup=create or FakeCreator(),
         lower_priority=lower_priority or (lambda: None),
     )
 
@@ -108,12 +108,12 @@ def test_run_request_locks_plans_and_creates(tmp_path: Path) -> None:
     assert lock.acquired == [tmp_path / "backups" / ".lock"]
     assert lock.released == [3]
     assert len(create.calls) == 1
-    category, plan, space = create.calls[0]
+    category, plan, space_guard = create.calls[0]
     assert category is Category.COLD
     assert plan.saves_dir == saves
     assert plan.fmt is BackupFormat.GZIP
     assert plan.level == 5
-    assert space is seams.space
+    assert space_guard is seams.space_guard
 
 
 def test_run_request_reports_lock_held_without_creating(
@@ -275,7 +275,7 @@ def test_default_saves_dir_uses_generated_config() -> None:
 
     with patch("enshctl.backup.run.generated_save_directories", return_value=SaveDirectories(expected)) as mock:
         # WHEN the default save-dir seam resolves the settings
-        result = BackupSeams().saves_dir(settings)
+        result = BackupSeams().resolve_saves_dir(settings)
 
     # THEN it delegates to the Generated config resolver
     assert result == expected

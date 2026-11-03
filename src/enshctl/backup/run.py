@@ -8,7 +8,7 @@ from os import getpid, nice
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from enshctl.backup.core import BackupPlan, create_backup, resolve_format
+from enshctl.backup.core import BackupPlan, create_backup as create_backup_impl, resolve_format
 from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.config import generated_save_directories
@@ -103,9 +103,9 @@ class BackupSeams:
 
     lock: BackupLock = field(default_factory=SystemBackupLock)
     clock: BackupClock = field(default_factory=SystemBackupClock)
-    space: SpaceGuard = field(default_factory=SpaceGuard)
-    saves_dir: Callable[[AppSettings], Path] = _saves_dir
-    create: BackupCreator = create_backup
+    space_guard: SpaceGuard = field(default_factory=SpaceGuard)
+    resolve_saves_dir: Callable[[AppSettings], Path] = _saves_dir
+    create_backup: BackupCreator = create_backup_impl
     lower_priority: Callable[[], None] = lower_priority
 
 
@@ -132,8 +132,13 @@ def run_request(request: BackupRequest, settings: AppSettings, *, seams: BackupS
         return BackupOutcome.LOCK_HELD
 
     try:
-        plan = BackupPlan.from_settings(settings, saves_dir=seams.saves_dir(settings), fmt=fmt, level=request.level)
-        result = seams.create(category, plan, space=seams.space)
+        plan = BackupPlan.from_settings(
+            settings,
+            saves_dir=seams.resolve_saves_dir(settings),
+            fmt=fmt,
+            level=request.level,
+        )
+        result = seams.create_backup(category, plan, space=seams.space_guard)
         if result is not None:
             deleted = RetentionPolicy.from_settings(settings).enforce(categories=(category,))[category]
             if deleted:
