@@ -1,24 +1,27 @@
 """Verify subcommand — archive integrity checker."""
 
 import logging
-import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import scan_all, scan_stray, select
 from enshctl.backup.format import verify_archive
+from enshctl.commands.parser import CommandParser
+from enshctl.commands.table import Cell, render_table
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Verify backup archive integrity")
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
+    parser = CommandParser("Verify backup archive integrity")
     parser.add_argument("--file", default=None, help="Specific backup file to verify")
     parser.add_argument("--all", action="store_true", default=False, dest="all_mode", help="Verify all backups")
-    args, _ = parser.parse_known_args()
+    args = parser.parse(argv)
 
     settings = settings or load_settings()
     base_dir = Path(settings.backup_dir)
@@ -46,7 +49,6 @@ def run(settings: AppSettings | None = None) -> int:
         logger.info("No backups to verify")
         return 0
 
-    is_tty = sys.stdout.isatty()
     results: list[tuple[str, int, str]] = []
     any_corrupt = False
 
@@ -58,25 +60,14 @@ def run(settings: AppSettings | None = None) -> int:
         if not ok:
             any_corrupt = True
 
-    if is_tty:
-        try:
-            from rich.console import Console
-            from rich.table import Table
-
-            console = Console()
-            table = Table()
-            table.add_column("Backup")
-            table.add_column("Size")
-            table.add_column("Status")
-            for name, size, status in results:
-                style = "green" if status == "OK" else "red"
-                table.add_row(name, human_size(size), f"[{style}]{status}[/{style}]")
-            console.print(table)
-        except ImportError:
-            for name, size, status in results:
-                print(f"{name}  {human_size(size)}  {status}")
-    else:
-        for name, size, status in results:
-            print(f"{name}  {human_size(size)}  {status}")
+    rows = [
+        [
+            Cell(name),
+            Cell(human_size(size)),
+            Cell(status, "green" if status == "OK" else "red"),
+        ]
+        for name, size, status in results
+    ]
+    render_table(("Backup", "Size", "Status"), rows)
 
     return 1 if any_corrupt else 0

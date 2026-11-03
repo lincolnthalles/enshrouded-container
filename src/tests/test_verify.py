@@ -92,7 +92,6 @@ class TestVerifyAllStrayReporting:
 
         # WHEN verifying all
         with (
-            patch("sys.argv", ["prog"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
             caplog.at_level("INFO"),
         ):
@@ -118,7 +117,6 @@ class TestVerifyAllStrayReporting:
 
         # WHEN verifying all
         with (
-            patch("sys.argv", ["prog"]),
             patch.object(verify_cmd, "load_settings", return_value=settings),
             caplog.at_level("INFO"),
         ):
@@ -143,10 +141,7 @@ class TestVerifyAllStrayReporting:
         settings = replace(AppSettings(), backup_dir=str(tmp_path))
 
         # WHEN verifying all
-        with (
-            patch("sys.argv", ["prog"]),
-            patch.object(verify_cmd, "load_settings", return_value=settings),
-        ):
+        with patch.object(verify_cmd, "load_settings", return_value=settings):
             result = verify_cmd.run()
 
         # THEN the corrupt verified archive drives exit 1
@@ -166,14 +161,33 @@ class TestVerifyAllStrayReporting:
         settings = replace(AppSettings(), backup_dir=str(tmp_path))
 
         # WHEN verifying that specific file
-        with (
-            patch("sys.argv", ["prog", "--file", "manual-copy.zip"]),
-            patch.object(verify_cmd, "load_settings", return_value=settings),
-        ):
-            result = verify_cmd.run()
+        with patch.object(verify_cmd, "load_settings", return_value=settings):
+            result = verify_cmd.run(argv=["--file", "manual-copy.zip"])
 
         # THEN it verifies OK instead of reporting not found
         assert result == 0
+
+    def test_non_tty_output_is_plain(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        from enshctl.commands import verify as verify_cmd
+        from enshctl.settings import AppSettings
+
+        # GIVEN one valid backup and non-TTY output
+        live = tmp_path / "live"
+        live.mkdir()
+        good = live / "enshrouded-20260529-120000.tar.zst"
+        _make_tar_zst(good)
+        settings = replace(AppSettings(), backup_dir=str(tmp_path))
+
+        # WHEN verifying all
+        result = verify_cmd.run(settings)
+
+        # THEN the plain row reports the backup without a header or ANSI codes
+        output = capsys.readouterr().out
+        assert result == 0
+        assert good.name in output
+        assert "OK" in output
+        assert "Backup  Size  Status" not in output
+        assert "\x1b" not in output
 
     def test_verify_file_unknown_suffix_reports_corrupt(self, tmp_path: Path) -> None:
         from unittest.mock import patch
@@ -188,11 +202,8 @@ class TestVerifyAllStrayReporting:
         settings = replace(AppSettings(), backup_dir=str(tmp_path))
 
         # WHEN verifying that specific file
-        with (
-            patch("sys.argv", ["prog", "--file", "manual-copy.zst"]),
-            patch.object(verify_cmd, "load_settings", return_value=settings),
-        ):
-            result = verify_cmd.run()
+        with patch.object(verify_cmd, "load_settings", return_value=settings):
+            result = verify_cmd.run(argv=["--file", "manual-copy.zst"])
 
         # THEN it reports CORRUPT (exit 1) instead of raising
         assert result == 1

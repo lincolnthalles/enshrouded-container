@@ -38,7 +38,7 @@ def main() -> None:
         stream=sys.stdout,
     )
 
-    parser = argparse.ArgumentParser(description="Enshrouded server container entrypoint")
+    parser = argparse.ArgumentParser(description="Enshrouded server container entrypoint", allow_abbrev=False)
     parser.add_argument(
         "command",
         nargs="?",
@@ -67,7 +67,7 @@ def main() -> None:
         default=None,
         help="Git repository URL for depot decryption keys (env: DEPOT_KEYS_REPO)",
     )
-    args = parser.parse_known_args()[0]
+    args, command_argv = parser.parse_known_args()
 
     base = load_settings()
     settings: AppSettings = replace(
@@ -96,7 +96,7 @@ def main() -> None:
 
     exit_code = 0
     try:
-        exit_code = COMMANDS[args.command](settings)
+        exit_code = COMMANDS[args.command](settings, command_argv)
     except SystemExit as exc:
         exit_code = exc.code if isinstance(exc.code, int) else 1
     except InstallError, OSError, RuntimeError, subprocess.SubprocessError, ValueError:

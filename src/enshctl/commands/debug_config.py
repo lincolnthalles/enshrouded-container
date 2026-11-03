@@ -2,14 +2,20 @@
 
 import json
 import sys
+from typing import TYPE_CHECKING
 
+from enshctl.commands.parser import CommandParser
 from enshctl.config import env_to_dict, generate_config
 from enshctl.settings import AppSettings  # noqa: TC001 — runtime annotation for registry test
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
-def run(settings: AppSettings | None = None) -> int:
+
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
     """Run the debug-config subcommand."""
     _ = settings
+    _ = CommandParser("Debug-config subcommand").parse(argv)
     print("=== env_to_dict() ===")
     env_overrides = env_to_dict()
     print(json.dumps(env_overrides, indent=2))

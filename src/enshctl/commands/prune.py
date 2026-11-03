@@ -1,21 +1,24 @@
 """Prune subcommand — enforce retention rules."""
 
 import logging
+from typing import TYPE_CHECKING
 
+from enshctl.commands.parser import CommandParser
 from enshctl.retention import RetentionPolicy
 from enshctl.settings import AppSettings, load_settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Prune old backups according to retention rules")
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
+    parser = CommandParser("Prune old backups according to retention rules")
     parser.add_argument(
         "--dry-run", action="store_true", default=False, help="Show what would be deleted without deleting"
     )
-    args, _ = parser.parse_known_args()
+    args = parser.parse(argv)
 
     settings = settings or load_settings()
     policy = RetentionPolicy.from_settings(settings)

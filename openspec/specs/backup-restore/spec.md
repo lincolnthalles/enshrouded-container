@@ -83,7 +83,7 @@ The `restore --when` invocation SHALL select the newest Backup within a relative
 
 ### Requirement: Interactive restore picker
 
-When neither `--file` nor `--when` is provided, the command SHALL present an interactive picker on a TTY showing each Backup with its size, and SHALL list and exit on a non-TTY.
+When neither `--file` nor `--when` is provided, the command SHALL present an interactive picker on a TTY showing each Backup with its size, and SHALL print plain rows and exit on a non-TTY.
 
 #### Scenario: Interactive restore on TTY
 
@@ -93,16 +93,16 @@ When neither `--file` nor `--when` is provided, the command SHALL present an int
 #### Scenario: Interactive restore falls back on non-TTY
 
 - **WHEN** `restore` is executed without `--file` or `--when` and stdout is not a TTY
-- **THEN** the command SHALL print available Backups as a table and exit (equivalent to `--list`)
+- **THEN** the command SHALL print available Backups as plain rows and exit (equivalent to `--list`)
 
 ### Requirement: List Backups
 
-The `restore --list` invocation SHALL take precedence over `--file`/`--when`: it lists all Backups with filename, Category, size, and timestamp, and exits without restoring. With no Backups present, it SHALL log that none were found and exit 0 without printing a table.
+The `restore --list` invocation SHALL take precedence over `--file`/`--when`: it lists all Backups with filename, Category, size, and timestamp, using a table on a TTY and plain rows otherwise, and exits without restoring. With no Backups present, it SHALL log that none were found and exit 0 without printing a table or rows.
 
 #### Scenario: List all Backups
 
 - **WHEN** `restore --list` is executed
-- **THEN** a table SHALL be printed showing all Backups across all Categories with filename, Category, size, and timestamp
+- **THEN** a table (TTY) or plain rows (non-TTY) SHALL be printed showing all Backups across all Categories with filename, Category, size, and timestamp
 
 #### Scenario: List ignores selection flags
 
@@ -112,7 +112,7 @@ The `restore --list` invocation SHALL take precedence over `--file`/`--when`: it
 #### Scenario: List with no Backups
 
 - **WHEN** `restore --list` is executed and no Backups exist
-- **THEN** the command SHALL log that no Backups were found and exit 0 without printing a table
+- **THEN** the command SHALL log that no Backups were found and exit 0 without printing a table or rows
 
 ### Requirement: Restore confirmation prompt
 

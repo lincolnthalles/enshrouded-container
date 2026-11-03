@@ -2,17 +2,26 @@
 
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, override
+from typing import TYPE_CHECKING
 
-from enshctl.backup.catalog import BackupInfo, scan_all, select
+from enshctl.backup.catalog import scan_all, select
 from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
+from enshctl.commands.parser import CommandParser
+from enshctl.commands.restore_tui import select_backup as select_backup_impl
+from enshctl.commands.table import Cell, render_table
 from enshctl.config import generated_save_directories
 from enshctl.disk_space import SpaceGuard
 from enshctl.pidfile import PidFile
 from enshctl.restore import RestoreError, restore_backup
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from enshctl.backup.catalog import BackupInfo
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +30,7 @@ def _check_server_running(pid_file: PidFile | None = None) -> bool:
     return (pid_file or PidFile()).is_active()
 
 
-def _confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
+def confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
     try:
         from rich.console import Console
         from rich.prompt import Confirm
@@ -37,19 +46,31 @@ def _confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
         return response.strip().lower() == "y"
 
 
-def run(settings: AppSettings | None = None) -> int:
-    import argparse
+@dataclass(frozen=True)
+class RestoreSeams:
+    """UI adapters for one restore invocation."""
 
-    parser = argparse.ArgumentParser(description="Restore a Backup to the configured saves directory")
+    confirm_restore: Callable[[str, int, Path], bool] = confirm_restore
+    select_backup: Callable[[Sequence[BackupInfo]], BackupInfo | None] = select_backup_impl
+
+
+def run(
+    settings: AppSettings | None = None,
+    argv: Sequence[str] = (),
+    *,
+    seams: RestoreSeams | None = None,
+) -> int:
+    parser = CommandParser("Restore a Backup to the configured saves directory")
     parser.add_argument("--file", default=None, help="Backup filename to restore")
     parser.add_argument("--when", default=None, help="Direction: last, 30m, 1h, 30d, 3M [:<category>]")
     parser.add_argument("--yes", action="store_true", default=False, help="Skip confirmation prompt")
     parser.add_argument("--list", action="store_true", default=False, dest="list_mode", help="List available backups")
-    args, _ = parser.parse_known_args()
+    args = parser.parse(argv)
 
     settings = settings or load_settings()
     base_dir = Path(settings.backup_dir)
     is_tty = sys.stdout.isatty()
+    resolved = seams or RestoreSeams()
 
     # List mode
     if args.list_mode or (not args.file and not args.when and not is_tty):
@@ -68,7 +89,8 @@ def run(settings: AppSettings | None = None) -> int:
         elif args.when:
             backup_path = select(base_dir, when=args.when)
         elif is_tty:
-            backup_path = _interactive_restore(base_dir)
+            selected = resolved.select_backup(scan_all(base_dir))
+            backup_path = selected.path if selected is not None else None
     except RestoreError:
         return 1
 
@@ -84,7 +106,7 @@ def run(settings: AppSettings | None = None) -> int:
     # Confirm
     save_dirs = generated_save_directories(settings=settings)
     saves_dir = save_dirs.saves_dir
-    if not args.yes and not _confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
+    if not args.yes and not resolved.confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
         logger.info("Restore cancelled")
         return 0
 
@@ -110,64 +132,13 @@ def run(settings: AppSettings | None = None) -> int:
 
 
 def _list_backups(backups: list[BackupInfo]) -> None:
-    try:
-        from rich.console import Console
-        from rich.table import Table
-
-        console = Console()
-        table = Table()
-        table.add_column("Backup")
-        table.add_column("Category")
-        table.add_column("Size")
-        table.add_column("Timestamp")
-        for bi in backups:
-            table.add_row(bi.path.name, bi.name.category, human_size(bi.size), bi.name.timestamp.isoformat())
-        console.print(table)
-    except ImportError:
-        for bi in backups:
-            print(f"{bi.path.name}  {bi.name.category}  {human_size(bi.size)}  {bi.name.timestamp.isoformat()}")
-
-
-def _interactive_restore(base_dir: Path) -> Path | None:
-    try:
-        from textual.app import App, ComposeResult
-        from textual.binding import Binding, BindingType
-        from textual.widgets import Footer, Header, ListItem, ListView, Static
-    except ImportError:
-        logger.exception("Interactive restore requires Textual. Use --file or --when instead.")
-        msg = "Interactive restore requires Textual. Use --file or --when instead."
-        raise RestoreError(msg) from None
-
-    class RestoreApp(App[None]):
-        BINDINGS: ClassVar[list[BindingType]] = [
-            Binding("q", "quit", "Quit"),
-            Binding("escape", "quit", "Quit"),
+    rows = [
+        [
+            Cell(bi.path.name),
+            Cell(bi.name.category),
+            Cell(human_size(bi.size)),
+            Cell(bi.name.timestamp.isoformat()),
         ]
-
-        def __init__(self) -> None:
-            super().__init__()
-            self._backups = scan_all(base_dir)
-            self.selected: BackupInfo | None = None
-
-        @override
-        def compose(self) -> ComposeResult:
-            yield Header()
-            yield Static("Select a backup to restore (q to quit)")
-            yield ListView(*[ListItem(Static(f"{bi.path.name} ({human_size(bi.size)})")) for bi in self._backups])
-            yield Footer()
-
-        def on_list_view_selected(self, event: ListView.Selected) -> None:
-            list_view = self.query_one(ListView)
-            for idx, item in enumerate(list_view.children):
-                if item is event.item:
-                    self.selected = self._backups[idx]
-                    self.exit()
-                    return
-
-        @override
-        async def action_quit(self) -> None:
-            self.exit()
-
-    app = RestoreApp()
-    app.run()
-    return app.selected.path if app.selected is not None else None
+        for bi in backups
+    ]
+    render_table(("Backup", "Category", "Size", "Timestamp"), rows)

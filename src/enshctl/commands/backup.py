@@ -1,20 +1,28 @@
 """Backup subcommand — CLI entrypoint for the backup child process."""
 
 import logging
+from typing import TYPE_CHECKING
 
 from enshctl.backup.run import BackupSeams, run_request
 from enshctl.backup_protocol import BackupOutcome, BackupRequest, add_arguments
+from enshctl.commands.parser import CommandParser
 from enshctl.settings import AppSettings, load_settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None, *, seams: BackupSeams | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Backup subprocess")
+def run(
+    settings: AppSettings | None = None,
+    argv: Sequence[str] = (),
+    *,
+    seams: BackupSeams | None = None,
+) -> int:
+    parser = CommandParser("Backup subprocess")
     add_arguments(parser)
-    args, _ = parser.parse_known_args()
+    args = parser.parse(argv)
     request = BackupRequest.from_argv(args)
     resolved = settings or load_settings()
 

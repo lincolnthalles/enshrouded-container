@@ -6,8 +6,10 @@ import time
 from contextlib import suppress
 from os import chown, environ
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from enshctl import config, install, mods
+from enshctl.commands.parser import CommandParser
 from enshctl.download import flow as download_flow
 from enshctl.download.types import InstallError
 from enshctl.files import chown_tree
@@ -24,6 +26,9 @@ from enshctl.paths import (
     X11_DIR,
 )
 from enshctl.settings import AppSettings, load_settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +98,9 @@ def _setup_timezone(settings: AppSettings) -> None:
         environ["TZ"] = "UTC"
 
 
-def run(settings: AppSettings | None = None) -> int:
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
     """Run the start subcommand — setup wiring plus the server lifecycle."""
+    _ = CommandParser("Start subcommand").parse(argv)
     settings = settings or load_settings()
 
     if "BACKUP_RETENTION" in environ:

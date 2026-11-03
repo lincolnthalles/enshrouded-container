@@ -241,9 +241,8 @@ def test_backup_command_passes_compression_options(tmp_path: Path) -> None:
     # GIVEN CLI compression flags and a fake creation seam
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
     create = FakeCreator()
-    with patch("sys.argv", ["prog", "--format", "gzip", "--level", "5"]):
-        # WHEN the backup command runs
-        code = command.run(settings, seams=_seams(create=create))
+    # WHEN the backup command runs
+    code = command.run(settings, ["--format", "gzip", "--level", "5"], seams=_seams(create=create))
 
     # THEN the parsed options reach the Backup plan
     assert code == int(BackupOutcome.SUCCESS)
@@ -257,12 +256,9 @@ def test_backup_command_rejects_unknown_format() -> None:
     import enshctl.commands.backup as command
 
     # GIVEN an unknown --format value
-    with (
-        patch("sys.argv", ["prog", "--format", "lz4"]),
-        pytest.raises(SystemExit) as exc_info,
-    ):
+    with pytest.raises(SystemExit) as exc_info:
         # WHEN the backup command parses it
-        command.run(AppSettings())
+        command.run(AppSettings(), ["--format", "lz4"])
 
     # THEN the parser exit code propagates
     assert exc_info.value.code == 2

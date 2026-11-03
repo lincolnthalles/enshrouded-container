@@ -1,9 +1,14 @@
 """Version-info subcommand."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
+from enshctl.commands.parser import CommandParser
 from enshctl.paths import MANIFESTS_DIR, STATUS_FILE
 from enshctl.settings import AppSettings  # noqa: TC001 — runtime annotation for registry test
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _list_versions() -> list[dict[str, str]]:
@@ -24,9 +29,10 @@ def _list_versions() -> list[dict[str, str]]:
     return versions
 
 
-def run(settings: AppSettings | None = None) -> int:
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
     """Run the version-info subcommand."""
     _ = settings
+    _ = CommandParser("Version-info subcommand").parse(argv)
     print()
 
     versions = _list_versions()

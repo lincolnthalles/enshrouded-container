@@ -1,6 +1,6 @@
 """Subcommand registry for the enshctl CLI."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from enshctl.settings import AppSettings
 
@@ -14,7 +14,7 @@ from .start import run as cmd_start
 from .verify import run as cmd_verify
 from .version_info import run as cmd_version_info
 
-RunCommand = Callable[[AppSettings | None], int]
+RunCommand = Callable[[AppSettings | None, Sequence[str]], int]
 
 COMMANDS: dict[str, RunCommand] = {
     "backup": cmd_backup,

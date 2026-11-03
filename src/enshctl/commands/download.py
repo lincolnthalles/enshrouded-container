@@ -1,44 +1,33 @@
 """Download subcommand: download a specific manifest with optional Steam auth or ManifestHub token."""
 
-import argparse
 import logging
-import sys
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
+from enshctl.commands.parser import CommandParser
 from enshctl.download import flow as download_flow
 from enshctl.download.types import InstallError
-from enshctl.settings import AppSettings, load_settings, normalize_api_url
+from enshctl.settings import AppSettings, load_settings
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 
-def run(settings: AppSettings | None = None) -> int:
+def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
     """Run the download subcommand."""
-    parser = argparse.ArgumentParser(description="Download a specific game manifest with optional authentication")
+    parser = CommandParser("Download a specific game manifest with optional authentication")
     parser.add_argument("manifest_id", help="Steam manifest ID to download")
     parser.add_argument("--steam-username", default=None, help="Steam username for authenticated downloads")
     parser.add_argument("--steam-password", default=None, help="Steam password (omit to be prompted interactively)")
-    parser.add_argument("--api-token", default=None, help="ManifestHub API token for auth-free download")
-    parser.add_argument(
-        "--api-url",
-        default=None,
-        help="ManifestHub API base URL",
-    )
-    parser.add_argument(
-        "--depot-keys-repo",
-        default=None,
-        help="Git repository URL for depot decryption keys",
-    )
-    args = parser.parse_args(sys.argv[2:])
+    args = parser.parse(argv)
 
     base = settings or load_settings()
     settings = replace(
         base,
         steam_username=args.steam_username or base.steam_username,
         steam_password=args.steam_password or base.steam_password,
-        manifesthub_api_token=args.api_token or base.manifesthub_api_token,
-        manifesthub_api_url=normalize_api_url(args.api_url) or base.manifesthub_api_url,
-        depot_keys_repo=args.depot_keys_repo or base.depot_keys_repo,
     )
 
     logger.info(
