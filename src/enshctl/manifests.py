@@ -22,7 +22,7 @@ def _manifest_sort_key(manifest: ManifestRecord) -> tuple[int, int, int, int, in
     misorders across months, so parse to a component tuple instead.
     """
     try:
-        date_part, time_part = manifest.timestamp.split(" ", 1)
+        date_part, time_part = manifest.timestamp.split(maxsplit=1)
         month, day, year = (int(part) for part in date_part.split("/"))
         hour, minute, second = (int(part) for part in time_part.split(":"))
     except ValueError:

@@ -90,6 +90,21 @@ def test_resolve_manifest_latest_picks_newest_across_months(tmp_path: Path) -> N
     assert result == "newer"
 
 
+def test_resolve_manifest_latest_orders_tab_separated_timestamp(tmp_path: Path) -> None:
+    # GIVEN a newer Manifest whose timestamp uses a tab separator
+    control = tmp_path / ".latest-manifest"
+    found = [
+        ManifestRecord(manifest_id="older", timestamp="01/01/2020 00:00:00"),
+        ManifestRecord(manifest_id="newer", timestamp="05/29/2026\t12:00:00"),
+    ]
+
+    # WHEN resolving latest
+    result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+
+    # THEN the newer Manifest wins instead of sorting as a zero timestamp
+    assert result == "newer"
+
+
 def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
     control = tmp_path / ".latest-manifest"
     result = manifests.resolve_manifest("12345", control_file=control)
