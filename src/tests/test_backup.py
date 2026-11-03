@@ -7,20 +7,11 @@ from typing import cast
 from unittest.mock import patch
 
 import pytest
-from enshctl.backup import (
-    CATEGORIES,
-    ArchiveError,
-    BackupFormat,
-    BackupName,
-    Category,
-    acquire_lock,
-    create_backup,
-    release_lock,
-    resolve_format,
-    resolve_level,
-    verify_archive,
-)
-from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
+from enshctl.backup.catalog import BackupName, _local_now, scan_all, scan_dir, select
+from enshctl.backup.category import CATEGORIES, Category
+from enshctl.backup.core import create_backup, resolve_format, resolve_level
+from enshctl.backup.format import ArchiveError, BackupFormat, verify_archive
+from enshctl.backup.locking import acquire_lock, release_lock
 from enshctl.disk_space import SpaceGuard
 from enshctl.settings import AppSettings
 
@@ -539,8 +530,7 @@ class TestCreateBackupDiskSpace:
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN ample free space and saves present
         saves = tmp_path / "saves"
@@ -563,8 +553,7 @@ class TestCreateBackupDiskSpace:
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN free space below the stop threshold
         saves = tmp_path / "saves"
@@ -585,8 +574,7 @@ class TestCreateBackupDiskSpace:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN free space below the warn threshold but above stop
         saves = tmp_path / "saves"
@@ -613,8 +601,7 @@ class TestCreateBackupDiskSpace:
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN a full disk
         saves = tmp_path / "saves"
@@ -631,8 +618,7 @@ class TestCreateBackupDiskSpace:
         assert result is None
 
     def test_backup_skips_missing_saves_dir(self, tmp_path: Path) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN a missing configured saves directory
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
@@ -652,8 +638,7 @@ class TestCreateBackupCompressionFailure:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN a save tree and a compressor that writes a partial file before failing
         saves = tmp_path / "saves"
@@ -685,8 +670,7 @@ class TestCreateBackupCompressionFailure:
         assert list((tmp_path / "backups" / Category.LIVE).iterdir()) == []
 
     def test_value_error_failure_cleans_partial_and_propagates(self, tmp_path: Path) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN a save tree and a compressor that writes a partial file before a value error
         saves = tmp_path / "saves"
@@ -722,8 +706,8 @@ class TestCreateBackupOverrides:
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl.backup import BackupFormat, create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
+        from enshctl.backup.format import BackupFormat
 
         # GIVEN gzip configured but zstd requested explicitly
         saves = tmp_path / "saves"
@@ -746,8 +730,7 @@ class TestCreateBackupOverrides:
         self,
         tmp_path: Path,
     ) -> None:
-        from enshctl.backup import create_backup
-        from enshctl.backup.core import BackupPlan
+        from enshctl.backup.core import BackupPlan, create_backup
 
         # GIVEN a configured level of 9
         saves = tmp_path / "saves"

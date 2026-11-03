@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from enshctl.commands import COMMANDS
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.settings import load_settings, normalize_api_url
 
 if TYPE_CHECKING:

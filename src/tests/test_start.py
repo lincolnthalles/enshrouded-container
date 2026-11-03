@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from enshctl.commands import start as start_cmd
 from enshctl.config import SaveDirectories
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.paths import GAME_TREE_DIR, SAVE_DIR
 from enshctl.settings import AppSettings
 

@@ -2,8 +2,9 @@
 
 import logging
 
-from enshctl import download as download_flow, install
-from enshctl.download import InstallError
+from enshctl import install
+from enshctl.download import flow as download_flow
+from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings, load_settings
 
 logger = logging.getLogger(__name__)

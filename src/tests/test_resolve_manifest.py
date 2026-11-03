@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from enshctl import manifests
-from enshctl.download import InstallError, ManifestRecord
+from enshctl.download.types import InstallError, ManifestRecord
 
 if TYPE_CHECKING:
     from pathlib import Path

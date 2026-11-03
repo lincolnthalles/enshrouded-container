@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from enshctl.backup import CATEGORIES, Category
+from enshctl.backup.category import CATEGORIES, Category
 from enshctl.retention import RetentionConfig, RetentionPolicy, prune_category
 
 if TYPE_CHECKING:

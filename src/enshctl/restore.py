@@ -4,7 +4,7 @@ import logging
 import shutil
 from typing import TYPE_CHECKING
 
-from enshctl.backup import ArchiveError, decompress_archive
+from enshctl.backup.format import ArchiveError, decompress_archive
 from enshctl.disk_space import SpaceVerdict
 from enshctl.utils import human_size
 

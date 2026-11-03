@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from enshctl.download import DownloadIO, HostIO, download_version
+from enshctl.download.flow import download_version
 from enshctl.manifests import resolve_manifest
 from enshctl.paths import MANIFESTS_DIR
 
@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from enshctl.download.io import DownloadIO, HostIO
     from enshctl.settings import AppSettings
 
 

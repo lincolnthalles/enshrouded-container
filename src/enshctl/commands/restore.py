@@ -5,13 +5,8 @@ import sys
 from pathlib import Path
 from typing import ClassVar, override
 
-from enshctl.backup import (
-    LOCK_FILE,
-    BackupInfo,
-    acquire_lock,
-    release_lock,
-)
-from enshctl.backup.catalog import scan_all, select
+from enshctl.backup.catalog import BackupInfo, scan_all, select
+from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
 from enshctl.config import generated_save_directories
 from enshctl.disk_space import SpaceGuard
 from enshctl.pidfile import PidFile

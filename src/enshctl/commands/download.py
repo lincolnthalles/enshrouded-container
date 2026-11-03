@@ -5,8 +5,8 @@ import logging
 import sys
 from dataclasses import replace
 
-from enshctl import download as download_flow
-from enshctl.download import InstallError
+from enshctl.download import flow as download_flow
+from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings, load_settings, normalize_api_url
 
 logger = logging.getLogger(__name__)

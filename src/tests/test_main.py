@@ -2,7 +2,7 @@
 
 import pytest
 from enshctl import __main__ as entrypoint
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings
 
 

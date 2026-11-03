@@ -7,8 +7,9 @@ from contextlib import suppress
 from os import chown, environ
 from pathlib import Path
 
-from enshctl import config, download as download_flow, install, mods
-from enshctl.download import InstallError
+from enshctl import config, install, mods
+from enshctl.download import flow as download_flow
+from enshctl.download.types import InstallError
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
 from enshctl.lifecycle.wine import ensure_prefix

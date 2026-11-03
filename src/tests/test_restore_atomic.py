@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 import pytest
-from enshctl.backup import ArchiveError
+from enshctl.backup.format import ArchiveError
 from enshctl.disk_space import SpaceGuard
 from enshctl.restore import RestoreError, restore_backup
 

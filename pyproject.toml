@@ -95,10 +95,6 @@ docstring-quotes = "double"
 "src/enshctl/download/flow.py" = [
     "PLR0915", # download_version keeps the ordered install flow in one place; splitting would hide the transaction.
 ]
-"src/enshctl/backup/__init__.py" = [
-    "ANN401", # PEP 562 __getattr__ must return Any for lazy parse_cron re-export.
-]
-
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 

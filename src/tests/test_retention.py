@@ -4,7 +4,9 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from enshctl.backup import BackupFormat, BackupInfo, BackupName, Category
+from enshctl.backup.catalog import BackupInfo, BackupName
+from enshctl.backup.category import Category
+from enshctl.backup.format import BackupFormat
 from enshctl.retention import (
     RetentionConfig,
     apply_retention,

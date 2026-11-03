@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Self
 from unittest.mock import patch
 
 import pytest
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.keys import fetch_key_vdf_from_archiveorg, generate_depot_keys
 
 if TYPE_CHECKING:

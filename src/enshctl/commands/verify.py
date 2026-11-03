@@ -4,8 +4,8 @@ import logging
 import sys
 from pathlib import Path
 
-from enshctl.backup import verify_archive
 from enshctl.backup.catalog import scan_all, scan_stray, select
+from enshctl.backup.format import verify_archive
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
 

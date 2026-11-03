@@ -5,13 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from enshctl.backup import (
-    ArchiveError,
-    BackupFormat,
-    decompress_archive,
-    verify_archive,
-)
-from enshctl.backup.format import detect_format
+from enshctl.backup.format import ArchiveError, BackupFormat, decompress_archive, detect_format, verify_archive
 
 if TYPE_CHECKING:
     from collections.abc import Callable

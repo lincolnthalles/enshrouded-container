@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from enshctl import install
 from enshctl.disk_space import SpaceGuard
-from enshctl.download import DownloadIO, HostIO, InstallError, download_version
+from enshctl.download.flow import download_version
+from enshctl.download.io import DownloadIO, HostIO
+from enshctl.download.types import InstallError
 from enshctl.paths import DEPOT_ID, STATUS_FILE
 from enshctl.settings import AppSettings
 

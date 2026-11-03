@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Self
 from unittest.mock import patch
 
 import pytest
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.files import write_bytes_atomic
 from enshctl.hub import download_manifest_from_hub, fetch_missing_manifests
 from enshctl.paths import DEPOT_ID

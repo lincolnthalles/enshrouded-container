@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from enshctl.commands import download
-from enshctl.download import InstallError
+from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings, load_settings
 
 if TYPE_CHECKING:
