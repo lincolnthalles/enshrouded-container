@@ -69,6 +69,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 - Add context when propagating errors. No silent failures.
 - Catch at architectural seams, not randomly. Fail fast.
 - Warnings for recoverable errors; descriptive errors for fatal failures.
+- Prefer PEP 758 unparenthesized multi-catch without `as`: `except A, B:` / `except* A, B:`; keep parentheses with `as`: `except (A, B) as e:`. Do not flag either form as an error.
 - Unicode ellipsis in user-facing status output: `...` -> `…`.
 
 ## Concurrency & State
