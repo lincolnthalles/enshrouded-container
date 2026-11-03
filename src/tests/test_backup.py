@@ -21,6 +21,7 @@ from enshctl.backup import (
     verify_archive,
 )
 from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
+from enshctl.config import SaveDirectories
 from enshctl.disk_space import SpaceGuard
 from enshctl.settings import AppSettings
 
@@ -851,7 +852,7 @@ def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Cat
 class TestBackupRunnerFormatFlag:
     """Tests for backup_runner --format case handling."""
 
-    def test_runner_uses_generated_save_dir(self, tmp_path: Path) -> None:
+    def test_runner_uses_generated_save_directories(self, tmp_path: Path) -> None:
         import enshctl.backup_runner as br
         from enshctl.backup_protocol import BackupOutcome
 
@@ -863,7 +864,7 @@ class TestBackupRunnerFormatFlag:
         with (
             patch("sys.argv", ["prog"]),
             patch.object(br, "load_settings", return_value=settings),
-            patch.object(br, "generated_save_dir", return_value=saves),
+            patch.object(br, "generated_save_directories", return_value=SaveDirectories(saves)),
             patch.object(br, "acquire_lock", return_value=3),
             patch.object(br, "create_backup", return_value=None) as mock_create,
             patch.object(br, "release_lock"),
@@ -915,7 +916,7 @@ class TestBackupRunnerFormatFlag:
             patch("sys.argv", ["prog"]),
             patch.object(br, "_lower_priority"),
             patch.object(br, "load_settings", return_value=settings),
-            patch.object(br, "generated_save_dir", return_value=tmp_path / "saves"),
+            patch.object(br, "generated_save_directories", return_value=SaveDirectories(tmp_path / "saves")),
             patch.object(br, "acquire_lock", return_value=3),
             patch.object(br, "create_backup", side_effect=ValueError("bad level")),
             patch.object(br, "release_lock"),

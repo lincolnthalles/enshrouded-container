@@ -1,7 +1,6 @@
 """Lifecycle seams and their production adapters."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from enshctl import config, resources
@@ -77,7 +76,7 @@ class SystemLifecycleIO:
     pid_file: PidFile = field(default_factory=PidFile)
 
     def backup_needed(self) -> bool:
-        saves_dir = config.generated_save_dir(backup_dir=Path(self.settings.backup_dir))
+        saves_dir = config.generated_save_directories(settings=self.settings).saves_dir
         return backup_is_needed(saves_dir)
 
     def run_backup(self, request: BackupRequest) -> None:

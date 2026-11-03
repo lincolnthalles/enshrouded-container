@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from contextlib import suppress
+from dataclasses import dataclass
 from os import chown, environ
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,23 @@ from enshctl.paths import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from enshctl.settings import AppSettings
+
 logger = logging.getLogger(__name__)
+
+RESTORE_TMP_DIR_NAME = "saves-restore-tmp"
+
+
+@dataclass(frozen=True)
+class SaveDirectories:
+    """Resolved save locations derived from the Generated config."""
+
+    saves_dir: Path
+
+    @property
+    def restore_tmp_dir(self) -> Path:
+        """Sibling staging directory consumed by Restore."""
+        return self.saves_dir.parent / RESTORE_TMP_DIR_NAME
 
 
 def snake_to_camel(name: str) -> str:
@@ -150,25 +167,8 @@ def load_base_config() -> dict[str, Any]:
     return {}
 
 
-def generated_save_dir(config_path: Path = OUTPUT_CONFIG, *, backup_dir: Path) -> Path:
-    """Return the Generated config's safe, absolute save directory.
-
-    Missing, empty, unreadable, relative, or protected-path values fall back
-    to the saves volume.
-    """
-    try:
-        generated = json.loads(config_path.read_text())
-    except FileNotFoundError:
-        return SAVE_DIR
-    except OSError, ValueError:
-        logger.warning("Could not read Generated config %s; using %s for saves", config_path, SAVE_DIR)
-        return SAVE_DIR
-
-    if not isinstance(generated, dict):
-        logger.warning("Generated config %s is not an object; using %s for saves", config_path, SAVE_DIR)
-        return SAVE_DIR
-
-    raw = generated.get("saveDirectory")
+def _resolve_save_dir(raw: object, *, backup_dir: Path) -> Path:
+    """Resolve one saveDirectory value to a safe, absolute path."""
     if not isinstance(raw, str):
         logger.warning("Generated saveDirectory %r is not a string; using %s", raw, SAVE_DIR)
         return SAVE_DIR
@@ -202,6 +202,32 @@ def generated_save_dir(config_path: Path = OUTPUT_CONFIG, *, backup_dir: Path) -
             logger.warning("Generated saveDirectory %s overlaps protected path %s; using %s", saves_dir, path, SAVE_DIR)
             return SAVE_DIR
     return saves_dir
+
+
+def generated_save_directories(
+    config_path: Path = OUTPUT_CONFIG,
+    *,
+    settings: AppSettings,
+) -> SaveDirectories:
+    """Return the Generated config's safe save locations.
+
+    Missing, empty, unreadable, relative, or protected-path values fall back
+    to the saves volume.
+    """
+    try:
+        generated = json.loads(config_path.read_text())
+    except FileNotFoundError:
+        return SaveDirectories(SAVE_DIR)
+    except OSError, ValueError:
+        logger.warning("Could not read Generated config %s; using %s for saves", config_path, SAVE_DIR)
+        return SaveDirectories(SAVE_DIR)
+
+    if not isinstance(generated, dict):
+        logger.warning("Generated config %s is not an object; using %s for saves", config_path, SAVE_DIR)
+        return SaveDirectories(SAVE_DIR)
+
+    resolved = _resolve_save_dir(generated.get("saveDirectory"), backup_dir=Path(settings.backup_dir))
+    return SaveDirectories(resolved)
 
 
 def _is_name_keyed_dict(d: dict[str, Any]) -> bool:
@@ -283,3 +309,15 @@ def write_config(config: dict[str, Any], *, puid: int = 1000, pgid: int = 1000) 
     with suppress(OSError):
         chown(OUTPUT_CONFIG, puid, pgid)
     logger.info("Config written to %s", OUTPUT_CONFIG)
+
+
+def write_generated_config(settings: AppSettings) -> SaveDirectories:
+    """Resolve the save directory and write the Generated config once."""
+    generated = generate_config()
+    configured = str(generated["saveDirectory"])
+    directories = SaveDirectories(_resolve_save_dir(configured, backup_dir=Path(settings.backup_dir)))
+    if Path(configured) != directories.saves_dir:
+        logger.warning("Using save directory %s instead of %s", directories.saves_dir, configured)
+        generated["saveDirectory"] = str(directories.saves_dir)
+    write_config(generated, puid=settings.puid, pgid=settings.pgid)
+    return directories

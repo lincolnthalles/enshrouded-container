@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 from enshctl.download.depotdownloader import with_manifest_override
 from enshctl.download.io import DownloadIO, HostIO, SystemDownloadIO, SystemHostIO
 from enshctl.download.types import DownloadConfig, InstallError, ManifestFile
+from enshctl.keys import depot_keys_path
 from enshctl.paths import DEPOT_ID, MANIFESTS_DIR, STATUS_FILE
 from enshctl.utils import human_size
 
@@ -100,7 +101,7 @@ def _select_strategy(
     manifest_id: str,
     manifest: ManifestFile,
     settings: AppSettings,
-    depot_keys_path: Path,
+    keys_path: Path,
     *,
     has_support: bool,
     has_keys: bool,
@@ -111,7 +112,7 @@ def _select_strategy(
         return "auth-free", DownloadConfig(
             use_manifestfile=True,
             manifest_file=manifest.path,
-            depot_keys_path=depot_keys_path,
+            depot_keys_path=keys_path,
         )
     if username:
         return "Steam auth", DownloadConfig(username=username, password=settings.steam_password)
@@ -199,13 +200,13 @@ def download_version(
         host=host_io,
         source=download_io,
     )
-    depot_keys_path = manifests_dir / "depot.keys"
-    has_keys = host_io.is_file(depot_keys_path)
+    keys_path = depot_keys_path(manifests_dir)
+    has_keys = host_io.is_file(keys_path)
     strategy, config = _select_strategy(
         manifest_id,
         manifest,
         settings,
-        depot_keys_path,
+        keys_path,
         has_support=has_support,
         has_keys=has_keys,
         is_latest=is_latest,

@@ -12,7 +12,7 @@ from enshctl.backup import (
     release_lock,
 )
 from enshctl.backup.catalog import scan_all, select
-from enshctl.config import generated_save_dir
+from enshctl.config import generated_save_directories
 from enshctl.disk_space import SpaceGuard
 from enshctl.pidfile import PidFile
 from enshctl.restore import RestoreError, restore_backup
@@ -87,7 +87,8 @@ def run(settings: AppSettings | None = None) -> int:
         return 1
 
     # Confirm
-    saves_dir = generated_save_dir(backup_dir=base_dir)
+    save_dirs = generated_save_directories(settings=settings)
+    saves_dir = save_dirs.saves_dir
     if not args.yes and not _confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
         logger.info("Restore cancelled")
         return 0
@@ -103,7 +104,7 @@ def run(settings: AppSettings | None = None) -> int:
         restore_backup(
             backup_path,
             saves_dir=saves_dir,
-            tmp_dir=saves_dir.parent / "saves-restore-tmp",
+            tmp_dir=save_dirs.restore_tmp_dir,
             space=SpaceGuard(),
         )
     except RestoreError:

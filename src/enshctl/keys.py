@@ -82,8 +82,13 @@ def generate_depot_keys(depot_keys: dict[str, str], output_path: Path) -> None:
     logger.info("Generated depot.keys at %s (%d entries)", output_path, len(lines))
 
 
+def depot_keys_path(manifests_dir: Path) -> Path:
+    """Return the depot.keys location for a Manifests directory."""
+    return manifests_dir / "depot.keys"
+
+
 def ensure_depot_keys(manifests_dir: Path, repo_url: str | None) -> Path:
-    output_path = manifests_dir / "depot.keys"
+    output_path = depot_keys_path(manifests_dir)
     if output_path.is_file():
         logger.info("depot.keys already exists at %s", output_path)
         return output_path

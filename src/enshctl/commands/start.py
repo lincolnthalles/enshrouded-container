@@ -20,6 +20,7 @@ from enshctl.paths import (
     MOD_OVERLAY_DIR,
     SAVE_DIR,
     WINE_PREFIX,
+    X11_DIR,
 )
 from enshctl.settings import AppSettings, load_settings
 
@@ -50,9 +51,8 @@ def _setup_directories(settings: AppSettings) -> None:
 
 
 def _setup_x11_socket() -> None:
-    x11_dir = Path("/tmp/.X11-unix")
-    x11_dir.mkdir(parents=True, exist_ok=True)
-    x11_dir.chmod(0o1777)
+    X11_DIR.mkdir(parents=True, exist_ok=True)
+    X11_DIR.chmod(0o1777)
 
 
 def _prepare_install_and_config(settings: AppSettings) -> None:
@@ -61,14 +61,7 @@ def _prepare_install_and_config(settings: AppSettings) -> None:
 
     plan = mods.GameTreePlan.from_settings(installed.name, settings)
     mods.build_game_tree(plan)
-    new_config = config.generate_config()
-    config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
-    saves_dir = config.generated_save_dir(backup_dir=Path(settings.backup_dir))
-    configured = Path(str(new_config["saveDirectory"]))
-    if saves_dir != configured:
-        logger.warning("Using save directory %s instead of %s", saves_dir, configured)
-        new_config["saveDirectory"] = str(saves_dir)
-        config.write_config(new_config, puid=settings.puid, pgid=settings.pgid)
+    saves_dir = config.write_generated_config(settings).saves_dir
     if saves_dir == SAVE_DIR:
         return
     saves_dir.mkdir(parents=True, exist_ok=True)

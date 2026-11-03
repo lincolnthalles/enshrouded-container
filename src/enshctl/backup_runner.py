@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from enshctl.backup import LOCK_FILE, acquire_lock, create_backup, release_lock, resolve_format
 from enshctl.backup.core import BackupPlan
 from enshctl.backup_protocol import BackupOutcome, BackupRequest, add_arguments
-from enshctl.config import generated_save_dir
+from enshctl.config import generated_save_directories
 from enshctl.disk_space import SpaceGuard
 from enshctl.retention import RetentionConfig, prune_category
 from enshctl.settings import AppSettings, load_settings
@@ -84,7 +84,7 @@ def main(settings: AppSettings | None = None) -> int:
         return BackupOutcome.LOCK_HELD
 
     try:
-        saves_dir = generated_save_dir(backup_dir=Path(resolved.backup_dir))
+        saves_dir = generated_save_directories(settings=resolved).saves_dir
         plan = BackupPlan.from_settings(resolved, saves_dir=saves_dir, fmt=fmt, level=args.level)
         result = create_backup(category, plan, space=SpaceGuard())
         if result is not None:

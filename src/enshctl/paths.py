@@ -19,7 +19,6 @@ GAME_CONFIG_EXAMPLE = GAME_TREE_DIR / "enshrouded_server_example.json"
 PIDFILE = BACKUP_BASE_DIR / "enshctl.pid"
 WINE_PREFIX_INIT_MARKER = WINE_PREFIX / ".wineboot-completed"
 WINE_SERVER_BIN = Path("/usr/bin/wineserver")
-DEPOT_KEYS_FILE = MANIFESTS_DIR / "depot.keys"
 LATEST_MANIFEST_FILE = MANIFESTS_DIR / ".latest-manifest"
 STATUS_FILE = ".installed"
 

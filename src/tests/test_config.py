@@ -1,5 +1,7 @@
 """Tests for config module."""
 
+import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
@@ -9,11 +11,21 @@ from enshctl.config import (
     deep_merge,
     env_to_dict,
     generate_config,
-    generated_save_dir,
+    generated_save_directories,
     parse_value,
     snake_to_camel,
+    write_generated_config,
 )
 from enshctl.paths import SAVE_DIR
+from enshctl.settings import AppSettings
+
+
+def _settings(backup_dir: Path = Path("/data/backups")) -> AppSettings:
+    return AppSettings(backup_dir=str(backup_dir))
+
+
+def _read_save_dir(config_path: Path, *, backup_dir: Path = Path("/data/backups")) -> Path:
+    return generated_save_directories(config_path, settings=_settings(backup_dir)).saves_dir
 
 
 def test_snake_to_camel_single() -> None:
@@ -177,14 +189,14 @@ def test_generated_save_dir_reads_absolute_path(tmp_path: Path) -> None:
     config_file.write_text('{"saveDirectory": "/mnt/nfs/saves"}')
     # WHEN resolving the save directory
     # THEN that path is used
-    assert generated_save_dir(config_file, backup_dir=Path("/data/backups")) == Path("/mnt/nfs/saves")
+    assert _read_save_dir(config_file, backup_dir=Path("/data/backups")) == Path("/mnt/nfs/saves")
 
 
 def test_generated_save_dir_defaults_when_missing(tmp_path: Path) -> None:
     # GIVEN no Generated config file
     # WHEN resolving the save directory
     # THEN the volume default is used
-    assert generated_save_dir(tmp_path / "missing.json", backup_dir=Path("/data/backups")) == SAVE_DIR
+    assert _read_save_dir(tmp_path / "missing.json", backup_dir=Path("/data/backups")) == SAVE_DIR
 
 
 def test_generated_save_dir_defaults_when_relative(
@@ -196,7 +208,7 @@ def test_generated_save_dir_defaults_when_relative(
     config_file.write_text('{"saveDirectory": "saves"}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "not absolute" in caplog.text
@@ -211,7 +223,7 @@ def test_generated_save_dir_defaults_when_invalid_json(
     config_file.write_text("not json")
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "Could not read Generated config" in caplog.text
@@ -226,7 +238,7 @@ def test_generated_save_dir_defaults_when_unsafe(
     config_file.write_text('{"saveDirectory": "/data"}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "overlaps protected path" in caplog.text
@@ -241,7 +253,7 @@ def test_generated_save_dir_defaults_when_root(
     config_file.write_text('{"saveDirectory": "/"}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "overlaps protected path" in caplog.text
@@ -254,7 +266,7 @@ def test_generated_save_dir_defaults_when_unreadable(
     # GIVEN an unreadable Generated config path
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(tmp_path, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(tmp_path, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "Could not read Generated config" in caplog.text
@@ -269,7 +281,7 @@ def test_generated_save_dir_defaults_when_traversal(
     config_file.write_text('{"saveDirectory": "/data/saves/../backups"}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "overlaps protected path" in caplog.text
@@ -284,7 +296,7 @@ def test_generated_save_dir_defaults_when_double_slash(
     config_file.write_text('{"saveDirectory": "//data/backups"}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "overlaps protected path" in caplog.text
@@ -303,7 +315,7 @@ def test_generated_save_dir_defaults_when_symlinked_protected(
     config_file.write_text(f'{{"saveDirectory": "{link}"}}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=backups)
+        result = _read_save_dir(config_file, backup_dir=backups)
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "overlaps protected path" in caplog.text
@@ -318,7 +330,7 @@ def test_generated_save_dir_warns_for_non_string(
     config_file.write_text('{"saveDirectory": 123}')
     with caplog.at_level("WARNING", logger="enshctl.config"):
         # WHEN resolving the save directory
-        result = generated_save_dir(config_file, backup_dir=Path("/data/backups"))
+        result = _read_save_dir(config_file, backup_dir=Path("/data/backups"))
     # THEN the volume default is used with a warning
     assert result == SAVE_DIR
     assert "not a string" in caplog.text
@@ -339,7 +351,111 @@ def test_generated_save_dir_defaults_for_malformed_values(tmp_path: Path, payloa
     config_file.write_text(payload)
     # WHEN resolving the save directory
     # THEN the volume default is used
-    assert generated_save_dir(config_file, backup_dir=Path("/data/backups")) == SAVE_DIR
+    assert _read_save_dir(config_file, backup_dir=Path("/data/backups")) == SAVE_DIR
+
+
+def test_generated_save_directories_pair_sibling_restore_tmp(tmp_path: Path) -> None:
+    # GIVEN a Generated config naming an absolute save directory
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text('{"saveDirectory": "/mnt/nfs/saves"}')
+
+    # WHEN resolving the save locations
+    result = generated_save_directories(config_file, settings=_settings())
+
+    # THEN the restore staging directory is a sibling of the save directory
+    assert result.saves_dir == Path("/mnt/nfs/saves")
+    assert result.restore_tmp_dir == Path("/mnt/nfs/saves-restore-tmp")
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "/data",
+        "/mnt/\x00/saves",
+    ],
+)
+def test_write_generated_config_resolves_invalid_save_dir_before_write(
+    configured: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a Generated config whose saveDirectory is protected or malformed
+    written: list[dict[str, Any]] = []
+
+    def capture(config: dict[str, Any], **_kwargs: object) -> None:
+        written.append(deepcopy(config))
+
+    with (
+        patch("enshctl.config.environ", {"ENSHROUDED_SAVE_DIRECTORY": configured}),
+        patch("enshctl.config.load_base_config", return_value={}),
+        patch("enshctl.config.write_config", side_effect=capture),
+        caplog.at_level("WARNING", logger="enshctl.config"),
+    ):
+        # WHEN writing the Generated config
+        result = write_generated_config(_settings())
+
+    # THEN the safe directory is returned and only the safe value is written
+    assert result.saves_dir == SAVE_DIR
+    assert result.restore_tmp_dir == SAVE_DIR.parent / "saves-restore-tmp"
+    assert len(written) == 1
+    assert written[0]["saveDirectory"] == str(SAVE_DIR)
+    assert "Using save directory" in caplog.text
+
+
+def test_write_generated_config_preserves_absolute_save_dir(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import patch
+
+    # GIVEN an absolute, non-protected save directory with a trailing separator
+    saves = tmp_path / "custom" / "saves"
+    configured = f"{saves}/"
+    written: list[dict[str, Any]] = []
+
+    def capture(config: dict[str, Any], **_kwargs: object) -> None:
+        written.append(deepcopy(config))
+
+    with (
+        patch("enshctl.config.environ", {"ENSHROUDED_SAVE_DIRECTORY": configured}),
+        patch("enshctl.config.load_base_config", return_value={}),
+        patch("enshctl.config.write_config", side_effect=capture),
+        caplog.at_level("WARNING", logger="enshctl.config"),
+    ):
+        # WHEN writing the Generated config
+        result = write_generated_config(_settings())
+
+    # THEN the equivalent path is written unchanged without a warning
+    assert result.saves_dir == saves
+    assert len(written) == 1
+    assert written[0]["saveDirectory"] == configured
+    assert "Using save directory" not in caplog.text
+
+
+def test_write_generated_config_round_trips_through_reader(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    # GIVEN a Generated config whose unsafe saveDirectory resolves before writing
+    written: list[dict[str, Any]] = []
+
+    def capture(config: dict[str, Any], **_kwargs: object) -> None:
+        written.append(deepcopy(config))
+
+    with (
+        patch("enshctl.config.environ", {"ENSHROUDED_SAVE_DIRECTORY": "/data"}),
+        patch("enshctl.config.load_base_config", return_value={}),
+        patch("enshctl.config.write_config", side_effect=capture),
+    ):
+        written_dirs = write_generated_config(_settings())
+
+    # WHEN reading the written config back through the consumer path
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text(json.dumps(written[0]))
+    read_dirs = generated_save_directories(config_file, settings=_settings())
+
+    # THEN the writer and reader agree on the save locations
+    assert read_dirs == written_dirs
 
 
 def test_generate_config_without_source_reads_process_environment() -> None:

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from enshctl.commands import start as start_cmd
+from enshctl.config import SaveDirectories
 from enshctl.download import InstallError
 from enshctl.paths import GAME_TREE_DIR, SAVE_DIR
 from enshctl.settings import AppSettings
@@ -29,8 +30,7 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
-        patch.object(start_cmd.config, "write_config"),
-        patch.object(start_cmd.config, "generated_save_dir", return_value=saves),
+        patch.object(start_cmd.config, "write_config") as mock_write,
         patch.object(start_cmd, "chown") as mock_chown,
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
@@ -43,9 +43,10 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
     assert code == 0
     assert saves.is_dir()
     assert mock_chown.call_count >= 1
+    assert mock_write.call_count == 1
 
 
-def test_start_run_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
+def test_start_run_resolves_unsafe_save_dir_before_write(tmp_path: Path) -> None:
     # GIVEN a Generated config with an unsafe save directory that resolves to the volume
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
     new_config = {"saveDirectory": "/data"}
@@ -60,7 +61,6 @@ def test_start_run_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value=new_config),
         patch.object(start_cmd.config, "write_config") as mock_write,
-        patch.object(start_cmd.config, "generated_save_dir", return_value=SAVE_DIR),
         patch.object(start_cmd, "chown"),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
@@ -69,10 +69,10 @@ def test_start_run_rewrites_unsafe_save_dir(tmp_path: Path) -> None:
         # WHEN the start command runs
         code = start_cmd.run(settings)
 
-    # THEN the safe path is written back to the Generated config
+    # THEN the Generated config is written once with the safe path
     assert code == 0
     assert new_config["saveDirectory"] == str(SAVE_DIR)
-    assert mock_write.call_count == 2
+    mock_write.assert_called_once()
     assert mock_write.call_args.args[0]["saveDirectory"] == str(SAVE_DIR)
 
 
@@ -94,7 +94,6 @@ def test_start_run_warns_on_ownership_failure(
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
         patch.object(start_cmd.config, "write_config"),
-        patch.object(start_cmd.config, "generated_save_dir", return_value=saves),
         patch.object(start_cmd, "chown", side_effect=OSError("nope")),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
         caplog.at_level("WARNING", logger="enshctl.commands.start"),
@@ -123,9 +122,7 @@ def test_start_uses_installed_manifest_id(tmp_path: Path) -> None:
         patch.object(start_cmd.download_flow, "prepare_manifests"),
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
         patch.object(start_cmd.mods, "build_game_tree") as mock_build,
-        patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(SAVE_DIR)}),
-        patch.object(start_cmd.config, "write_config"),
-        patch.object(start_cmd.config, "generated_save_dir", return_value=SAVE_DIR),
+        patch.object(start_cmd.config, "write_generated_config", return_value=SaveDirectories(SAVE_DIR)),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
         mock_lifecycle.return_value.run.return_value = 0

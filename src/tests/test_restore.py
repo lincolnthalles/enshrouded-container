@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from enshctl.commands.restore import _confirm_restore
+from enshctl.config import SaveDirectories
 from enshctl.disk_space import SpaceGuard
 from enshctl.pidfile import PidFile
 
@@ -48,7 +49,7 @@ def test_restore_command_uses_configured_saves(tmp_path: Path) -> None:
     with (
         patch("sys.argv", ["enshctl", "restore", "--file", backup.name, "--yes"]),
         patch.object(cmd, "select", return_value=backup),
-        patch.object(cmd, "generated_save_dir", return_value=saves),
+        patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(saves)),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
         patch.object(cmd, "acquire_lock", return_value=3),
         patch.object(cmd, "release_lock"),
