@@ -10,7 +10,7 @@ from enshctl import install
 from enshctl.disk_space import SpaceGuard
 from enshctl.download.flow import download_version
 from enshctl.download.io import DownloadIO, HostIO
-from enshctl.download.types import InstallError
+from enshctl.download.types import InstallError, ManifestRecord
 from enshctl.paths import DEPOT_ID, STATUS_FILE
 from enshctl.settings import AppSettings
 
@@ -130,6 +130,29 @@ class TestDownloadVersionQuota:
                 host=cast("HostIO", _host(7 * 1024**3)),
                 source=cast("DownloadIO", _download()),
             )
+
+
+def test_ensure_install_uses_default_resolve(tmp_path: Path) -> None:
+    # GIVEN a build Version spec whose resolved Manifest ID differs from the spec
+    settings = _settings(version="build:999")
+    host = _host()
+    download = _download()
+    manifests_dir = tmp_path / "manifests"
+    found = [ManifestRecord(manifest_id="123999", timestamp="05/29/2026 12:00:00")]
+
+    with patch("enshctl.manifests.DepotDownloader") as mock_adapter:
+        mock_adapter.return_value.fetch_manifests.return_value = found
+        # WHEN ensuring the install without an injected resolver
+        result = install.ensure_install(
+            settings,
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", download),
+        )
+
+    # THEN the default resolver maps the build spec to the listed Manifest ID
+    assert result == manifests_dir / "123999"
+    download.download_depots.assert_called_once()
 
 
 def test_ensure_install_uses_custom_manifests_dir_and_seams(tmp_path: Path) -> None:

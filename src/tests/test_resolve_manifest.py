@@ -1,7 +1,9 @@
-"""Tests for latest manifest control file and resolve_manifest fallback."""
+"""Tests for Version spec resolution and the latest-manifest control file."""
 
 import logging
+import os
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from enshctl import manifests
@@ -11,82 +13,134 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_write_latest_manifest_creates_file(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    manifests._write_latest_manifest("1234567890", "05/29/2026 12:00:00", control)
-    assert control.read_text().strip() == "1234567890-05/29/2026 12:00:00"
-
-
-def test_write_latest_manifest_skips_when_unchanged(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    control.write_text("1234567890-05/29/2026 12:00:00")
-    original_mtime = control.stat().st_mtime_ns
-    manifests._write_latest_manifest("1234567890", "05/29/2026 12:00:00", control)
-    assert control.stat().st_mtime_ns == original_mtime
-
-
-def test_write_latest_manifest_updates_on_change(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    control.write_text("old-id-01/01/2020 00:00:00")
-    manifests._write_latest_manifest("999999", "06/01/2026 08:30:00", control)
-    assert control.read_text().strip() == "999999-06/01/2026 08:30:00"
-
-
-def test_read_latest_manifest_missing_file(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    result = manifests._read_latest_manifest(control)
-    assert result is None
-
-
-def test_read_latest_manifest_empty_file(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    control.write_text("")
-    result = manifests._read_latest_manifest(control)
-    assert result is None
-
-
-def test_read_latest_manifest_valid(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    control.write_text("2174935030716737236-05/29/2026 12:00:00")
-    result = manifests._read_latest_manifest(control)
-    assert result == "2174935030716737236"
-
-
-def test_read_latest_manifest_malformed(tmp_path: Path) -> None:
-    control = tmp_path / ".latest-manifest"
-    control.write_text("not-a-number-something")
-    result = manifests._read_latest_manifest(control)
-    assert result is None
-
-
 def test_resolve_manifest_latest_writes_control(tmp_path: Path) -> None:
+    # GIVEN one listed Manifest and no recorded control file
     control = tmp_path / ".latest-manifest"
     found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
+
+    # WHEN resolving latest
     result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+
+    # THEN the resolved ID is recorded with its timestamp
     assert result == "111"
     assert control.read_text().strip() == "111-05/29/2026 12:00:00"
 
 
-def test_resolve_manifest_latest_fallback_to_cached(tmp_path: Path) -> None:
+def test_resolve_manifest_latest_fallback_to_cached(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a recorded manifest and an empty listing
     control = tmp_path / ".latest-manifest"
     control.write_text("999999-05/29/2026 12:00:00")
-    result = manifests.resolve_manifest("latest", control_file=control, fetch=list)
+
+    # WHEN resolving latest
+    with caplog.at_level(logging.WARNING, logger="enshctl.manifests"):
+        result = manifests.resolve_manifest("latest", control_file=control, fetch=list)
+
+    # THEN the recorded manifest is used with a warning naming it
     assert result == "999999"
+    assert "cached manifest 999999" in caplog.text
 
 
 def test_resolve_manifest_latest_no_cache_no_manifests_raises(tmp_path: Path) -> None:
+    # GIVEN no recorded manifest and an empty listing
     control = tmp_path / ".latest-manifest"
-    with pytest.raises(InstallError):
+
+    # WHEN resolving latest
+    # THEN resolution fails instead of guessing a Manifest
+    with pytest.raises(InstallError, match="no cached manifest"):
         manifests.resolve_manifest("latest", control_file=control, fetch=list)
 
 
+def test_resolve_manifest_latest_rewrites_control_on_change(tmp_path: Path) -> None:
+    # GIVEN a stale recorded manifest
+    control = tmp_path / ".latest-manifest"
+    control.write_text("old-id-01/01/2020 00:00:00")
+    found = [ManifestRecord(manifest_id="999999", timestamp="06/01/2026 08:30:00")]
+
+    # WHEN resolving latest
+    result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+
+    # THEN the recorded manifest is replaced with the resolved ID and timestamp
+    assert result == "999999"
+    assert control.read_text().strip() == "999999-06/01/2026 08:30:00"
+
+
+def test_resolve_manifest_latest_keeps_mtime_when_unchanged(tmp_path: Path) -> None:
+    # GIVEN a recorded manifest matching the next resolution, with an old mtime
+    control = tmp_path / ".latest-manifest"
+    control.write_text("111-05/29/2026 12:00:00")
+    os.utime(control, (1_000_000, 1_000_000))
+    recorded = control.stat().st_mtime_ns
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
+
+    # WHEN resolving latest again
+    result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+
+    # THEN the file is not rewritten
+    assert result == "111"
+    assert control.stat().st_mtime_ns == recorded
+
+
+def test_resolve_manifest_empty_control_without_listing_raises(tmp_path: Path) -> None:
+    # GIVEN an empty control file and no listed manifests
+    control = tmp_path / ".latest-manifest"
+    control.write_text("")
+
+    # WHEN resolving latest
+    # THEN the empty record is not treated as a cached manifest
+    with pytest.raises(InstallError, match="no cached manifest"):
+        manifests.resolve_manifest("latest", control_file=control, fetch=list)
+
+
+def test_resolve_manifest_malformed_control_warns_and_raises(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a malformed control file and no listed manifests
+    control = tmp_path / ".latest-manifest"
+    control.write_text("not-a-number-something")
+
+    # WHEN resolving latest
+    with (
+        caplog.at_level(logging.WARNING, logger="enshctl.manifests"),
+        pytest.raises(InstallError, match="no cached manifest"),
+    ):
+        manifests.resolve_manifest("latest", control_file=control, fetch=list)
+
+    # THEN the malformed record is reported and the fallback is skipped
+    assert "Malformed control file" in caplog.text
+
+
+def test_resolve_manifest_latest_uses_default_listing(tmp_path: Path) -> None:
+    # GIVEN no injected fetcher
+    control = tmp_path / ".latest-manifest"
+    found = [ManifestRecord(manifest_id="777", timestamp="05/29/2026 12:00:00")]
+
+    with patch("enshctl.manifests.DepotDownloader") as mock_adapter:
+        mock_adapter.return_value.fetch_manifests.return_value = found
+        # WHEN resolving latest
+        result = manifests.resolve_manifest("latest", control_file=control)
+
+    # THEN the DepotDownloader adapter supplies the listing and the control file is updated
+    assert result == "777"
+    assert control.read_text().strip() == "777-05/29/2026 12:00:00"
+    mock_adapter.return_value.fetch_manifests.assert_called_once_with()
+
+
 def test_resolve_manifest_latest_picks_newest_across_months(tmp_path: Path) -> None:
+    # GIVEN Manifests listed out of chronological order across a year boundary
     control = tmp_path / ".latest-manifest"
     found = [
         ManifestRecord(manifest_id="older", timestamp="12/15/2025 12:00:00"),
         ManifestRecord(manifest_id="newer", timestamp="01/05/2026 12:00:00"),
     ]
+
+    # WHEN resolving latest
     result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
+
+    # THEN the chronologically newest Manifest wins
     assert result == "newer"
 
 
@@ -106,8 +160,13 @@ def test_resolve_manifest_latest_orders_tab_separated_timestamp(tmp_path: Path) 
 
 
 def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
+    # GIVEN an explicit numeric Version spec
     control = tmp_path / ".latest-manifest"
+
+    # WHEN resolving it
     result = manifests.resolve_manifest("12345", control_file=control)
+
+    # THEN the ID is used without consulting or writing the control file
     assert result == "12345"
     assert not control.exists()
 
