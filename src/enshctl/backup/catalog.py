@@ -1,7 +1,7 @@
 """Backup catalog — filename grammar, discovery, and selection.
 
 Single home for what a Backup is and how to find one. All callers
-(retention, verify, restore, backup runner) discover backups through
+(retention, verify, restore, backup execution) discover backups through
 this interface instead of re-implementing directory scans.
 """
 

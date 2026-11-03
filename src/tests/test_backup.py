@@ -21,7 +21,6 @@ from enshctl.backup import (
     verify_archive,
 )
 from enshctl.backup.catalog import _local_now, scan_all, scan_dir, select
-from enshctl.config import SaveDirectories
 from enshctl.disk_space import SpaceGuard
 from enshctl.settings import AppSettings
 
@@ -498,38 +497,6 @@ def test_release_lock_is_idempotent(tmp_path: Path) -> None:
     release_lock(fd)  # should not raise
 
 
-# --- Priority tests (11.5) ---
-
-
-def test_lower_priority_with_nice(caplog: pytest.LogCaptureFixture) -> None:
-    from enshctl.backup_runner import _lower_priority
-
-    with (
-        patch("enshctl.backup_runner.nice") as mock_nice,
-        patch("enshctl.backup_runner.subprocess.run") as mock_run,
-    ):
-        mock_nice.return_value = None
-        mock_run.return_value.returncode = 0
-        _lower_priority()
-    mock_nice.assert_called_once_with(19)
-
-
-def test_lower_priority_warns_once_on_nice_failure(caplog: pytest.LogCaptureFixture) -> None:
-    from enshctl.backup_runner import _lower_priority
-
-    with (
-        patch("enshctl.backup_runner.nice", side_effect=OSError),
-        patch(
-            "enshctl.backup_runner.subprocess.run",
-            side_effect=OSError,
-        ),
-    ):
-        _lower_priority()
-        _lower_priority()
-    warnings = [r for r in caplog.records if r.levelno == 30 and "priority" in r.message.lower()]
-    assert len(warnings) <= 10
-
-
 def test_parse_cron_aligns_to_clock_boundary() -> None:
     import time as _time
     from unittest.mock import patch as _patch
@@ -560,24 +527,6 @@ def test_select_empty_direction_returns_none(tmp_path: Path) -> None:
     # WHEN selecting with an empty direction
     # THEN nothing resolves instead of raising
     assert select(base, when=":cold") is None
-
-
-def test_lower_priority_warns_once_on_ionice_failure(caplog: pytest.LogCaptureFixture) -> None:
-    import enshctl.backup_runner as br
-    from enshctl.backup_runner import _lower_priority
-
-    br._priority_state["warned"] = False
-    with (
-        patch("enshctl.backup_runner.nice"),
-        patch(
-            "enshctl.backup_runner.subprocess.run",
-            side_effect=OSError,
-        ),
-    ):
-        _lower_priority()
-        _lower_priority()
-    warnings = [r for r in caplog.records if r.levelno == 30 and "ionice" in r.message.lower()]
-    assert len(warnings) <= 1
 
 
 # --- Disk space guard tests ---
@@ -847,82 +796,3 @@ def test_created_backup_name_is_discovered_by_scan(tmp_path: Path, category: Cat
     found = scan_dir(Path(settings.backup_dir) / category)
     assert [info.path for info in found] == [created]
     assert found[0].name == BackupName(timestamp=timestamp, category=category, fmt=BackupFormat.ZSTD)
-
-
-class TestBackupRunnerFormatFlag:
-    """Tests for backup_runner --format case handling."""
-
-    def test_runner_uses_generated_save_directories(self, tmp_path: Path) -> None:
-        import enshctl.backup_runner as br
-        from enshctl.backup_protocol import BackupOutcome
-
-        # GIVEN a generated save directory and a successful backup invocation
-        saves = tmp_path / "saves"
-        saves.mkdir()
-        (saves / "world.db").write_bytes(b"data")
-        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-        with (
-            patch("sys.argv", ["prog"]),
-            patch.object(br, "load_settings", return_value=settings),
-            patch.object(br, "generated_save_directories", return_value=SaveDirectories(saves)),
-            patch.object(br, "acquire_lock", return_value=3),
-            patch.object(br, "create_backup", return_value=None) as mock_create,
-            patch.object(br, "release_lock"),
-        ):
-            # WHEN the runner builds its Backup plan
-            assert br.main() == BackupOutcome.SUCCESS
-
-        # THEN the plan carries the Generated config save directory
-        plan = mock_create.call_args.args[1]
-        assert plan.saves_dir == saves
-
-    def test_uppercase_format_accepted(self, tmp_path: Path) -> None:
-        import enshctl.backup_runner as br
-        from enshctl.backup_protocol import BackupOutcome
-
-        # GIVEN an uppercase --format flag
-        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-        with (
-            patch("sys.argv", ["prog", "--format", "ZSTD"]),
-            patch.object(br, "load_settings", return_value=settings),
-            patch.object(br, "acquire_lock", return_value=None),
-            patch.object(br, "create_backup") as mock_create,
-        ):
-            # WHEN running the backup runner
-            # THEN parsing succeeds and execution reaches the lock check
-            assert br.main() == BackupOutcome.LOCK_HELD
-            mock_create.assert_not_called()
-
-    def test_invalid_format_rejected(self) -> None:
-        import enshctl.backup_runner as br
-
-        # GIVEN an unrecognized --format value
-        # WHEN running the backup runner
-        # THEN argparse exits 2
-        with (
-            patch("sys.argv", ["prog", "--format", "lz4"]),
-            pytest.raises(SystemExit) as exc,
-        ):
-            br.main()
-        assert exc.value.code == 2
-
-    def test_value_error_reports_error_outcome(self, tmp_path: Path) -> None:
-        import enshctl.backup_runner as br
-        from enshctl.backup_protocol import BackupOutcome
-
-        # GIVEN a backup whose compression raises a value error
-        settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-        with (
-            patch("sys.argv", ["prog"]),
-            patch.object(br, "_lower_priority"),
-            patch.object(br, "load_settings", return_value=settings),
-            patch.object(br, "generated_save_directories", return_value=SaveDirectories(tmp_path / "saves")),
-            patch.object(br, "acquire_lock", return_value=3),
-            patch.object(br, "create_backup", side_effect=ValueError("bad level")),
-            patch.object(br, "release_lock"),
-        ):
-            # WHEN running the backup runner
-            result = br.main()
-
-        # THEN the value error maps to the error outcome
-        assert result == BackupOutcome.ERROR

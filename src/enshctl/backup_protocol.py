@@ -34,6 +34,8 @@ class BackupRequest:
     category: Category = Category.LIVE
     wait_seconds: int = 0
     detach: bool = False
+    fmt: str | None = None
+    level: int | None = None
 
     def __post_init__(self) -> None:
         """Coerce a raw Category string into the enum."""
@@ -60,6 +62,10 @@ class BackupRequest:
             argv.append("--emergency")
         if self.wait_seconds > 0:
             argv.extend(["--wait", str(self.wait_seconds)])
+        if self.fmt is not None:
+            argv.extend(["--format", self.fmt])
+        if self.level is not None:
+            argv.extend(["--level", str(self.level)])
         return argv
 
     @classmethod
@@ -69,7 +75,7 @@ class BackupRequest:
             category = Category.COLD
         elif args.emergency:
             category = Category.EMERGENCY
-        return cls(category=category, wait_seconds=args.wait)
+        return cls(category=category, wait_seconds=args.wait, fmt=args.format, level=args.level)
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:

@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 from enshctl.backup import CATEGORIES, Category
-from enshctl.retention import RetentionConfig, prune_all, prune_category
+from enshctl.retention import RetentionConfig, RetentionPolicy, prune_category
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -133,7 +133,7 @@ def test_prune_ignores_non_backup_files(tmp_path: Path) -> None:
     assert len(deleted) == 0
 
 
-def test_prune_all_returns_each_category(tmp_path: Path) -> None:
+def test_retention_policy_enforces_every_category(tmp_path: Path) -> None:
     # GIVEN two Backups in each Category directory
     base = tmp_path / "backups"
     for category in CATEGORIES:
@@ -142,14 +142,32 @@ def test_prune_all_returns_each_category(tmp_path: Path) -> None:
         suffix = "" if category is Category.LIVE else f"-{category}"
         _make_backup_file(cat_dir, f"enshrouded-20260501-120000{suffix}.tar.zst")
         _make_backup_file(cat_dir, f"enshrouded-20260502-120000{suffix}.tar.zst")
-    config = RetentionConfig(last=1)
+    policy = RetentionPolicy(config=RetentionConfig(last=1), base_dir=base)
     # WHEN pruning every Category
-    deleted = prune_all(config, base)
+    deleted = policy.enforce()
     # THEN each Category is keyed and its older Backup is removed
     assert set(deleted) == set(CATEGORIES)
     for category, paths in deleted.items():
         suffix = "" if category is Category.LIVE else f"-{category}"
         assert [p.name for p in paths] == [f"enshrouded-20260501-120000{suffix}.tar.zst"]
+
+
+def test_retention_policy_dry_run_keeps_files(tmp_path: Path) -> None:
+    # GIVEN a keep-last-one policy over two Backups
+    base = tmp_path / "backups"
+    live = base / "live"
+    live.mkdir(parents=True)
+    older = _make_backup_file(live, "enshrouded-20260501-120000.tar.zst")
+    newer = _make_backup_file(live, "enshrouded-20260502-120000.tar.zst")
+    policy = RetentionPolicy(config=RetentionConfig(last=1), base_dir=base)
+
+    # WHEN enforcing in dry-run mode
+    deleted = policy.enforce(dry_run=True)
+
+    # THEN the deletion is reported without removing files
+    assert [path.name for path in deleted[Category.LIVE]] == [older.name]
+    assert older.exists()
+    assert newer.exists()
 
 
 def test_prune_cascade_order(tmp_path: Path) -> None:

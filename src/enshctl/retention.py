@@ -3,14 +3,14 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import BackupInfo, scan_dir
 from enshctl.backup.category import CATEGORIES
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
+    from collections.abc import Callable, Iterable
 
     from enshctl.backup.category import Category
     from enshctl.settings import AppSettings
@@ -131,16 +131,24 @@ def prune_category(category_dir: Path, config: RetentionConfig, dry_run: bool = 
     return to_delete
 
 
-def prune_all(config: RetentionConfig, base_dir: Path, dry_run: bool = False) -> dict[Category, list[Path]]:
-    """Apply retention to all categories.
+@dataclass(frozen=True)
+class RetentionPolicy:
+    """Retention rules bound to the Backup base directory."""
 
-    Returns dict mapping Category to list of deleted paths.
-    """
-    results: dict[Category, list[Path]] = {}
+    config: RetentionConfig
+    base_dir: Path
 
-    for cat in CATEGORIES:
-        cat_dir = base_dir / cat
-        deleted = prune_category(cat_dir, config, dry_run=dry_run)
-        results[cat] = deleted
+    @classmethod
+    def from_settings(cls, settings: AppSettings) -> RetentionPolicy:
+        return cls(config=RetentionConfig.from_settings(settings), base_dir=Path(settings.backup_dir))
 
-    return results
+    def enforce(
+        self,
+        *,
+        categories: Iterable[Category] = CATEGORIES,
+        dry_run: bool = False,
+    ) -> dict[Category, list[Path]]:
+        """Apply retention to the requested Categories and return deleted paths."""
+        return {
+            category: prune_category(self.base_dir / category, self.config, dry_run=dry_run) for category in categories
+        }

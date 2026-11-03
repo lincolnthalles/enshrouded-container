@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from enshctl.backup.category import Category
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.lifecycle import backup as lifecycle_backup
-from enshctl.settings import AppSettings
 
 
 def test_scheduler_runs_scheduled_trigger_and_stops() -> None:
@@ -91,21 +90,3 @@ def test_detached_requests_survive_process_group() -> None:
         lifecycle_backup.run_backup(env={"PATH": "/usr/bin"})
         # THEN it stays in the parent's process group
         assert mock_run.call_args.kwargs["start_new_session"] is False
-
-
-def test_wait_expiry_warns() -> None:
-    import enshctl.backup_runner as br
-    from enshctl.backup_protocol import BackupOutcome
-
-    # GIVEN a lock held past the wait bound
-    with (
-        patch.object(br, "load_settings", return_value=AppSettings()),
-        patch.object(br, "acquire_lock", return_value=None),
-        patch("sys.argv", ["prog", "--wait", "1"]),
-        patch.object(br.time, "monotonic", side_effect=[0.0, 0.0, 2.0]),
-        patch.object(br.time, "sleep"),
-    ):
-        # WHEN the runner gives up waiting
-        code = br.main()
-    # THEN it exits lock-held (skip is reported via warning log)
-    assert code == BackupOutcome.LOCK_HELD

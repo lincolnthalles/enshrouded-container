@@ -54,7 +54,25 @@ def test_backup_request_argv_round_trip(category: Category, flag: list[str]) -> 
     request = BackupRequest(category=category, wait_seconds=7)
     # WHEN it crosses the child-process seam
     assert request.to_argv() == [*flag, "--wait", "7"]
-    args = Namespace(cold=category is Category.COLD, emergency=category is Category.EMERGENCY, wait=7)
+    args = Namespace(
+        cold=category is Category.COLD,
+        emergency=category is Category.EMERGENCY,
+        wait=7,
+        format=None,
+        level=None,
+    )
+    # THEN the child reconstructs the same request
+    assert BackupRequest.from_argv(args) == request
+
+
+def test_backup_request_argv_carries_compression_options() -> None:
+    # GIVEN a request with per-invocation compression options
+    request = BackupRequest(category=Category.COLD, fmt="gzip", level=5)
+
+    # WHEN it crosses the child-process seam
+    assert request.to_argv() == ["--cold", "--format", "gzip", "--level", "5"]
+    args = Namespace(cold=True, emergency=False, wait=0, format="gzip", level=5)
+
     # THEN the child reconstructs the same request
     assert BackupRequest.from_argv(args) == request
 
@@ -77,4 +95,21 @@ def test_parser_rejects_both_cold_and_emergency() -> None:
         parser.parse_args(["--cold", "--emergency"])
 
     # THEN argparse rejects the ambiguous request
+    assert exc_info.value.code == 2
+
+
+def test_parser_lowercases_format_and_rejects_unknown() -> None:
+    # GIVEN the backup child parser
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+
+    # WHEN an uppercase format is supplied
+    args = parser.parse_args(["--format", "ZSTD"])
+
+    # THEN it is accepted in lowercase
+    assert args.format == "zstd"
+
+    # AND an unrecognized format is rejected by argparse
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--format", "lz4"])
     assert exc_info.value.code == 2
