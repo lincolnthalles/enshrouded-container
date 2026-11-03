@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from enshctl import manifests
-from enshctl.download import InstallError
+from enshctl.download import InstallError, ManifestRecord
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,7 +61,7 @@ def test_read_latest_manifest_malformed(tmp_path: Path) -> None:
 
 def test_resolve_manifest_latest_writes_control(tmp_path: Path) -> None:
     control = tmp_path / ".latest-manifest"
-    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
     result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
     assert result == "111"
     assert control.read_text().strip() == "111-05/29/2026 12:00:00"
@@ -83,8 +83,8 @@ def test_resolve_manifest_latest_no_cache_no_manifests_raises(tmp_path: Path) ->
 def test_resolve_manifest_latest_picks_newest_across_months(tmp_path: Path) -> None:
     control = tmp_path / ".latest-manifest"
     found = [
-        {"manifest_id": "older", "timestamp": "12/15/2025 12:00:00", "branch": "public"},
-        {"manifest_id": "newer", "timestamp": "01/05/2026 12:00:00", "branch": "public"},
+        ManifestRecord(manifest_id="older", timestamp="12/15/2025 12:00:00"),
+        ManifestRecord(manifest_id="newer", timestamp="01/05/2026 12:00:00"),
     ]
     result = manifests.resolve_manifest("latest", control_file=control, fetch=lambda: found)
     assert result == "newer"
@@ -100,7 +100,7 @@ def test_resolve_manifest_explicit_id_skips_control(tmp_path: Path) -> None:
 def test_resolve_manifest_build_unknown_id_warns_with_id(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN a build ID matching no listed manifest
     control = tmp_path / ".latest-manifest"
-    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
     # WHEN resolving the unknown build ID
     with caplog.at_level(logging.WARNING, logger="enshctl.manifests"):
         result = manifests.resolve_manifest("build:999", control_file=control, fetch=lambda: found)
@@ -109,10 +109,34 @@ def test_resolve_manifest_build_unknown_id_warns_with_id(tmp_path: Path, caplog:
     assert "999" in caplog.text
 
 
+def test_resolve_manifest_build_matches_manifest_suffix(tmp_path: Path) -> None:
+    # GIVEN a Manifest whose ID ends with the build value
+    control = tmp_path / ".latest-manifest"
+    found = [ManifestRecord(manifest_id="123999", timestamp="05/29/2026 12:00:00")]
+
+    # WHEN resolving the build
+    result = manifests.resolve_manifest("build:999", control_file=control, fetch=lambda: found)
+
+    # THEN the matching Manifest ID is used
+    assert result == "123999"
+
+
+def test_resolve_manifest_build_matches_branch(tmp_path: Path) -> None:
+    # GIVEN a Manifest whose branch matches the build value
+    control = tmp_path / ".latest-manifest"
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00", branch="release-999")]
+
+    # WHEN resolving the build
+    result = manifests.resolve_manifest("build:release-999", control_file=control, fetch=lambda: found)
+
+    # THEN the matching Manifest ID is used
+    assert result == "111"
+
+
 def test_resolve_manifest_build_non_numeric_rejected(tmp_path: Path) -> None:
     # GIVEN a non-numeric build ID matching no listed manifest
     control = tmp_path / ".latest-manifest"
-    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
 
     # WHEN resolving the unknown build ID
     # THEN it fails instead of using the value as a Manifest ID
@@ -123,7 +147,7 @@ def test_resolve_manifest_build_non_numeric_rejected(tmp_path: Path) -> None:
 def test_resolve_manifest_empty_build_rejected(tmp_path: Path) -> None:
     # GIVEN an empty build ID
     control = tmp_path / ".latest-manifest"
-    found = [{"manifest_id": "111", "timestamp": "05/29/2026 12:00:00", "branch": "public"}]
+    found = [ManifestRecord(manifest_id="111", timestamp="05/29/2026 12:00:00")]
 
     # WHEN resolving the empty build ID
     # THEN it fails instead of matching the first manifest
@@ -138,7 +162,7 @@ def test_resolve_manifest_latest_fetch_failure_uses_cache(tmp_path: Path) -> Non
     control = tmp_path / ".latest-manifest"
     control.write_text("999999-05/29/2026 12:00:00")
 
-    def _fail() -> list[dict[str, str]]:
+    def _fail() -> list[ManifestRecord]:
         raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
 
     # WHEN resolving latest
@@ -153,7 +177,7 @@ def test_resolve_manifest_latest_fetch_failure_no_cache_raises(tmp_path: Path) -
     # GIVEN no cached manifest and a DepotDownloader listing that fails
     control = tmp_path / ".latest-manifest"
 
-    def _fail() -> list[dict[str, str]]:
+    def _fail() -> list[ManifestRecord]:
         raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
 
     # WHEN resolving latest
@@ -169,7 +193,7 @@ def test_resolve_manifest_build_fetch_failure_raises(tmp_path: Path) -> None:
     # GIVEN a DepotDownloader listing that fails
     control = tmp_path / ".latest-manifest"
 
-    def _fail() -> list[dict[str, str]]:
+    def _fail() -> list[ManifestRecord]:
         raise subprocess.CalledProcessError(1, ["DepotDownloader", "-manifest-only"])
 
     # WHEN resolving a build ID
@@ -177,59 +201,3 @@ def test_resolve_manifest_build_fetch_failure_raises(tmp_path: Path) -> None:
         manifests.resolve_manifest("build:999", control_file=control, fetch=_fail)
     # THEN the listing failure is chained as the cause instead of silently treating the build as a manifest ID
     assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
-
-
-def test_manifestfile_support_probe_lists_no_args() -> None:
-    from unittest.mock import MagicMock, patch
-
-    # GIVEN the DepotDownloader probe
-    manifests.check_manifestfile_support.cache_clear()
-    try:
-        # WHEN probing support
-        with patch.object(
-            manifests.subprocess,
-            "run",
-            return_value=MagicMock(stdout=" -manifestfile <file>\n -depotkeys <file>\n", stderr=""),
-        ) as mock_run:
-            assert manifests.check_manifestfile_support() is True
-        # THEN the probe passes no arguments, avoiding any network or download
-        assert mock_run.call_args.args[0] == [*manifests.DEPOT_DOWNLOADER]
-    finally:
-        manifests.check_manifestfile_support.cache_clear()
-
-
-def test_manifestfile_support_detects_vanilla() -> None:
-    from unittest.mock import MagicMock, patch
-
-    # GIVEN a DepotDownloader whose usage lacks the Mod-fork flags
-    manifests.check_manifestfile_support.cache_clear()
-    try:
-        # WHEN probing support
-        with patch.object(
-            manifests.subprocess,
-            "run",
-            return_value=MagicMock(stdout="Usage: depotdownloader -app <id>\n", stderr=""),
-        ):
-            # THEN vanilla is detected as unsupported
-            assert manifests.check_manifestfile_support() is False
-    finally:
-        manifests.check_manifestfile_support.cache_clear()
-
-
-def test_manifestfile_support_timeout_presumes_support() -> None:
-    import subprocess
-    from unittest.mock import patch
-
-    # GIVEN a probe that times out (fork proceeding to network)
-    manifests.check_manifestfile_support.cache_clear()
-    try:
-        # WHEN probing support
-        with patch.object(
-            manifests.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired("dd", 30),
-        ):
-            # THEN support is presumed rather than blocking Install
-            assert manifests.check_manifestfile_support() is True
-    finally:
-        manifests.check_manifestfile_support.cache_clear()

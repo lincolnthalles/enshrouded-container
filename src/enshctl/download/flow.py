@@ -3,8 +3,8 @@
 import logging
 from typing import TYPE_CHECKING, cast
 
+from enshctl.download.depotdownloader import with_manifest_override
 from enshctl.download.io import DownloadIO, HostIO, SystemDownloadIO, SystemHostIO
-from enshctl.download.runner import with_manifest_override
 from enshctl.download.types import DownloadConfig, InstallError, ManifestFile
 from enshctl.paths import DEPOT_ID, MANIFESTS_DIR, STATUS_FILE
 from enshctl.utils import human_size
@@ -37,7 +37,7 @@ def prepare_manifests(
             "Set MANIFESTHUB_API_URL to use manifest tokens."
         )
         raise InstallError(msg)
-    if not download_io.check_manifest_support():
+    if not download_io.supports_manifestfile():
         logger.warning(
             "Auth-free manifest setup requested but DepotDownloader does not support "
             "-manifestfile/-depotkeys flags. Will fall back to Steam login if available."
@@ -45,7 +45,7 @@ def prepare_manifests(
         return
     download_io.ensure_depot_keys(manifests_dir, depot_keys_repo)
     if manifest_api_token and manifest_api_url:
-        discovered = download_io.list_manifests()
+        discovered = download_io.list_manifest_ids()
         if discovered:
             download_io.fetch_missing_manifests(discovered, manifests_dir, manifest_api_token, manifest_api_url)
         else:
@@ -190,7 +190,7 @@ def download_version(
         msg = f"Failed to set ownership on {target_dir}: {e}"
         raise InstallError(msg) from e
 
-    has_support = download_io.check_manifest_support()
+    has_support = download_io.supports_manifestfile()
     manifest = _ensure_manifest_for_version(
         manifest_id,
         settings,

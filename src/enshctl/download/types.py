@@ -27,6 +27,15 @@ class DownloadConfig:
 
 
 @dataclass(frozen=True)
+class ManifestRecord:
+    """One Manifest reported by a DepotDownloader listing."""
+
+    manifest_id: str
+    timestamp: str
+    branch: str = "public"
+
+
+@dataclass(frozen=True)
 class ManifestFile:
     """A Manifest file snapshot carrying any acquisition failure."""
 

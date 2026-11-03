@@ -3,7 +3,7 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from enshctl.download.types import DownloadConfig, InstallError, ManifestFile
+from enshctl.download.types import DownloadConfig, InstallError, ManifestFile, ManifestRecord
 
 if TYPE_CHECKING:
     from enshctl.download.flow import download_version, prepare_manifests, validate_manifest_id
@@ -15,6 +15,7 @@ __all__ = [
     "HostIO",
     "InstallError",
     "ManifestFile",
+    "ManifestRecord",
     "download_version",
     "prepare_manifests",
     "validate_manifest_id",

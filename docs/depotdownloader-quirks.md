@@ -54,7 +54,7 @@ DepotDownloader -app 2278520 -manifest-only        # finds Linux depot 1006 only
 DepotDownloader -app 2278520 -os windows -manifest-only  # finds depots 1004, 228989, 2278521
 ```
 
-Without `-os windows`, DepotDownloader returns Linux-only depots, which don't contain the Windows DLLs the server needs.
+The filter applies to app-level queries. An explicit `-depot` is processed regardless: with the pinned binary, `-depot 2278521` returns the same manifest with or without `-os windows`. Every listing and download invocation still passes `-os windows` so the platform decision stays in one place.
 
 ## Reliable Pattern
 

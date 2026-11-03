@@ -4,9 +4,9 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from enshctl import files, hub, keys, manifests
+from enshctl import files, hub, keys
 from enshctl.disk_space import SpaceGuard
-from enshctl.download.runner import discover_depots as _discover_depots, download_depots as _download_depots
+from enshctl.download.depotdownloader import DepotDownloader
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,7 +60,7 @@ class SystemHostIO:
 class DownloadIO(Protocol):
     """DepotDownloader and ManifestHub operations used by the Install flow."""
 
-    def check_manifest_support(self) -> bool: ...
+    def supports_manifestfile(self) -> bool: ...
 
     def ensure_depot_keys(self, manifests_dir: Path, repo_url: str | None) -> None: ...
 
@@ -68,7 +68,7 @@ class DownloadIO(Protocol):
         self, depot_id: str, manifest_id: str, output_dir: Path, api_key: str, api_url: str
     ) -> Path: ...
 
-    def list_manifests(self) -> list[str]: ...
+    def list_manifest_ids(self) -> list[str]: ...
 
     def fetch_missing_manifests(
         self, manifest_ids: list[str], manifests_dir: Path, api_key: str, api_url: str
@@ -87,10 +87,12 @@ class DownloadIO(Protocol):
 
 @dataclass(frozen=True)
 class SystemDownloadIO:
-    """Production download adapter — delegates to the DepotDownloader and ManifestHub modules."""
+    """Production download adapter — delegates to the DepotDownloader and ManifestHub adapters."""
 
-    def check_manifest_support(self) -> bool:
-        return manifests.check_manifestfile_support()
+    downloader: DepotDownloader = field(default_factory=DepotDownloader)
+
+    def supports_manifestfile(self) -> bool:
+        return self.downloader.supports_manifestfile()
 
     def ensure_depot_keys(self, manifests_dir: Path, repo_url: str | None) -> None:
         keys.ensure_depot_keys(manifests_dir, repo_url)
@@ -98,14 +100,14 @@ class SystemDownloadIO:
     def download_manifest(self, depot_id: str, manifest_id: str, output_dir: Path, api_key: str, api_url: str) -> Path:
         return hub.download_manifest_from_hub(depot_id, manifest_id, output_dir, api_key, api_url)
 
-    def list_manifests(self) -> list[str]:
-        return manifests.list_manifests_via_depotdownloader()
+    def list_manifest_ids(self) -> list[str]:
+        return self.downloader.list_manifest_ids()
 
     def fetch_missing_manifests(self, manifest_ids: list[str], manifests_dir: Path, api_key: str, api_url: str) -> None:
         hub.fetch_missing_manifests(manifest_ids, manifests_dir, api_key, api_url)
 
     def discover_depots(self) -> list[tuple[str, str]]:
-        return _discover_depots()
+        return self.downloader.discover_depots()
 
     def download_depots(
         self,
@@ -114,4 +116,4 @@ class SystemDownloadIO:
         config: DownloadConfig,
         depot_manifests: list[tuple[str, str]] | None,
     ) -> None:
-        _download_depots(manifest_id, target_dir, config, depot_manifests)
+        self.downloader.download_depots(manifest_id, target_dir, config, depot_manifests)

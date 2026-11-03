@@ -29,7 +29,7 @@ def _host(free: int = 12 * 1024**3) -> MagicMock:
 
 def _download() -> MagicMock:
     download = MagicMock(spec=DownloadIO)
-    download.check_manifest_support.return_value = True
+    download.supports_manifestfile.return_value = True
     download.discover_depots.return_value = [(DEPOT_ID, "12345")]
 
     def _write_exe(_mid: str, target: Path, _config: object, _pinned: object = None) -> None:
@@ -177,7 +177,7 @@ class TestDownloadVersionLifecycle:
         # THEN no download, probe, or ownership work runs
         assert result == target_dir
         download.download_depots.assert_not_called()
-        download.check_manifest_support.assert_not_called()
+        download.supports_manifestfile.assert_not_called()
         host.chown.assert_not_called()
 
     def test_missing_server_binary_fails_without_marker(self, tmp_path: Path) -> None:

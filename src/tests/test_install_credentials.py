@@ -38,7 +38,7 @@ def _host(free: int = 12 * 1024**3) -> MagicMock:
 
 def _download() -> MagicMock:
     download = MagicMock(spec=DownloadIO)
-    download.check_manifest_support.return_value = True
+    download.supports_manifestfile.return_value = True
     download.discover_depots.return_value = [(DEPOT_ID, "12345")]
 
     def _write_exe(_mid: str, target: Path, _config: object, _pinned: object = None) -> None:
@@ -271,7 +271,7 @@ class TestDownloadVersionCredentials:
         manifests_dir = _manifests_dir(tmp_path, with_keys=True, with_manifest=True)
         host = _host()
         download = _download()
-        download.check_manifest_support.return_value = False
+        download.supports_manifestfile.return_value = False
 
         # WHEN downloading without Steam credentials
         with pytest.raises(InstallError, match="Mod fork"):
@@ -294,7 +294,7 @@ class TestDownloadVersionCredentials:
         manifests_dir = _manifests_dir(tmp_path, with_keys=True, with_manifest=True)
         host = _host()
         download = _download()
-        download.check_manifest_support.return_value = False
+        download.supports_manifestfile.return_value = False
 
         # WHEN downloading with the Version spec set to latest
         with pytest.raises(InstallError, match="Mod fork"):
@@ -569,7 +569,7 @@ def test_prepare_manifests_fetches_missing_manifests(tmp_path: Path) -> None:
         manifesthub_api_url="https://hub.example",
     )
     download = _download()
-    download.list_manifests.return_value = ["1", "2"]
+    download.list_manifest_ids.return_value = ["1", "2"]
 
     # WHEN running auth-free setup
     prepare_manifests(settings, manifests_dir=manifests_dir, source=cast("DownloadIO", download))
@@ -590,7 +590,7 @@ def test_prepare_manifests_empty_listing_skips(
     )
     download = _download()
     empty: list[str] = []
-    download.list_manifests.return_value = empty
+    download.list_manifest_ids.return_value = empty
 
     # WHEN running auth-free setup
     with caplog.at_level("WARNING", logger="enshctl.download.flow"):
@@ -610,4 +610,4 @@ def test_prepare_manifests_token_without_url_fails(tmp_path: Path) -> None:
     # THEN the Install fails before probing or fetching
     with pytest.raises(InstallError, match="MANIFESTHUB_API_URL"):
         prepare_manifests(settings, manifests_dir=_manifests_dir(tmp_path), source=cast("DownloadIO", download))
-    download.check_manifest_support.assert_not_called()
+    download.supports_manifestfile.assert_not_called()
