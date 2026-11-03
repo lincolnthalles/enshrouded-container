@@ -11,7 +11,7 @@ from enshctl import config, download as download_flow, install, mods
 from enshctl.download import InstallError
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
-from enshctl.lifecycle.process import ensure_wineprefix
+from enshctl.lifecycle.wine import ensure_prefix
 from enshctl.paths import (
     BACKUP_BASE_DIR,
     CONFIG_DIR,
@@ -105,7 +105,7 @@ def run(settings: AppSettings | None = None) -> int:
         _setup_timezone(settings)
         _setup_directories(settings)
         _setup_x11_socket()
-        ensure_wineprefix(settings)
+        ensure_prefix(settings)
         _prepare_install_and_config(settings)
     except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
         logger.exception("Start failed")

@@ -1,8 +1,11 @@
 """Tests for DLL override generation in mods module."""
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
-from enshctl.mods import DEFAULT_DLL_OVERRIDES, generate_dll_overrides
+from enshctl.mods import DEFAULT_DLL_OVERRIDES, generate_dll_overrides, resolve_dll_overrides
+from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -77,3 +80,42 @@ def test_nonexistent_mod_overlay_dir(tmp_path: Path) -> None:
     nonexistent = tmp_path / "does_not_exist"
     result = generate_dll_overrides(nonexistent)
     assert result == "mscoree,mshtml="
+
+
+def test_resolve_dll_overrides_uses_user_value() -> None:
+    # GIVEN an explicit WINEDLLOVERRIDES setting
+    settings = replace(AppSettings(), winedlloverrides="dinput8=n")
+
+    # WHEN resolving overrides
+    # THEN the settings value wins verbatim over generation
+    with patch("enshctl.mods.generate_dll_overrides", side_effect=AssertionError("must not generate")):
+        assert resolve_dll_overrides(settings) == "dinput8=n"
+
+
+def test_resolve_dll_overrides_preserves_empty_value() -> None:
+    # GIVEN an explicitly empty WINEDLLOVERRIDES setting
+    settings = replace(AppSettings(), winedlloverrides="")
+
+    # WHEN resolving overrides
+    # THEN the empty value passes through instead of generating overrides
+    assert resolve_dll_overrides(settings) == ""
+
+
+def test_resolve_dll_overrides_preserves_whitespace_value() -> None:
+    # GIVEN a whitespace-only WINEDLLOVERRIDES setting
+    settings = replace(AppSettings(), winedlloverrides="   ")
+
+    # WHEN resolving overrides
+    # THEN the whitespace value passes through instead of generating overrides
+    assert resolve_dll_overrides(settings) == "   "
+
+
+def test_resolve_dll_overrides_generates_when_unset() -> None:
+    # GIVEN winedlloverrides unset
+    settings = replace(AppSettings(), winedlloverrides=None)
+
+    # WHEN resolving overrides
+    # THEN generated overrides apply
+    with patch("enshctl.mods.generate_dll_overrides", return_value="mscoree,mshtml=,mylib=n") as mock_generate:
+        assert resolve_dll_overrides(settings) == "mscoree,mshtml=,mylib=n"
+    mock_generate.assert_called_once_with()

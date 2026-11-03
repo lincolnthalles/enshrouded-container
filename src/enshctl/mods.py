@@ -100,6 +100,16 @@ def generate_dll_overrides(mod_overlay_dir: Path = MOD_OVERLAY_DIR) -> str:
     return ",".join(parts)
 
 
+def resolve_dll_overrides(settings: AppSettings) -> str:
+    """Choose explicit WINEDLLOVERRIDES or generate them from the Mod overlay."""
+    if settings.winedlloverrides is not None:
+        logger.info("Using user-provided WINEDLLOVERRIDES: %s", settings.winedlloverrides)
+        return settings.winedlloverrides
+    generated = generate_dll_overrides()
+    logger.info("Generated WINEDLLOVERRIDES: %s", generated)
+    return generated
+
+
 def _overlay_mods(mod_overlay_dir: Path, target: Path) -> None:
     """Overlay mod files by creating symlinks, overriding manifest symlinks."""
     for mod_file in mod_overlay_dir.rglob("*"):

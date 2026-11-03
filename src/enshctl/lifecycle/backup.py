@@ -8,7 +8,7 @@ from os import environ
 from typing import TYPE_CHECKING
 
 from enshctl.backup_protocol import BackupOutcome, BackupRequest, Trigger
-from enshctl.lifecycle.process import base_env
+from enshctl.lifecycle.env import base_env
 from enshctl.scheduling import parse_cron
 from enshctl.settings import backup_child_env
 

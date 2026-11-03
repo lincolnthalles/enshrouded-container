@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl import config, resources
 from enshctl.backup.core import backup_needed as backup_is_needed
-from enshctl.lifecycle import backup, process as process_module
+from enshctl.lifecycle import backup, gamelog, server, wine
 from enshctl.pidfile import PidFile
 
 if TYPE_CHECKING:
@@ -53,16 +53,16 @@ class SystemProcessControl:
     settings: AppSettings
 
     def start(self) -> ServerProcess:
-        return process_module.start_server(self.settings)
+        return server.start(self.settings)
 
     def signal(self, sig: int) -> bool:
-        return process_module.signal_game(sig)
+        return server.signal(sig)
 
     def stream(self, process: ServerProcess) -> threading.Thread:
-        return process_module.stream_output(process)
+        return server.stream(process)
 
     def start_log_tail(self, stop_event: threading.Event) -> threading.Thread:
-        return process_module.start_log_tail_thread(stop_event)
+        return gamelog.start_tail(stop_event)
 
     def start_resource_poller(self, pid: int, stop_event: threading.Event) -> threading.Thread | None:
         return resources.start_resource_poller(pid, stop_event, interval=self.settings.resource_poll_interval)
@@ -86,7 +86,7 @@ class SystemLifecycleIO:
         return backup.start_scheduler(self.settings.backup_cron, stop_event)
 
     def cleanup_wine(self) -> None:
-        process_module.cleanup_wineserver(self.settings)
+        wine.cleanup(self.settings)
 
     def write_pid(self, pid: int) -> None:
         self.pid_file.write(pid)
