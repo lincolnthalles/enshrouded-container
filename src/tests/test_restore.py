@@ -280,7 +280,7 @@ def test_restore_without_flags_on_non_tty_lists_backups(
 def test_select_backup_requires_textual() -> None:
     from enshctl.commands import restore_tui
 
-    # GIVEN Textual is unavailable
-    with patch.dict("sys.modules", {"textual": None}), pytest.raises(RestoreError):
+    # GIVEN the Textual app module is unavailable
+    with patch.dict("sys.modules", {"textual.app": None}), pytest.raises(RestoreError, match="requires Textual"):
         # WHEN opening the interactive picker
         restore_tui.select_backup([])

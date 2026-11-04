@@ -51,9 +51,26 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
+          # Never persist downloaded wheels: restoring a truncated one is how a
+          # broken dependency reached every later run. Source builds stay cached.
+          prune-cache: true
 
       - name: Install dependencies
-        run: uv sync --no-install-project
+        run: |
+          set -euo pipefail
+          probe() {
+            uv run --no-sync python -c "import pytest, rich.console, rich.prompt, rich.table, rich.text, textual.app, textual.binding, textual.widgets, zstandard" &&
+              uv run --no-sync ruff --version &&
+              uv run --no-sync pyrefly --version
+          }
+          uv sync --no-install-project
+          if probe; then
+            exit 0
+          fi
+          echo "::warning::Restored dependencies are unusable; clearing the uv cache and reinstalling"
+          uv cache clean
+          uv sync --reinstall --no-install-project
+          probe
 
       - name: Run tests
         run: uv run pytest src/tests/
