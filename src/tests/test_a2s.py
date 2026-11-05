@@ -1,5 +1,7 @@
 """Tests for the advisory A2S probe."""
 
+import socket
+import threading
 from typing import Any
 
 from enshctl.config import QueryEndpoint
@@ -101,3 +103,30 @@ def test_udp_transport_returns_none_when_resolution_fails() -> None:
 
     # THEN no reply is reported
     assert result is None
+
+
+def test_udp_transport_binds_source_to_endpoint_address() -> None:
+    # GIVEN a local UDP server
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+
+    def _serve() -> None:
+        _payload, address = server.recvfrom(65535)
+        server.sendto(b"reply", address)
+
+    thread = threading.Thread(target=_serve)
+    thread.start()
+    transport = UdpA2STransport(QueryEndpoint("127.0.0.1", port), timeout=1.0)
+
+    try:
+        # WHEN the transport exchanges a datagram
+        result = transport.exchange(b"payload")
+    finally:
+        thread.join(timeout=1)
+        server.close()
+
+    # THEN the probe source address matches the endpoint, not the wildcard bind
+    assert result == b"reply"
+    assert transport.last_local_address is not None
+    assert transport.last_local_address[0] == "127.0.0.1"

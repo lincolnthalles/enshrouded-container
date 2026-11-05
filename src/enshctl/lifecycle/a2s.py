@@ -52,6 +52,7 @@ class UdpA2STransport:
         try:
             with socket.socket(family, socket.SOCK_DGRAM) as query_socket:
                 query_socket.settimeout(self.timeout)
+                query_socket.bind((sockaddr[0], 0))
                 query_socket.sendto(payload, sockaddr)
                 local = query_socket.getsockname()
                 self.last_local_address = (str(local[0]), int(local[1]))

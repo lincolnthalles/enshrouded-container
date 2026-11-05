@@ -55,7 +55,7 @@ class _PacketSocket(Protocol):
 
     def recvfrom(self, size: int) -> tuple[bytes, tuple[object, ...]]: ...
 
-    def setblocking(self, *, flag: bool) -> None: ...
+    def setblocking(self, flag: bool, /) -> None: ...
 
     def fileno(self) -> int: ...
 
@@ -105,7 +105,7 @@ class PacketWake:
         for interface in interfaces:
             try:
                 packet_socket = self._socket_factory(interface.name)
-                packet_socket.setblocking(flag=False)
+                packet_socket.setblocking(False)  # noqa: FBT003 - socket API is positional-only
             except OSError:
                 logger.warning("Could not open AF_PACKET on interface %s", interface.name)
                 continue

@@ -116,7 +116,7 @@ class _FakePacketSocket(_PacketSocket):
         return self.frames.pop(0), ("eth0", 0, 0, 1, b"")
 
     @override
-    def setblocking(self, *, flag: bool) -> None:
+    def setblocking(self, flag: bool, /) -> None:
         del flag
 
     @override

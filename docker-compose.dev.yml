@@ -23,7 +23,7 @@ services:
       ORCHESTRATOR_LOG_FILE: /data/logs/orchestrator.log
       ORCHESTRATOR_LOG_LEVEL: WARNING
 
-      BACKUP_CRON: "*/1 * * * *"
+      BACKUP_CRON: "*/5 * * * *" # At every 5th minute; default is 1 hour.
       # BACKUP_KEEP_LAST: 5
       # BACKUP_KEEP_HOURLY: 24
       # BACKUP_KEEP_DAILY: 7
@@ -33,6 +33,9 @@ services:
       BACKUP_FORMAT: zstd
       BACKUP_LEVEL: 6
       BACKUP_COLD: 1
+
+      AUTO_PAUSE_ENABLED: true
+      AUTO_PAUSE_IDLE_TIMEOUT: 60 # 1 minute; default is 5 minutes.
 
       ENSHROUDED_NAME: "[Dev] Enshrouded Server"
       ENSHROUDED_TAGS: '["Portuguese","Exploration","LookingForPlayers"]'
