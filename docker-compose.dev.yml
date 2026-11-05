@@ -14,6 +14,11 @@ services:
     container_name: dev-enshrouded-server
     restart: no
     stop_grace_period: 300s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     ports:
       - "15637:15637/udp"
     environment:
