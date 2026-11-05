@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STATUS_INTERVAL = 5.0
+STATUS_INTERVAL = 10.0
+STOP_JOIN_TIMEOUT = 5.0
 TICK_INTERVAL = 1.0
 SAVE_WAIT_TIMEOUT = 60.0
 SAVE_SETTLE_TIME = 2.0
@@ -122,7 +123,7 @@ class AutoPauseController:
             self._latch.set()
         self._wake_source.close()
         if self._thread is not None:
-            self._thread.join(timeout=STATUS_INTERVAL)
+            self._thread.join(timeout=STOP_JOIN_TIMEOUT)
 
     def resume_for_shutdown(self) -> None:
         """Idempotently resume any stopped Wine processes before SIGINT."""
@@ -188,16 +189,16 @@ class AutoPauseController:
 
     def _handle_disabled(self) -> None:
         if self._run_disabled:
-            self._state = DISABLED
+            self._transition(DISABLED)
             return
         if self._control_files.is_disabled():
             if self._state == PAUSED and not self._resume("disabled marker"):
                 return
-            self._state = DISABLED
+            self._transition(DISABLED)
             return
         if self._state == DISABLED:
             snapshot = self._tracker.snapshot()
-            self._state = ACTIVE if snapshot.ready else WAITING_FOR_READY
+            self._transition(ACTIVE if snapshot.ready else WAITING_FOR_READY)
             self._last_activity_at = self._clock()
 
     def _expire_evidence(self, now: float) -> None:
@@ -225,7 +226,7 @@ class AutoPauseController:
     def _tick(self, now: float) -> None:
         if self._state == WAITING_FOR_READY:
             if self._tracker.snapshot().ready:
-                self._state = ACTIVE
+                self._transition(ACTIVE)
                 self._last_activity_at = now
                 logger.info("Auto Pause: world is ready")
         elif self._state == ACTIVE:
@@ -254,12 +255,12 @@ class AutoPauseController:
             if not self._resume("stdout stream ended"):
                 return
             self._run_disabled = True
-            self._state = DISABLED
+            self._transition(DISABLED)
             return
         if self._control_files.is_disabled():
             if not self._resume("disabled marker"):
                 return
-            self._state = DISABLED
+            self._transition(DISABLED)
             return
         event = self._wake_source.wait(self._stop_event, TICK_INTERVAL)
         if event is not None:
@@ -340,7 +341,7 @@ class AutoPauseController:
                     return False
                 if not self._process_control.suspend_all():
                     self._last_error = "suspend verification failed"
-                    self._state = ACTIVE
+                    self._transition(ACTIVE)
                     return False
                 self._control_files.set_paused()
                 self._state = PAUSED
@@ -508,6 +509,12 @@ class AutoPauseController:
             return False
         current = self._save_probe(self._saves_dir)
         return current == self._quiescent_signature
+
+    def _transition(self, state: str) -> None:
+        if self._state == state:
+            return
+        self._state = state
+        self._write_status(force=True)
 
     def _write_status(self, *, force: bool = False) -> None:
         now = self._clock()

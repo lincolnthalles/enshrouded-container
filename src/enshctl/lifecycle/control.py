@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STATUS_FRESHNESS = 15.0
+STATUS_FRESHNESS = 30.0
 REQUEST_TTL = 5.0
 STATUS_FILE = "status.json"
 REQUEST_FILE = "request"

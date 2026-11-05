@@ -287,8 +287,7 @@ degradation, the `disabled` marker, or shutdown SHALL still abort it.
 #### Scenario: Status heartbeat continues during save wait
 
 - **WHEN** the save gate waits for a new save
-- **THEN** `status.json` SHALL be refreshed at least every 5 seconds
-- **AND** `autopause status` SHALL remain live during the wait
+- **THEN** `autopause status` SHALL remain live during the wait
 
 ### Requirement: Save re-stat before suspension
 
@@ -468,19 +467,8 @@ controller.
 
 `status.json` SHALL report state, players, pending join, session veto, degraded tracker, paused
 since, last error, wake filter, A2S state, last request token, last result, `updated_at`, and
-controller PID. The controller SHALL refresh status at least every 5 seconds. Writes SHALL be
-atomic and owned by `PUID`/`PGID`. Startup SHALL resume a leftover stopped tree and clear `paused`,
-`request`, and `status.json` while preserving `disabled`.
-
-#### Scenario: Status heartbeat is live
-
-- **WHEN** the controller has written `status.json` within 15 seconds and its PID is running
-- **THEN** `autopause status` SHALL report the current state and exit successfully
-
-#### Scenario: Stale status is rejected
-
-- **WHEN** `status.json` is older than 15 seconds or its controller PID is gone
-- **THEN** `autopause status` SHALL report stale state and exit with the unavailable code
+controller PID. Writes SHALL be atomic and owned by `PUID`/`PGID`. Startup SHALL resume a leftover
+stopped tree and clear `paused`, `request`, and `status.json` while preserving `disabled`.
 
 #### Scenario: Startup clears transient state
 
@@ -488,6 +476,22 @@ atomic and owned by `PUID`/`PGID`. Startup SHALL resume a leftover stopped tree 
 - **THEN** those files SHALL be removed
 - **AND** a leftover stopped tree SHALL be resumed
 - **AND** a `disabled` marker SHALL be preserved
+
+### Requirement: Status heartbeat
+
+The controller SHALL write `status.json` on every state change and refresh it nominally every
+10 seconds. A blocking probe or process transition MAY delay one refresh. The CLI SHALL treat
+status older than 30 seconds as stale.
+
+#### Scenario: Status heartbeat is live
+
+- **WHEN** the controller has written `status.json` within 30 seconds and its PID is running
+- **THEN** `autopause status` SHALL report the current state and exit successfully
+
+#### Scenario: Stale status is rejected
+
+- **WHEN** `status.json` is older than 30 seconds or its controller PID is gone
+- **THEN** `autopause status` SHALL report stale state and exit with the unavailable code
 
 ### Requirement: Controller request handling
 

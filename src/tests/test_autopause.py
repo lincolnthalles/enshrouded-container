@@ -2,12 +2,13 @@
 
 import threading
 from dataclasses import replace
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from enshctl.config import QueryEndpoint
 from enshctl.lifecycle.autopause import AutoPauseController
-from enshctl.lifecycle.control import ControlFiles
+from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature
 from enshctl.lifecycle.wake import WakeEvent
 from enshctl.presence import PresenceTracker
@@ -237,6 +238,50 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
     controller.resume_for_shutdown()
     assert process.resumed >= 1
     assert control.is_paused() is False
+
+
+def test_status_heartbeat_continues_during_save_wait(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GIVEN a ready empty server whose save never changes during the save wait
+    driver = _Driver(stop_at=25)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    statuses: list[AutoPauseStatus] = []
+    original_write_status = ControlFiles.write_status
+
+    def _record(control_files: ControlFiles, status: AutoPauseStatus) -> None:
+        statuses.append(status)
+        original_write_status(control_files, status)
+
+    monkeypatch.setattr(ControlFiles, "write_status", _record)
+    settings = replace(_settings(), auto_pause_idle_timeout=1)
+
+    # WHEN the controller waits for a save that never changes
+    _run(
+        _controller(
+            tmp_path=tmp_path,
+            driver=driver,
+            tracker=tracker,
+            process=process,
+            control=control,
+            wake=_Wake(),
+            settings=settings,
+            save_probe=_SaveProbe([_OLD_SAVE]),
+        ),
+        driver,
+    )
+
+    # THEN state changes are written immediately and the wait keeps a heartbeat
+    assert [status.state for status in statuses[:2]] == ["waiting-for-ready", "active"]
+    pending_timestamps = [status.updated_at for status in statuses if status.state == "pause-pending"]
+    gaps = [later - earlier for earlier, later in pairwise(pending_timestamps)]
+    assert len(pending_timestamps) >= 3
+    assert max(gaps) <= 10.0
 
 
 def test_a2s_positive_veto_keeps_server_awake(tmp_path: Path) -> None:
