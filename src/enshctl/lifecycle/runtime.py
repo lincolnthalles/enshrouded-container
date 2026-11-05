@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.lifecycle.io import LifecycleIO, ProcessControl, SystemLifecycleIO, SystemProcessControl
+from enshctl.lifecycle.players import PlayerReporter
 from enshctl.lifecycle.types import ExitRequest, ServerProcess
+from enshctl.presence import PresenceTracker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,6 +120,9 @@ class ServerLifecycle:
         self._shutdown_requested = False
         self._stream_thread: threading.Thread | None = None
         self._log_thread: threading.Thread | None = None
+        self._reporter_thread: threading.Thread | None = None
+        self._presence: PresenceTracker | None = None
+        self._reporter: PlayerReporter | None = None
         self._pid_written = False
         self._finished = False
         self._exit_code = 1
@@ -145,7 +150,10 @@ class ServerLifecycle:
             self._pid_written = True
             if self._request is not None:
                 return self._finish(process_handle)
-            self._stream_thread = self._process_control.stream(process_handle)
+            self._presence = PresenceTracker()
+            self._reporter = PlayerReporter(self._presence, self._settings)
+            self._reporter_thread = self._reporter.start(self._stop_event)
+            self._stream_thread = self._process_control.stream(process_handle, on_line=self._reporter.observe)
             if self._settings.backup_live:
                 self._lifecycle_io.start_scheduler(self._stop_event)
             else:
@@ -201,4 +209,6 @@ class ServerLifecycle:
             self._stream_thread.join(timeout=5)
         if self._log_thread is not None:
             self._log_thread.join(timeout=5)
+        if self._reporter_thread is not None:
+            self._reporter_thread.join(timeout=5)
         return self._exit_code

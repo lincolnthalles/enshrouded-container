@@ -66,6 +66,8 @@ def test_app_settings_defaults_are_documented_values() -> None:
         backup_emergency=True,
         log_tail=False,
         resource_poll_interval=60,
+        player_log=True,
+        player_poll_interval=60,
         shutdown_timeout=60,
         shutdown_backup_wait=120,
         orchestrator_log_file="",
@@ -109,6 +111,8 @@ def test_load_settings_parses_every_declared_key() -> None:
         "BACKUP_EMERGENCY": "0",
         "LOG_TAIL": "true",
         "RESOURCE_POLL_INTERVAL": "5",
+        "PLAYER_LOG": "false",
+        "PLAYER_POLL_INTERVAL": "7",
         "SHUTDOWN_TIMEOUT": "-1",
         "SHUTDOWN_BACKUP_WAIT": "10",
         "ORCHESTRATOR_LOG_FILE": " true ",
@@ -154,6 +158,8 @@ def test_load_settings_parses_every_declared_key() -> None:
         backup_emergency=False,
         log_tail=True,
         resource_poll_interval=5,
+        player_log=False,
+        player_poll_interval=7,
         shutdown_timeout=0,
         shutdown_backup_wait=10,
         orchestrator_log_file="true",
@@ -182,6 +188,8 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
         "BACKUP_LEVEL": "",
         "BACKUP_LIVE": "maybe",
         "BACKUP_COLD": "",
+        "PLAYER_LOG": "maybe",
+        "PLAYER_POLL_INTERVAL": "-30",
         "SHUTDOWN_TIMEOUT": "-30",
         "MANIFESTHUB_API_TOKEN": "   ",
         "MANIFESTHUB_API_URL": "   ",
@@ -192,9 +200,21 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
     # THEN the existing fallback semantics are preserved
     assert settings == replace(
         AppSettings(),
+        player_poll_interval=0,
         shutdown_timeout=0,
         winedlloverrides="",
     )
+
+
+def test_load_settings_falls_back_for_non_integer_poll_interval() -> None:
+    # GIVEN a malformed player poll interval
+    source = {"PLAYER_POLL_INTERVAL": "often"}
+
+    # WHEN loading settings
+    settings = load_settings(source)
+
+    # THEN the documented default applies
+    assert settings.player_poll_interval == 60
 
 
 def test_settings_are_frozen() -> None:
@@ -218,6 +238,8 @@ def test_backup_child_env_forwards_only_declared_settings_keys() -> None:
         "BACKUP_CRON": "*/5 * * * *",
         "BACKUP_FUTURE_UNKNOWN": "nope",
         "STEAM_PASSWORD": "s3cret",
+        "PLAYER_LOG": "true",
+        "PLAYER_POLL_INTERVAL": "5",
         "PATH": "/usr/bin",
     }
     # WHEN selecting the backup child environment

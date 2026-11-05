@@ -9,7 +9,7 @@ from enshctl.lifecycle import gamelog, wine
 from enshctl.paths import GAME_EXE
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from enshctl.lifecycle.types import ServerProcess
     from enshctl.settings import AppSettings
@@ -43,18 +43,32 @@ def start(
     )
 
 
-def stream(process: ServerProcess) -> threading.Thread:
+def stream(
+    process: ServerProcess,
+    *,
+    on_line: Callable[[str], None] | None = None,
+) -> threading.Thread:
     """Drain server stdout to the logger in a daemon thread."""
 
     def reader() -> None:
+        hook_failed = False
         try:
             if process.stdout is None:
                 logger.warning("No server stdout to stream")
                 return
             for line in iter(process.stdout.readline, b""):
                 decoded = line.decode(errors="replace").rstrip()
-                if decoded:
-                    logger.log(gamelog.SERVER, decoded, extra={"source": "gameserver"})
+                if not decoded:
+                    continue
+                logger.log(gamelog.SERVER, decoded, extra={"source": "gameserver"})
+                if on_line is None:
+                    continue
+                try:
+                    on_line(decoded)
+                except Exception:
+                    if not hook_failed:
+                        logger.warning("Presence callback failed; continuing to relay output", exc_info=True)
+                        hook_failed = True
             process.stdout.close()
         except OSError:
             logger.exception("Failed to read server output")

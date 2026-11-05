@@ -98,6 +98,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
 - **ntsync**: Can improve game server performance by accurately emulating Windows synchronization primitives. Requires a host with kernel 6.14+, the ntsync module loaded, and mounting `/dev/ntsync` into the container.
 - **Resource polling**: Periodically logs CPU% and RSS for the orchestrator and game server process tree. Set `RESOURCE_POLL_INTERVAL` (default 60s) to control the interval.
+- **Player presence**: Derives the connected-player roster from server output and logs joins, leaves, and a periodic summary. Set `PLAYER_LOG=false` to silence roster lines.
 
 ## Environment Variables
 
@@ -128,10 +129,12 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 
 ### Monitoring
 
-| Variable                 | Default | Description                                    |
-| ------------------------ | ------- | ---------------------------------------------- |
-| `RESOURCE_POLL_INTERVAL` | `60`    | Seconds between CPU/memory polls (0 = disable) |
-| `LOG_TAIL`               | `false` | Tail server log to container stdout            |
+| Variable                 | Default | Description                                                                     |
+| ------------------------ | ------- | ------------------------------------------------------------------------------- |
+| `RESOURCE_POLL_INTERVAL` | `60`    | Seconds between CPU/memory polls (0 = disable)                                  |
+| `PLAYER_LOG`             | `true`  | Log player joins, leaves, and roster summaries                                  |
+| `PLAYER_POLL_INTERVAL`   | `60`    | Seconds between roster summaries (0 = summaries off; joins/leaves still logged) |
+| `LOG_TAIL`               | `false` | Tail server log to container stdout                                             |
 
 ### Enshrouded Server config (any `ENSHROUDED_*` prefix)
 

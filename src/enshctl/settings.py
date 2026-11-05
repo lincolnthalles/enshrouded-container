@@ -110,6 +110,8 @@ class AppSettings:
     # Logging / monitoring
     log_tail: bool = _env_field(default=False, key="LOG_TAIL", parse=_parse_bool)
     resource_poll_interval: int = _env_field(60, "RESOURCE_POLL_INTERVAL", _parse_int)
+    player_log: bool = _env_field(default=True, key="PLAYER_LOG", parse=_parse_bool)
+    player_poll_interval: int = _env_field(60, "PLAYER_POLL_INTERVAL", _parse_non_negative_int)
 
     # Shutdown
     shutdown_timeout: int = _env_field(60, "SHUTDOWN_TIMEOUT", _parse_non_negative_int)

@@ -122,6 +122,68 @@ def test_stream_drains_to_eof(caplog: pytest.LogCaptureFixture) -> None:
     assert process.stdout.closed is True
 
 
+def test_stream_calls_on_line_hook() -> None:
+    # GIVEN a server stream with two lines
+    class _Stdout:
+        def __init__(self) -> None:
+            self._lines = [b"one\n", b"two\n", b""]
+
+        def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+        def close(self) -> None:
+            pass
+
+    class _Process:
+        def __init__(self) -> None:
+            self.stdout = _Stdout()
+
+    seen: list[str] = []
+
+    # WHEN the reader drains it with a line hook
+    thread = server.stream(cast("ServerProcess", _Process()), on_line=seen.append)
+    thread.join(timeout=1)
+
+    # THEN every non-empty line reaches the hook
+    assert seen == ["one", "two"]
+
+
+def test_stream_survives_hook_failure(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a server stream with two lines and a hook that fails on the first
+    class _Stdout:
+        def __init__(self) -> None:
+            self._lines = [b"one\n", b"two\n", b""]
+
+        def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+        def close(self) -> None:
+            pass
+
+    class _Process:
+        def __init__(self) -> None:
+            self.stdout = _Stdout()
+
+    seen: list[str] = []
+
+    def _on_line(line: str) -> None:
+        if line == "one":
+            message = "presence failed"
+            raise RuntimeError(message)
+        seen.append(line)
+
+    # WHEN the reader drains it
+    with caplog.at_level(gamelog.SERVER, logger="enshctl.lifecycle.server"):
+        thread = server.stream(cast("ServerProcess", _Process()), on_line=_on_line)
+        thread.join(timeout=1)
+
+    # THEN the failure is reported and later lines are still relayed
+    assert "Presence callback failed" in caplog.text
+    assert "one" in caplog.text
+    assert "two" in caplog.text
+    assert seen == ["two"]
+
+
 def test_stream_handles_empty_stdout() -> None:
     # GIVEN a process without stdout
     class _Process:

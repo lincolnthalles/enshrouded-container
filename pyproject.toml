@@ -95,6 +95,9 @@ docstring-quotes = "double"
 "src/enshctl/download/flow.py" = [
     "PLR0915", # download_version keeps the ordered install flow in one place; splitting would hide the transaction.
 ]
+"src/enshctl/lifecycle/server.py" = [
+    "BLE001", # The stdout reader must survive any presence hook failure; a narrow catch would let a parser bug kill the only drain.
+]
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 

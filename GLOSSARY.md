@@ -103,3 +103,11 @@ _Avoid_: Server run, Server loop
 **PID file**:
 File recording the PID of the launched server process; its presence is the restore guard.
 _Avoid_: Lock file, Marker
+
+**Player presence**:
+Connected-player set derived from the dedicated server's stdout.
+_Avoid_: Player list, Roster cache
+
+**Player handle**:
+Game-assigned `index(session)` identifier for one connection.
+_Avoid_: Player ID, Slot

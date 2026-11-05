@@ -10,6 +10,7 @@ from enshctl.pidfile import PidFile
 
 if TYPE_CHECKING:
     import threading
+    from collections.abc import Callable
 
     from enshctl.backup_protocol import BackupRequest
     from enshctl.lifecycle.types import ServerProcess
@@ -23,7 +24,12 @@ class ProcessControl(Protocol):
 
     def signal(self, sig: int) -> bool: ...
 
-    def stream(self, process: ServerProcess) -> threading.Thread: ...
+    def stream(
+        self,
+        process: ServerProcess,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> threading.Thread: ...
 
     def start_log_tail(self, stop_event: threading.Event) -> threading.Thread: ...
 
@@ -58,8 +64,13 @@ class SystemProcessControl:
     def signal(self, sig: int) -> bool:
         return server.signal(sig)
 
-    def stream(self, process: ServerProcess) -> threading.Thread:
-        return server.stream(process)
+    def stream(
+        self,
+        process: ServerProcess,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> threading.Thread:
+        return server.stream(process, on_line=on_line)
 
     def start_log_tail(self, stop_event: threading.Event) -> threading.Thread:
         return gamelog.start_tail(stop_event)

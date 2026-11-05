@@ -16,6 +16,8 @@ from enshctl.settings import AppSettings
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
+
 
 class FakeProcess:
     pid: int
@@ -63,6 +65,8 @@ class FakeProcessControl:
         self.start_error: Exception | None = None
         self.signal_error: Exception | None = None
         self.on_start: Callable[[], None] | None = None
+        self.stream_on_line: Callable[[str], None] | None = None
+        self.stream_line: str | None = None
 
     def start(self) -> ServerProcess:
         self.started = True
@@ -79,9 +83,17 @@ class FakeProcessControl:
             raise self.signal_error
         return True
 
-    def stream(self, process: ServerProcess) -> threading.Thread:
+    def stream(
+        self,
+        process: ServerProcess,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> threading.Thread:
         del process
         self.events.append("stream")
+        self.stream_on_line = on_line
+        if on_line is not None and self.stream_line is not None:
+            on_line(self.stream_line)
         if self.stream_error is not None:
             raise self.stream_error
         thread = threading.Thread(target=lambda: None)
@@ -395,6 +407,56 @@ def test_run_skips_scheduler_when_live_disabled() -> None:
 
     # THEN no scheduler starts
     assert "scheduler" not in events
+
+
+def test_run_wires_player_hook_and_logs_join(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a lifecycle with roster output enabled and no summary interval
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    control.stream_line = "[I 00:00:01,000] [session] Remote player added. Player handle: 0(0)"
+    io = FakeLifecycleIO(events)
+    settings = _settings(
+        backup_live=False,
+        backup_cold=False,
+        backup_emergency=False,
+        player_log=True,
+        player_poll_interval=0,
+    )
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"), caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
+        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+
+    # THEN the stream receives the presence hook and the join is reported
+    assert code == 0
+    assert control.stream_on_line is not None
+    assert "Player joined: 0(0)" in caplog.text
+
+
+def test_run_suppresses_player_lines_when_output_disabled(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN roster output disabled
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    control.stream_line = "[I 00:00:01,000] [session] Remote player added. Player handle: 0(0)"
+    io = FakeLifecycleIO(events)
+    settings = _settings(
+        backup_live=False,
+        backup_cold=False,
+        backup_emergency=False,
+        player_log=False,
+        player_poll_interval=60,
+    )
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"), caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
+        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+
+    # THEN the hook still runs but no roster line is emitted
+    assert code == 0
+    assert control.stream_on_line is not None
+    assert "Player joined" not in caplog.text
 
 
 def test_run_shutdown_before_start_skips_launch() -> None:
