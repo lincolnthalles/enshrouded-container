@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature, newest_save_signature
+from enshctl.presence import PresenceWarning
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -102,6 +103,7 @@ class AutoPauseController:
         self._last_veto_at = 0.0
         self._quiescent_signature: SaveSignature | None = None
         self._save_activity_generation = 0
+        self._pending_join_expired_at: float | None = None
 
     @property
     def state(self) -> str:
@@ -171,6 +173,9 @@ class AutoPauseController:
         while not self._stop_event.is_set() and not self._latch.is_set():
             now = self._clock()
             self._handle_disabled()
+            self._expire_evidence(now)
+            self._observe_pending_join()
+            self._observe_session(now)
             self._handle_request(now)
             tick_started = self._clock()
             self._tick(now)
@@ -194,6 +199,28 @@ class AutoPauseController:
             snapshot = self._tracker.snapshot()
             self._state = ACTIVE if snapshot.ready else WAITING_FOR_READY
             self._last_activity_at = self._clock()
+
+    def _expire_evidence(self, now: float) -> None:
+        for event in self._tracker.expire(now):
+            if isinstance(event, PresenceWarning):
+                logger.warning("%s", event.message)
+
+    def _observe_pending_join(self) -> None:
+        snapshot = self._tracker.snapshot()
+        expired_at = snapshot.pending_join_expired_at
+        if self._state != DISABLED and expired_at is not None and expired_at != self._pending_join_expired_at:
+            logger.warning("Auto Pause: pending player join expired without a completed join")
+            self._pending_join_expired_at = expired_at
+        elif expired_at is None:
+            self._pending_join_expired_at = None
+
+    def _observe_session(self, now: float) -> None:
+        if self._state not in (ACTIVE, PAUSE_PENDING):
+            return
+        snapshot = self._tracker.snapshot()
+        reason = self._session_veto(snapshot, now)
+        if reason is not None:
+            self._log_veto(reason)
 
     def _tick(self, now: float) -> None:
         if self._state == WAITING_FOR_READY:
@@ -381,12 +408,12 @@ class AutoPauseController:
         return snapshot.pending_join_until is not None and now < snapshot.pending_join_until
 
     def _session_veto(self, snapshot: PresenceSnapshot, now: float) -> str | None:
+        if snapshot.session_malformed:
+            return "session block malformed"
         if snapshot.session_complete_at is None:
             return "session block missing"
         if now - snapshot.session_complete_at > 90.0:
             return "session block stale"
-        if snapshot.session_malformed:
-            return "session block malformed"
         machines = snapshot.session_machines
         if machines is None or 0 not in machines or any(index > 0 for index in machines):
             return "session machine veto"

@@ -167,6 +167,26 @@ def test_warnings_survive_output_suppression(caplog: pytest.LogCaptureFixture) -
     assert "Player joined" not in caplog.text
 
 
+def test_disabled_auto_pause_does_not_log_session_policy(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN Auto Pause disabled and a malformed Session block
+    tracker = PresenceTracker()
+    reporter = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=60, auto_pause_enabled=False),
+        clock=_FakeClock(),
+    )
+
+    # WHEN the block excludes m#0
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.players"):
+        reporter.observe("[session] -------------- Session ----------------")
+        reporter.observe("[session]   m#1(129): up 2 (3), down 2 (3)")
+        reporter.observe("[session] ----------------------------------------")
+
+    # THEN no Auto Pause policy message is emitted
+    assert "Auto Pause:" not in caplog.text
+    assert "session block" not in caplog.text.lower()
+
+
 def test_summary_expires_unnamed_handle_with_warning(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN an unnamed handle added at time zero
     clock = _FakeClock()

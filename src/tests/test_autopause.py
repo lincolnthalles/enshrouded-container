@@ -16,6 +16,8 @@ from enshctl.settings import AppSettings
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
+
 
 class _Driver:
     def __init__(self, stop_at: float, on_wait: Callable[[], None] | None = None) -> None:
@@ -153,13 +155,17 @@ def _tracker(driver: _Driver) -> PresenceTracker:
 
 
 def _ready(tracker: PresenceTracker) -> None:
-    tracker.observe("[I 00:00:00,000] [server] Switching state from LoadEcsScene to Run", now=0)
+    tracker.observe("[game_server] Switching state from LoadEcsScene to Run after 495.18 ms", now=0)
 
 
 def _empty_session(tracker: PresenceTracker) -> None:
-    tracker.observe("[I 00:00:00,100] [session] -------------- Session ----------------", now=0)
-    tracker.observe("[I 00:00:00,200] [session] m#0 1 (1) remote 0 (0)", now=0)
-    tracker.observe("[I 00:00:00,300] [session] ----------------------------------------", now=0)
+    tracker.observe("-------------- Session ----------------", now=0)
+    tracker.observe("Machines:", now=0)
+    tracker.observe(
+        "  m#0(128): up 0 (0), down 0 (0), remote 0 (0), limit 256, lost 0, ping 0 ms, OperatingNormally",
+        now=0,
+    )
+    tracker.observe("----------------------------------------", now=0)
 
 
 def _controller(
@@ -338,6 +344,213 @@ def test_missing_session_block_vetoes_pause(tmp_path: Path) -> None:
     assert process.suspended == 0
     assert control.read_status() is not None
     assert control.read_status().session_veto is True  # type: ignore[union-attr]
+
+
+def test_enabled_controller_logs_malformed_session_veto(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a ready server with a malformed Session block
+    driver = _Driver(stop_at=5)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    tracker.observe("[session] -------------- Session ----------------", now=0)
+    tracker.observe(
+        "[session]   m#1(129): up 2 (3), down 2 (3), remote 2 (3), limit 256, lost 0, ping 15 ms, EstablishingBaseline",
+        now=0,
+    )
+    tracker.observe("[session] ----------------------------------------", now=0)
+    process = _Process()
+
+    # WHEN the controller runs
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+            ),
+            driver,
+        )
+
+    # THEN the enabled controller names the veto
+    assert "session block malformed" in caplog.text
+
+
+def test_controller_logs_pending_join_expiry(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a ready server with a pending join that will expire
+    driver = _Driver(stop_at=65)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    tracker.observe("[online] Session accepted with peer (steamid:99999999999999999)", now=0)
+    process = _Process()
+    settings = replace(_settings(), auto_pause_idle_timeout=300)
+
+    # WHEN the controller reaches the expiry
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+                settings=settings,
+            ),
+            driver,
+        )
+
+    # THEN the controller logs the expiry
+    assert "pending player join expired" in caplog.text
+
+
+def test_completed_join_before_deadline_does_not_log_expiry(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a pending join and a completed join just before the deadline
+    driver = _Driver(stop_at=65)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    tracker.observe("[online] Session accepted with peer (steamid:99999999999999999)", now=0)
+
+    def _join_before_deadline() -> None:
+        if driver.now >= 59.0 and tracker.snapshot().pending_join_until is not None:
+            tracker.observe("[session] Remote player added. Player handle: 0(0)", now=59.5)
+
+    driver.on_wait = _join_before_deadline
+    process = _Process()
+    settings = replace(_settings(), auto_pause_idle_timeout=300)
+
+    # WHEN the controller runs past the deadline
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+                settings=settings,
+            ),
+            driver,
+        )
+
+    # THEN no false expiry warning is emitted
+    assert "pending player join expired" not in caplog.text
+
+
+def test_paused_controller_does_not_log_session_vetoes(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a paused server whose Session block becomes stale
+    driver = _Driver(stop_at=100)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+
+    # WHEN the controller remains paused past the Session freshness window
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+            ),
+            driver,
+        )
+
+    # THEN it does not emit a misleading cannot-pause warning while paused
+    assert process.suspended == 1
+    assert "Auto Pause: cannot pause" not in caplog.text
+
+
+def test_operator_disabled_controller_is_silent(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN Auto Pause is enabled but the operator disabled marker exists
+    driver = _Driver(stop_at=5)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    tracker.observe("[session] -------------- Session ----------------", now=0)
+    tracker.observe(
+        "[session]   m#1(129): up 2 (3), down 2 (3), remote 2 (3), limit 256, lost 0, ping 15 ms, EstablishingBaseline",
+        now=0,
+    )
+    tracker.observe("[session] ----------------------------------------", now=0)
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    control.set_disabled()
+    process = _Process()
+
+    # WHEN the controller runs
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=control,
+                wake=_Wake(),
+            ),
+            driver,
+        )
+
+    # THEN it does not emit an Auto Pause veto and reports disabled
+    assert "Auto Pause: cannot pause" not in caplog.text
+    assert control.read_status() is not None
+    assert control.read_status().state == "disabled"  # type: ignore[union-attr]
+
+
+def test_controller_expires_unnamed_handle_with_summaries_disabled(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN roster summaries disabled and an unnamed handle older than the grace period
+    driver = _Driver(stop_at=305)
+    tracker = _tracker(driver)
+    tracker.observe("[session] Remote player added. Player handle: 0(0)", now=0)
+    process = _Process()
+    settings = replace(
+        _settings(),
+        player_log=False,
+        player_poll_interval=0,
+        auto_pause_idle_timeout=600,
+    )
+
+    # WHEN the controller maintenance tick reaches the expiry
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+                settings=settings,
+            ),
+            driver,
+        )
+
+    # THEN the handle expires with a warning and no pause
+    assert process.suspended == 0
+    assert tracker.snapshot().players == ()
+    assert "expired after 300s" in caplog.text
 
 
 def test_degraded_presence_vetoes_pause(tmp_path: Path) -> None:

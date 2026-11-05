@@ -30,7 +30,10 @@ _SESSION_ACCEPTED = "[I 00:00:01,000] [online] Session accepted with peer (steam
 _AUTHENTICATED = "[I 00:00:01,100] [online] Client '99999999999999999' authenticated by steam"
 _SESSION_START = "[I 00:00:01,000] [session] -------------- Session ----------------"
 _SESSION_END = "[I 00:00:01,100] [session] ----------------------------------------"
-_SESSION_MACHINE = "[I 00:00:01,050] [session] m#{index} 59 (369) remote 7 (8)"
+_SESSION_MACHINE = (
+    "[I 00:00:01,050] [session]   m#{index}(128): up 0 (0), down 0 (0), remote 7 (8), "
+    "limit 256, lost 0, ping 0 ms, OperatingNormally"
+)
 _RUN_MARKER = "[I 00:00:01,200] [server] Switching state from LoadEcsScene to Run"
 
 
@@ -80,6 +83,31 @@ def test_machine_line_adds_a_missed_handle() -> None:
     # THEN the handle is added and reported
     assert events == (PlayerJoined("0(0)"),)
     assert tracker.snapshot().handles == frozenset({"0(0)"})
+
+
+def test_module_only_prefix_parses_add_machine_and_name() -> None:
+    # GIVEN relayed stdout without the log-file timestamp field
+    tracker = PresenceTracker()
+
+    # WHEN the join sequence uses module-only prefixes
+    add_events = tracker.observe("[session] Remote player added. Player handle: 0(0)", now=0)
+    tracker.observe("[server] Machine '1': Player '0(0)' logged in", now=1)
+    tracker.observe("[server] Player 'Morgan' logged in with Permissions:", now=2)
+
+    # THEN the same roster is derived
+    assert add_events == (PlayerJoined("0(0)"),)
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan"),)
+
+
+def test_bare_message_prefix_is_parsed() -> None:
+    # GIVEN a relayed line with no module prefix
+    tracker = PresenceTracker()
+
+    # WHEN the add message arrives bare
+    events = tracker.observe("Remote player added. Player handle: 0(0)", now=0)
+
+    # THEN the handle is added
+    assert events == (PlayerJoined("0(0)"),)
 
 
 def test_logout_sequence_removes_only_on_player_removed() -> None:
@@ -484,7 +512,7 @@ def test_unrelated_removal_does_not_clear_pending_join() -> None:
     assert tracker.snapshot().pending_join_until == 2 + PENDING_JOIN_WINDOW
 
 
-def test_pending_join_expires_with_warning() -> None:
+def test_pending_join_expires_without_policy_warning() -> None:
     # GIVEN an open pending-join window
     tracker = PresenceTracker()
     tracker.observe(_SESSION_ACCEPTED, now=0)
@@ -492,8 +520,8 @@ def test_pending_join_expires_with_warning() -> None:
     # WHEN it reaches the deadline
     events = tracker.expire(now=PENDING_JOIN_WINDOW)
 
-    # THEN the window clears with a warning
-    assert events == (PresenceWarning("Pending player join expired without a completed join"),)
+    # THEN the window clears silently; the controller owns the policy warning
+    assert events == ()
     assert tracker.snapshot().pending_join_until is None
 
 
@@ -508,6 +536,17 @@ def test_run_marker_sets_ready_and_activity() -> None:
     snapshot = tracker.snapshot()
     assert snapshot.ready is True
     assert snapshot.last_activity_at == 42
+
+
+def test_run_marker_accepts_after_suffix_and_module_prefix() -> None:
+    # GIVEN the real relayed ready line
+    tracker = PresenceTracker()
+
+    # WHEN it is observed
+    tracker.observe("[game_server] Switching state from LoadEcsScene to Run after 495.18 ms", now=3)
+
+    # THEN the world is ready
+    assert tracker.snapshot().ready is True
 
 
 def test_session_block_records_remote_machine_and_ignores_remote_counter() -> None:
@@ -543,6 +582,39 @@ def test_local_only_session_block_is_not_activity() -> None:
     assert snapshot.last_activity_at is None
 
 
+def test_session_block_accepts_indented_rows_and_machines_header() -> None:
+    # GIVEN the real relayed block shape
+    tracker = PresenceTracker()
+
+    # WHEN the header, Machines label, indented row, and separator are observed
+    tracker.observe(_SESSION_START, now=0)
+    tracker.observe("Machines:", now=1)
+    tracker.observe(
+        "  m#0(128): up 0 (0), down 0 (0), remote 0 (0), limit 256, lost 0, ping 0 ms, OperatingNormally",
+        now=2,
+    )
+    tracker.observe(_SESSION_END, now=3)
+
+    # THEN the local baseline is accepted and the block is complete
+    snapshot = tracker.snapshot()
+    assert snapshot.session_machines == frozenset({0})
+    assert snapshot.session_complete_at == 3
+    assert snapshot.session_malformed is False
+
+
+def test_session_block_rejects_near_match_machine_row() -> None:
+    # GIVEN a Session block with an m#-prefixed line that is not a real machine row
+    tracker = PresenceTracker()
+
+    # WHEN the block closes
+    tracker.observe(_SESSION_START, now=0)
+    tracker.observe("  m#0(128): up 0 (0), not a real machine row", now=1)
+    tracker.observe(_SESSION_END, now=2)
+
+    # THEN the block is malformed rather than accepting spoofed empty-server evidence
+    assert tracker.snapshot().session_malformed is True
+
+
 def test_session_block_without_local_machine_is_malformed() -> None:
     # GIVEN a block missing m#0
     tracker = PresenceTracker()
@@ -552,8 +624,8 @@ def test_session_block_without_local_machine_is_malformed() -> None:
     tracker.observe(_session_machine(1), now=1)
     events = tracker.observe(_SESSION_END, now=2)
 
-    # THEN it is rejected as malformed
-    assert events == (PresenceWarning("Session block is malformed; Auto Pause is blocked"),)
+    # THEN it is rejected as malformed without an Auto Pause policy warning
+    assert events == ()
     assert tracker.snapshot().session_malformed is True
 
 
@@ -565,8 +637,8 @@ def test_session_block_overdue_is_malformed() -> None:
     # WHEN the timeout passes
     events = tracker.expire(now=SESSION_BLOCK_TIMEOUT)
 
-    # THEN it is marked malformed and warned once
-    assert events == (PresenceWarning("Session block did not close within 90s; Auto Pause is blocked"),)
+    # THEN it is marked malformed without an Auto Pause policy warning
+    assert events == ()
     assert tracker.snapshot().session_malformed is True
     assert tracker.expire(now=SESSION_BLOCK_TIMEOUT + 1) == ()
 

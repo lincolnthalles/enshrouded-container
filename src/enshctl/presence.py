@@ -19,7 +19,7 @@ PENDING_JOIN_WINDOW = 60.0
 SESSION_BLOCK_TIMEOUT = 90.0
 
 _HANDLE_PATTERN = r"\d+\(\d+\)"
-_LOG_PREFIX = re.compile(r"^\[[^\]]+\]\s+\[[^\]]+\]\s+(?P<message>.*)$")
+_LOG_PREFIX = re.compile(r"^(?:\[[^\]]+\]\s+){0,2}(?P<message>.*)$")
 _REMOTE_PLAYER_ADDED = re.compile(rf"Remote player added\. Player handle: (?P<handle>{_HANDLE_PATTERN})")
 _MACHINE_LOGIN = re.compile(rf"Machine '\d+': Player '(?P<handle>{_HANDLE_PATTERN})' logged in")
 _PLAYER_NAME = re.compile(r"Player '(?P<name>.*)' logged in with Permissions:")
@@ -27,11 +27,14 @@ _PLAYER_REMOVED = re.compile(rf"Player removed\. Player handle: (?P<handle>{_HAN
 _REMOVE_ENTITY = re.compile(r"Remove Entity for Player '(?P<name>.*)'")
 _SESSION_ACCEPTED = re.compile(r"Session accepted with peer \(steamid:\d+\)")
 _AUTHENTICATED = re.compile(r"Client '\d+' authenticated by steam")
-_RUN_MARKER = re.compile(r"Switching state from LoadEcsScene to Run")
+_RUN_MARKER = re.compile(r"Switching state from LoadEcsScene to Run(?:\s+after\s+[\d.]+\s*ms)?")
 _SESSION_BLOCK_START = re.compile(r"-{3,}\s+Session\s+-{3,}")
 _SESSION_BLOCK_END = re.compile(r"-{10,}")
-_SESSION_MACHINE = re.compile(r"m#(?P<index>\d+)\b")
-_SESSION_MACHINE_PREFIX = re.compile(r"m#")
+_SESSION_MACHINE = re.compile(
+    r"\s*m#(?P<index>\d+)\(\d+\):\s+up\s+\d+\s+\(\d+\),\s+down\s+\d+\s+\(\d+\),\s+"
+    r"remote\s+\d+\s+\(\d+\),\s+limit\s+\d+,\s+lost\s+\d+,\s+ping\s+\d+\s+ms,\s+\w+"
+)
+_SESSION_MACHINE_PREFIX = re.compile(r"\s*m#")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class Player:
 class PresenceSnapshot:
     players: tuple[Player, ...]
     pending_join_until: float | None = None
+    pending_join_expired_at: float | None = None
     ready: bool = False
     last_activity_at: float | None = None
     session_machines: frozenset[int] | None = None
@@ -123,6 +127,7 @@ class PresenceTracker:
         self._cap_warned = False
         self._degraded = False
         self._pending_join_until: float | None = None
+        self._pending_join_expired_at: float | None = None
         self._ready = False
         self._last_activity_at: float | None = None
         self._activity_generation = 0
@@ -162,6 +167,7 @@ class PresenceTracker:
             return PresenceSnapshot(
                 tuple(Player(entry.handle, entry.name, entry.leaving) for entry in self._players.values()),
                 pending_join_until=self._pending_join_until,
+                pending_join_expired_at=self._pending_join_expired_at,
                 ready=self._ready,
                 last_activity_at=self._last_activity_at,
                 session_machines=self._session_machines,
@@ -181,6 +187,7 @@ class PresenceTracker:
             self._cap_warned = False
             self._degraded = False
             self._pending_join_until = None
+            self._pending_join_expired_at = None
             self._session_machines = None
             self._session_complete_at = None
             self._session_malformed = False
@@ -196,7 +203,7 @@ class PresenceTracker:
         if _SESSION_BLOCK_END.fullmatch(message):
             return self._close_session_block(now)
         if self._session_open_since is not None:
-            if match := _SESSION_MACHINE.match(message):
+            if match := _SESSION_MACHINE.fullmatch(message):
                 self._session_indices.add(int(match["index"]))
                 return []
             if _SESSION_MACHINE_PREFIX.match(message):
@@ -205,6 +212,7 @@ class PresenceTracker:
         if _SESSION_ACCEPTED.fullmatch(message) or _AUTHENTICATED.fullmatch(message):
             self._touch(now)
             self._pending_join_until = now + PENDING_JOIN_WINDOW
+            self._pending_join_expired_at = None
             return []
         if match := _REMOTE_PLAYER_ADDED.fullmatch(message):
             self._touch(now)
@@ -233,6 +241,7 @@ class PresenceTracker:
 
     def _clear_pending_join(self) -> None:
         self._pending_join_until = None
+        self._pending_join_expired_at = None
 
     def _add_handle(self, handle: str, now: float) -> list[PresenceEvent]:
         entry = self._players.get(handle)
@@ -327,18 +336,17 @@ class PresenceTracker:
         if self._pending_join_until is None or now < self._pending_join_until:
             return []
         self._pending_join_until = None
-        return [PresenceWarning("Pending player join expired without a completed join")]
+        self._pending_join_expired_at = now
+        return []
 
     def _start_session_block(self, now: float) -> list[PresenceEvent]:
-        events: list[PresenceEvent] = []
         if self._session_open_since is not None:
             self._session_malformed = True
-            events.append(PresenceWarning("Session block did not close before a new block"))
         self._session_open_since = now
         self._session_indices.clear()
         self._session_open_malformed = False
         self._session_overdue_warned = False
-        return events
+        return []
 
     def _close_session_block(self, now: float) -> list[PresenceEvent]:
         if self._session_open_since is None:
@@ -353,8 +361,6 @@ class PresenceTracker:
         self._session_open_since = None
         self._session_indices.clear()
         self._session_open_malformed = False
-        if malformed:
-            return [PresenceWarning("Session block is malformed; Auto Pause is blocked")]
         return []
 
     def _expire_session(self, now: float) -> list[PresenceEvent]:
@@ -364,7 +370,7 @@ class PresenceTracker:
             return []
         self._session_malformed = True
         self._session_overdue_warned = True
-        return [PresenceWarning("Session block did not close within 90s; Auto Pause is blocked")]
+        return []
 
     def _discard_pairing(self, handle: str) -> None:
         if handle in self._pending_names:

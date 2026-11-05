@@ -63,30 +63,35 @@ or an A2S timeout SHALL NOT reset the timer.
 
 A `Session accepted` or Steam authentication line SHALL open or extend a 60-second pending-join
 window. A `Remote player added`, machine login, or player name line SHALL clear it. A removal line
-SHALL NOT clear an unrelated pending join. Expiry SHALL log a warning and SHALL clear the window.
+SHALL NOT clear an unrelated pending join. Expiry SHALL clear the window and SHALL log a warning
+only from an enabled controller.
 
 #### Scenario: Pending join opens and clears
 
-- **WHEN** stdout contains `Session accepted with peer` and then a `Remote player added` line
+- **WHEN** Auto Pause is enabled, stdout contains `Session accepted with peer`, and then a `Remote
+  player added` line arrives
 - **THEN** `status.json` SHALL report a pending join after the first line
 - **AND** it SHALL report no pending join after the second line
 
 #### Scenario: Unrelated removal does not clear a pending join
 
-- **WHEN** an existing player leaves while a second client has an open pending-join window
+- **WHEN** Auto Pause is enabled, an existing player leaves, and a second client has an open
+  pending-join window
 - **THEN** `status.json` SHALL still report a pending join
 - **AND** no pause SHALL occur until the window clears or expires
 
 #### Scenario: Pending join expires
 
-- **WHEN** a pending-join window opens and no clearing line arrives within 60 seconds
-- **THEN** `status.json` SHALL report no pending join after the window expires
+- **WHEN** Auto Pause is enabled, `PLAYER_POLL_INTERVAL=0`, a pending-join window opens, and no
+  clearing line arrives within 60 seconds
+- **THEN** `status.json` SHALL report no pending join
 - **AND** a warning SHALL be logged
 
 ### Requirement: World-ready evidence
 
 A `Switching state from LoadEcsScene to Run` line SHALL mark the world ready and start the idle
-timer. Lines before that marker SHALL NOT start the idle timer.
+timer. The line MAY carry an `after ... ms` suffix. Lines before that marker SHALL NOT start the
+idle timer.
 
 #### Scenario: Ready marker starts the timer
 
@@ -94,38 +99,76 @@ timer. Lines before that marker SHALL NOT start the idle timer.
 - **THEN** the idle timer SHALL start at that moment
 - **AND** no pause SHALL be attempted before the marker
 
+#### Scenario: Ready marker suffix is accepted
+
+- **WHEN** stdout contains `[game_server] Switching state from LoadEcsScene to Run after 495.18 ms`
+- **THEN** the world SHALL be marked ready
+- **AND** Auto Pause SHALL leave `waiting-for-ready`
+
+#### Scenario: Timestamped ready marker is accepted
+
+- **WHEN** the log-file form `[I ...] [game_server] Switching state from LoadEcsScene to Run after
+  495.18 ms` arrives
+- **THEN** the world SHALL be marked ready
+
 ### Requirement: Session machine evidence
 
-The latest complete Session block SHALL be the empty-server evidence. `m#0` SHALL be the local
-baseline. `remote N` SHALL be ignored. A block that starts but does not close within 90 seconds
-SHALL be malformed. A pause SHALL require a complete block at most 90 seconds old, not malformed,
-containing only `m#0`.
+The latest complete Session block SHALL provide machine evidence. `m#0` SHALL be the local
+baseline. `remote N` SHALL be ignored. Machine rows MAY be indented, and the `Machines:` header
+SHALL be ignored. Only the recognized `m#N(index): up ...` row shape SHALL count; a near-match
+beginning with `m#` SHALL mark the block malformed. A block that starts but does not close within
+90 seconds SHALL be malformed.
 
 #### Scenario: Remote machine vetoes
 
-- **WHEN** the latest complete Session block contains `m#1`
+- **WHEN** Auto Pause is enabled and the latest complete Session block contains `m#1`
 - **THEN** no pause SHALL occur
 - **AND** `status.json` SHALL report a session veto
 - **AND** the `remote N` value SHALL NOT affect the veto
 
-#### Scenario: Empty block clears the veto
+#### Scenario: Indented local-only block is accepted
 
-- **WHEN** the latest complete Session block contains only `m#0`
+- **WHEN** Auto Pause is enabled and stdout contains a `Machines:` header followed by a
+  two-space-indented `m#0(128): up 0 (0), ...` inside a complete Session block
 - **THEN** `status.json` SHALL report no session veto
-- **AND** Auto Pause SHALL have the required empty-server evidence
 
-#### Scenario: Missing or stale block vetoes
+#### Scenario: Near-match machine row marks malformed
 
-- **WHEN** no complete Session block exists, or the latest one is older than 90 seconds
-- **THEN** no pause SHALL occur
-- **AND** a throttled warning SHALL explain the missing evidence
+- **WHEN** a Session block contains a two-space-indented `m#0(128): up 0 (0), not a real machine
+  row`
+- **THEN** `status.json` SHALL report a session veto
+- **AND** no pause SHALL occur
+
+#### Scenario: Timestamped Session form is accepted
+
+- **WHEN** Auto Pause is enabled and a complete Session block uses `[I ...]` fields before its
+  header and indented rows
+- **THEN** `status.json` SHALL report no session veto when only `m#0` is present
 
 #### Scenario: Open block becomes malformed
 
-- **WHEN** a Session block starts and has not closed 90 seconds later
+- **WHEN** Auto Pause is enabled, `PLAYER_POLL_INTERVAL=0`, and a Session block remains unclosed
+  for 90 seconds
 - **THEN** no pause SHALL occur
 - **AND** `status.json` SHALL report a session veto
 - **AND** a warning SHALL be logged
+
+### Requirement: Session block validity
+
+A pause SHALL require a complete Session block at most 90 seconds old, not malformed, containing
+only `m#0`.
+
+#### Scenario: Empty block clears the veto
+
+- **WHEN** Auto Pause is enabled and the latest complete Session block contains only `m#0`
+- **THEN** `status.json` SHALL report no session veto
+
+#### Scenario: Missing or stale block vetoes
+
+- **WHEN** Auto Pause is enabled and no complete Session block exists, or the latest one is older
+  than 90 seconds
+- **THEN** no pause SHALL occur
+- **AND** a throttled warning SHALL explain the missing evidence
 
 ### Requirement: Presence vetoes
 
@@ -525,3 +568,21 @@ warning. An invalid boolean SHALL use the default.
 - **WHEN** `AUTO_PAUSE_IDLE_TIMEOUT` is a negative integer
 - **THEN** the timeout SHALL be 0
 - **AND** automatic pauses SHALL be disabled
+
+### Requirement: Auto Pause diagnostics
+
+Auto Pause policy warnings SHALL be emitted only by an enabled controller, meaning
+`AUTO_PAUSE_ENABLED=true` with no `disabled` marker.
+
+#### Scenario: Enabled controller warns
+
+- **WHEN** Auto Pause is enabled, no `disabled` marker exists, and the latest Session block is
+  malformed
+- **THEN** `status.json` SHALL report a session veto
+- **AND** the controller SHALL log a throttled `Auto Pause: cannot pause` warning naming the veto
+
+#### Scenario: Operator-disabled controller is silent
+
+- **WHEN** `AUTO_PAUSE_ENABLED=true`, the `disabled` marker exists, and a Session block is malformed
+- **THEN** no `Auto Pause: cannot pause` line SHALL be logged
+- **AND** `status.json` SHALL report the controller as disabled

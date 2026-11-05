@@ -265,16 +265,22 @@ roster or emit a player line.
 
 ### Requirement: Unnamed handle expiry
 
-An unnamed handle SHALL be removed on the first parsed line or summary tick at least 5 minutes
-after it was added, with a warning and without a `Player left` line. A named handle SHALL NOT
-expire automatically.
+An unnamed handle SHALL be removed after at least 5 minutes without a name, with a warning and
+without a `Player left` line. A named handle SHALL NOT expire automatically.
 
 #### Scenario: Unnamed handle expires
 
-- **WHEN** an unnamed handle is parsed or summarized at least 5 minutes after it was added
+- **WHEN** an unnamed handle remains unnamed for at least 5 minutes
 - **THEN** an expiry warning is logged
 - **AND** no `Player left` line is logged
 - **AND** the next roster summary no longer reports that handle
+
+#### Scenario: Expiry continues with summaries disabled
+
+- **WHEN** `PLAYER_LOG=false`, `PLAYER_POLL_INTERVAL=0`, Auto Pause is enabled, and an unnamed
+  handle remains unnamed for at least 5 minutes
+- **THEN** the handle SHALL be removed with a warning
+- **AND** no `Player left` line SHALL be logged
 
 #### Scenario: Named handle does not expire
 
@@ -284,7 +290,8 @@ expire automatically.
 ### Requirement: Presence diagnostics
 
 Bounded-state warnings SHALL be logged at WARNING even when `PLAYER_LOG` is false. Summary work
-SHALL stop when shutdown begins.
+SHALL stop when shutdown begins. Player Presence SHALL NOT log Auto Pause policy messages; those
+are owned by `auto-pause`.
 
 #### Scenario: Warnings survive output suppression
 
@@ -296,6 +303,11 @@ SHALL stop when shutdown begins.
 - **WHEN** shutdown begins
 - **THEN** no further roster summary is logged
 
+#### Scenario: Auto Pause policy messages stay out of presence
+
+- **WHEN** `AUTO_PAUSE_ENABLED=false` and a Session block is malformed
+- **THEN** no `Auto Pause:` line SHALL be logged by Player Presence
+
 ### Requirement: Presence failure isolation
 
 A failure to derive presence from a line SHALL NOT stop the orchestrator from relaying game
@@ -306,3 +318,28 @@ output. The first such failure SHALL be logged as a warning.
 - **WHEN** one line fails presence derivation and later game lines arrive
 - **THEN** the first failure is logged as a warning
 - **AND** the later game lines are still relayed
+
+### Requirement: Log envelope normalization
+
+Player Presence SHALL match the same message with zero, one, or two leading bracketed log fields.
+The game log-file form `[I ...] [module] message` and the relayed stdout form `[module] message`
+SHALL produce the same roster events.
+
+#### Scenario: Module-only stdout prefix is accepted
+
+- **WHEN** stdout contains `[session] Remote player added. Player handle: 0(0)`
+- **THEN** a `Player joined: 0(0)` line is logged
+- **AND** the next roster summary reports one player
+
+#### Scenario: Timestamped log prefix is accepted
+
+- **WHEN** the same message arrives as `[I 00:00:01,000] [session] Remote player added. Player
+  handle: 0(0)`
+- **THEN** a `Player joined: 0(0)` line is logged
+- **AND** the next roster summary reports one player
+
+#### Scenario: Bare message is accepted
+
+- **WHEN** the same message arrives without a bracketed prefix
+- **THEN** a `Player joined: 0(0)` line is logged
+- **AND** the next roster summary reports one player
