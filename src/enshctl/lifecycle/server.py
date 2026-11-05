@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 from enshctl.lifecycle import gamelog, wine
 from enshctl.paths import GAME_EXE
@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROC_ROOT = Path("/proc")
+_MAX_SERVER_LINE_BYTES = 32_768
+_SERVER_READ_SIZE = _MAX_SERVER_LINE_BYTES + 2
 _TREE_SCAN_INTERVAL = 0.25
 _TREE_SCAN_TIMEOUT = 2.0
 _TREE_SCAN_ATTEMPTS = 8
@@ -64,6 +66,25 @@ def start(
     )
 
 
+def _read_bounded_line(stream: IO[bytes]) -> tuple[bytes, bool] | None:
+    """Read one line, discarding the remainder when it exceeds the byte cap."""
+    chunk = stream.readline(_SERVER_READ_SIZE)
+    if not chunk:
+        return None
+    if chunk.endswith(b"\n"):
+        payload = chunk[:-1]
+        if payload.endswith(b"\r"):
+            payload = payload[:-1]
+        return (b"", True) if len(payload) > _MAX_SERVER_LINE_BYTES else (payload, False)
+    if len(chunk) > _MAX_SERVER_LINE_BYTES:
+        while True:
+            remainder = stream.readline(_SERVER_READ_SIZE)
+            if not remainder or remainder.endswith(b"\n"):
+                break
+        return b"", True
+    return chunk, False
+
+
 def stream(
     process: ServerProcess,
     *,
@@ -74,10 +95,18 @@ def stream(
     def reader() -> None:
         hook_failed = False
         try:
-            if process.stdout is None:
+            stdout = process.stdout
+            if stdout is None:
                 logger.warning("No server stdout to stream")
                 return
-            for line in iter(process.stdout.readline, b""):
+            while True:
+                result = _read_bounded_line(stdout)
+                if result is None:
+                    break
+                line, overlong = result
+                if overlong:
+                    logger.warning("Discarding overlong server output line (>%d bytes)", _MAX_SERVER_LINE_BYTES)
+                    continue
                 decoded = line.decode(errors="replace").rstrip()
                 if not decoded:
                     continue
@@ -90,7 +119,7 @@ def stream(
                     if not hook_failed:
                         logger.warning("Presence callback failed; continuing to relay output", exc_info=True)
                         hook_failed = True
-            process.stdout.close()
+            stdout.close()
         except OSError:
             logger.exception("Failed to read server output")
 

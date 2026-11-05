@@ -14,6 +14,7 @@ MAX_HANDLES = 64
 MAX_PENDING_NAMES = 16
 MAX_NAME_LENGTH = 64
 MAX_PARSED_LINE = 8192
+MAX_SESSION_MACHINES = 64
 UNNAMED_HANDLE_GRACE = 5 * 60.0
 PENDING_JOIN_WINDOW = 60.0
 SESSION_BLOCK_TIMEOUT = 90.0
@@ -204,7 +205,13 @@ class PresenceTracker:
             return self._close_session_block(now)
         if self._session_open_since is not None:
             if match := _SESSION_MACHINE.fullmatch(message):
-                self._session_indices.add(int(match["index"]))
+                index = int(match["index"])
+                if index in self._session_indices:
+                    return []
+                if len(self._session_indices) >= MAX_SESSION_MACHINES:
+                    self._session_open_malformed = True
+                    return []
+                self._session_indices.add(index)
                 return []
             if _SESSION_MACHINE_PREFIX.match(message):
                 self._session_open_malformed = True

@@ -7,6 +7,7 @@ from enshctl.presence import (
     MAX_HANDLES,
     MAX_NAME_LENGTH,
     MAX_PARSED_LINE,
+    MAX_SESSION_MACHINES,
     PENDING_JOIN_WINDOW,
     SESSION_BLOCK_TIMEOUT,
     Player,
@@ -613,6 +614,23 @@ def test_session_block_rejects_near_match_machine_row() -> None:
 
     # THEN the block is malformed rather than accepting spoofed empty-server evidence
     assert tracker.snapshot().session_malformed is True
+
+
+def test_session_block_machine_cap_marks_malformed() -> None:
+    # GIVEN a Session block with more distinct machines than the cap
+    tracker = PresenceTracker()
+    tracker.observe(_SESSION_START, now=0)
+    for index in range(MAX_SESSION_MACHINES + 1):
+        tracker.observe(_session_machine(index), now=1)
+    tracker.observe(_SESSION_END, now=2)
+
+    # WHEN the block closes
+    snapshot = tracker.snapshot()
+
+    # THEN it is malformed and the tracked machine set is capped
+    assert snapshot.session_malformed is True
+    assert snapshot.session_machines is not None
+    assert len(snapshot.session_machines) == MAX_SESSION_MACHINES
 
 
 def test_session_block_without_local_machine_is_malformed() -> None:

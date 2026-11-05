@@ -174,24 +174,38 @@ def _make_process(
         (process / "exe").symlink_to("/usr/lib64/wine/wineserver")
 
 
+class _BoundedStdout:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._offset = 0
+        self.closed = False
+        self.read_sizes: list[int] = []
+
+    def readline(self, size: int = -1) -> bytes:
+        assert size > 0, "stream reader must bound readline"
+        self.read_sizes.append(size)
+        if self._offset >= len(self._data):
+            return b""
+        end = min(len(self._data), self._offset + size)
+        newline = self._data.find(b"\n", self._offset, end)
+        if newline != -1:
+            end = newline + 1
+        chunk = self._data[self._offset : end]
+        self._offset = end
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _StreamProcess:
+    def __init__(self, data: bytes) -> None:
+        self.stdout = _BoundedStdout(data)
+
+
 def test_stream_drains_to_eof(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN a server stream with two lines
-    class _Stdout:
-        def __init__(self) -> None:
-            self._lines = [b"one\n", b"two\n", b""]
-            self.closed = False
-
-        def readline(self) -> bytes:
-            return self._lines.pop(0)
-
-        def close(self) -> None:
-            self.closed = True
-
-    class _Process:
-        def __init__(self) -> None:
-            self.stdout = _Stdout()
-
-    process = _Process()
+    process = _StreamProcess(b"one\ntwo\n")
 
     # WHEN the reader drains it
     with caplog.at_level("INFO", logger="enshctl.lifecycle.server"):
@@ -208,46 +222,80 @@ def test_stream_drains_to_eof(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_stream_calls_on_line_hook() -> None:
     # GIVEN a server stream with two lines
-    class _Stdout:
-        def __init__(self) -> None:
-            self._lines = [b"one\n", b"two\n", b""]
-
-        def readline(self) -> bytes:
-            return self._lines.pop(0)
-
-        def close(self) -> None:
-            pass
-
-    class _Process:
-        def __init__(self) -> None:
-            self.stdout = _Stdout()
-
+    process = _StreamProcess(b"one\ntwo\n")
     seen: list[str] = []
 
     # WHEN the reader drains it with a line hook
-    thread = server.stream(cast("ServerProcess", _Process()), on_line=seen.append)
+    thread = server.stream(cast("ServerProcess", process), on_line=seen.append)
     thread.join(timeout=1)
 
     # THEN every non-empty line reaches the hook
     assert seen == ["one", "two"]
 
 
+def test_stream_discards_overlong_line_and_continues(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a stream with a very long unterminated line followed by a normal line
+    process = _StreamProcess(b"x" * 70_000 + b"\nnext\n")
+    seen: list[str] = []
+
+    # WHEN the reader drains it
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.server"):
+        thread = server.stream(cast("ServerProcess", process), on_line=seen.append)
+        thread.join(timeout=1)
+
+    # THEN the overlong content is drained and the next line is relayed
+    assert process.stdout.read_sizes[0] == 32_770
+    assert seen == ["next"]
+    assert "overlong" in caplog.text.lower()
+    assert "x" * 32_770 not in caplog.text
+    assert process.stdout.closed is True
+
+
+def test_stream_discards_newline_terminated_overlong_line(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a newline-terminated line whose content exceeds the byte cap
+    process = _StreamProcess(b"x" * 32_769 + b"\nnext\n")
+    seen: list[str] = []
+
+    # WHEN the reader drains it
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.server"):
+        thread = server.stream(cast("ServerProcess", process), on_line=seen.append)
+        thread.join(timeout=1)
+
+    # THEN it is discarded without draining and the next line is relayed
+    assert seen == ["next"]
+    assert "overlong" in caplog.text.lower()
+    assert "x" * 32_769 not in caplog.text
+
+
+def test_stream_relays_line_at_byte_cap() -> None:
+    # GIVEN a CRLF line exactly at the maximum content byte count
+    process = _StreamProcess(b"y" * 32_768 + b"\r\n")
+    seen: list[str] = []
+
+    # WHEN the reader drains it
+    thread = server.stream(cast("ServerProcess", process), on_line=seen.append)
+    thread.join(timeout=1)
+
+    # THEN the line is relayed without truncation
+    assert seen == ["y" * 32_768]
+
+
+def test_stream_relays_final_line_without_terminator() -> None:
+    # GIVEN a stream whose final line has no trailing newline
+    process = _StreamProcess(b"last")
+    seen: list[str] = []
+
+    # WHEN the reader drains it
+    thread = server.stream(cast("ServerProcess", process), on_line=seen.append)
+    thread.join(timeout=1)
+
+    # THEN the final line is relayed
+    assert seen == ["last"]
+
+
 def test_stream_survives_hook_failure(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN a server stream with two lines and a hook that fails on the first
-    class _Stdout:
-        def __init__(self) -> None:
-            self._lines = [b"one\n", b"two\n", b""]
-
-        def readline(self) -> bytes:
-            return self._lines.pop(0)
-
-        def close(self) -> None:
-            pass
-
-    class _Process:
-        def __init__(self) -> None:
-            self.stdout = _Stdout()
-
+    process = _StreamProcess(b"one\ntwo\n")
     seen: list[str] = []
 
     def _on_line(line: str) -> None:
@@ -258,7 +306,7 @@ def test_stream_survives_hook_failure(caplog: pytest.LogCaptureFixture) -> None:
 
     # WHEN the reader drains it
     with caplog.at_level(gamelog.SERVER, logger="enshctl.lifecycle.server"):
-        thread = server.stream(cast("ServerProcess", _Process()), on_line=_on_line)
+        thread = server.stream(cast("ServerProcess", process), on_line=_on_line)
         thread.join(timeout=1)
 
     # THEN the failure is reported and later lines are still relayed

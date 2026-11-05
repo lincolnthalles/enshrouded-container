@@ -11,7 +11,7 @@ from enshctl.lifecycle.autopause import AutoPauseController
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature
 from enshctl.lifecycle.wake import WakeEvent
-from enshctl.presence import PresenceTracker
+from enshctl.presence import MAX_SESSION_MACHINES, PresenceTracker
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -159,13 +159,14 @@ def _ready(tracker: PresenceTracker) -> None:
     tracker.observe("[game_server] Switching state from LoadEcsScene to Run after 495.18 ms", now=0)
 
 
+def _session_machine(index: int) -> str:
+    return f"  m#{index}(128): up 0 (0), down 0 (0), remote 0 (0), limit 256, lost 0, ping 0 ms, OperatingNormally"
+
+
 def _empty_session(tracker: PresenceTracker) -> None:
     tracker.observe("-------------- Session ----------------", now=0)
     tracker.observe("Machines:", now=0)
-    tracker.observe(
-        "  m#0(128): up 0 (0), down 0 (0), remote 0 (0), limit 256, lost 0, ping 0 ms, OperatingNormally",
-        now=0,
-    )
+    tracker.observe(_session_machine(0), now=0)
     tracker.observe("----------------------------------------", now=0)
 
 
@@ -369,6 +370,37 @@ def test_missing_session_block_vetoes_pause(tmp_path: Path) -> None:
     driver = _Driver(stop_at=10)
     tracker = _tracker(driver)
     _ready(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+
+    # WHEN the idle timeout passes
+    _run(
+        _controller(
+            tmp_path=tmp_path,
+            driver=driver,
+            tracker=tracker,
+            process=process,
+            control=control,
+            wake=_Wake(),
+        ),
+        driver,
+    )
+
+    # THEN no pause occurs and status reports the session veto
+    assert process.suspended == 0
+    assert control.read_status() is not None
+    assert control.read_status().session_veto is True  # type: ignore[union-attr]
+
+
+def test_session_machine_cap_vetoes_pause(tmp_path: Path) -> None:
+    # GIVEN a ready server with a Session block beyond the machine cap
+    driver = _Driver(stop_at=10)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    tracker.observe("-------------- Session ----------------", now=0)
+    for index in range(MAX_SESSION_MACHINES + 1):
+        tracker.observe(_session_machine(index), now=0)
+    tracker.observe("----------------------------------------", now=0)
     process = _Process()
     control = ControlFiles(root=tmp_path, puid=0, pgid=0)
 

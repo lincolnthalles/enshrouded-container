@@ -115,9 +115,8 @@ idle timer.
 
 The latest complete Session block SHALL provide machine evidence. `m#0` SHALL be the local
 baseline. `remote N` SHALL be ignored. Machine rows MAY be indented, and the `Machines:` header
-SHALL be ignored. Only the recognized `m#N(index): up ...` row shape SHALL count; a near-match
-beginning with `m#` SHALL mark the block malformed. A block that starts but does not close within
-90 seconds SHALL be malformed.
+SHALL be ignored. Only the recognized `m#N(index): up ...` row shape SHALL count; any other
+`m#`-prefixed line SHALL mark the block malformed.
 
 #### Scenario: Remote machine vetoes
 
@@ -145,6 +144,19 @@ beginning with `m#` SHALL mark the block malformed. A block that starts but does
   header and indented rows
 - **THEN** `status.json` SHALL report no session veto when only `m#0` is present
 
+### Requirement: Session block validity
+
+A pause SHALL require a complete Session block at most 90 seconds old, not malformed, containing
+only `m#0`. A block SHALL track at most 64 distinct machine indices; exceeding that cap SHALL
+mark the block malformed. A block that starts but does not close within 90 seconds SHALL be
+malformed.
+
+#### Scenario: Excess machine indices mark malformed
+
+- **WHEN** a Session block contains more than 64 distinct `m#` indices
+- **THEN** `status.json` SHALL report a session veto
+- **AND** no pause SHALL occur
+
 #### Scenario: Open block becomes malformed
 
 - **WHEN** Auto Pause is enabled, `PLAYER_POLL_INTERVAL=0`, and a Session block remains unclosed
@@ -152,11 +164,6 @@ beginning with `m#` SHALL mark the block malformed. A block that starts but does
 - **THEN** no pause SHALL occur
 - **AND** `status.json` SHALL report a session veto
 - **AND** a warning SHALL be logged
-
-### Requirement: Session block validity
-
-A pause SHALL require a complete Session block at most 90 seconds old, not malformed, containing
-only `m#0`.
 
 #### Scenario: Empty block clears the veto
 

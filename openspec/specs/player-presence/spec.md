@@ -263,6 +263,20 @@ roster or emit a player line.
 - **THEN** no `Player joined` line is logged for that sequence
 - **AND** the roster summary is unchanged
 
+### Requirement: Bounded stdout reading
+
+The stdout reader SHALL read each line with a bounded buffer. A line whose content exceeds
+32768 bytes SHALL be discarded before presence parsing or full relay, a warning SHALL be logged,
+and reading SHALL continue with the next line.
+
+#### Scenario: Overlong stdout line is discarded
+
+- **WHEN** a server stdout line longer than 32768 bytes contains a valid `Remote player added`
+  sequence and is followed by a normal line
+- **THEN** no `Player joined` line SHALL be logged for the discarded line
+- **AND** a warning SHALL be logged
+- **AND** the following line SHALL still be relayed and parsed
+
 ### Requirement: Unnamed handle expiry
 
 An unnamed handle SHALL be removed after at least 5 minutes without a name, with a warning and
