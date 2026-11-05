@@ -88,17 +88,26 @@ Backups SHALL support configurable compression formats (zstd, gzip, zip) and com
 
 ### Requirement: Shutdown-triggered cold backup
 
-When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: stop the scheduler, send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit (force-killing after the timeout), create a detached cold backup when `BACKUP_COLD=1` and save data exists after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s; see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, then clean up Wine, clear the PID file, and exit 0.
+When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: stop the scheduler,
+stop Auto Pause from starting a new pause, resume a paused tree (see `paused-tree-resumed-before-exit`),
+send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit
+(force-killing after the timeout), create a detached cold backup when `BACKUP_COLD=1` and save data
+exists after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s;
+see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, then clean
+up Wine, clear the PID file, and exit 0.
 
 #### Scenario: Cold backup on shutdown
 
 - **WHEN** the container receives SIGTERM with `BACKUP_COLD=1` and save data present
-- **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup, surviving the parent's process group, and the PID file SHALL be cleared before the entrypoint exits 0
+- **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup,
+  surviving the parent's process group
+- **AND** the PID file SHALL be cleared before the entrypoint exits 0
 
 #### Scenario: Cold backup disabled or no saves
 
 - **WHEN** the container receives SIGTERM with `BACKUP_COLD=0`, or with no save data present
-- **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit cleanly
+- **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the
+  entrypoint SHALL exit cleanly
 
 #### Scenario: Shutdown clears PID file
 
@@ -108,12 +117,14 @@ When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: s
 #### Scenario: Force kill after timeout
 
 - **WHEN** the game server does not exit within the shutdown timeout after SIGINT
-- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup, Wine cleanup, and PID clear steps
+- **THEN** the entrypoint SHALL send SIGKILL to the process, then proceed to the backup, Wine cleanup,
+  and PID clear steps
 
 #### Scenario: Cold backup waits for in-progress backup
 
 - **WHEN** the container receives SIGTERM and a Backup is already running
-- **THEN** the cold Backup SHALL wait up to `SHUTDOWN_BACKUP_WAIT` for it to finish (see `backup-subprocess` for lock-wait and skip behavior)
+- **THEN** the cold Backup SHALL wait up to `SHUTDOWN_BACKUP_WAIT` for it to finish (see
+  `backup-subprocess` for lock-wait and skip behavior)
 
 #### Scenario: Repeat signal ignored
 
@@ -199,3 +210,35 @@ When an unexpected error occurs after the server has launched, the entrypoint SH
 
 - **WHEN** Wine cleanup fails during any exit after launch
 - **THEN** the failure SHALL be logged and the PID file SHALL still be cleared
+
+### Requirement: Paused tree resumed before exit
+
+On every exit after launch, before SIGINT, SIGKILL, or Wine cleanup, the exit path SHALL stop Auto
+Pause from starting a new pause, resume every stopped Wine process with SIGCONT, and then continue.
+Resume SHALL run when the server wrapper is gone or the game has already exited.
+
+#### Scenario: Paused tree resumes before SIGINT
+
+- **WHEN** the container receives SIGTERM while the Wine tree is paused
+- **THEN** every stopped Wine process SHALL receive SIGCONT before SIGINT
+- **AND** the server SHALL exit without leaving a stopped process behind
+
+#### Scenario: Resume runs without a wrapper
+
+- **WHEN** the container receives SIGTERM while the Wine tree is paused and the server wrapper is
+  already gone
+- **THEN** the stopped Wine processes SHALL still receive SIGCONT
+- **AND** Wine cleanup and PID clear SHALL continue
+
+#### Scenario: Resume runs after a game exit
+
+- **WHEN** the container receives SIGTERM while the Wine tree is paused and the game process has
+  already exited
+- **THEN** any remaining stopped Wine services SHALL receive SIGCONT
+- **AND** the exit path SHALL continue with the backup and cleanup steps
+
+#### Scenario: Unexpected failure resumes
+
+- **WHEN** an unexpected failure triggers the exit path while the Wine tree is paused
+- **THEN** every stopped Wine process SHALL receive SIGCONT
+- **AND** the emergency backup, Wine cleanup, and PID clear SHALL continue

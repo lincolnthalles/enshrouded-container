@@ -7,10 +7,12 @@ from typing import Any, cast
 
 import pytest
 from enshctl.config import (
+    QueryEndpoint,
     _resolve_array_overrides,
     deep_merge,
     env_to_dict,
     generate_config,
+    generated_query_endpoint,
     generated_save_directories,
     parse_value,
     snake_to_camel,
@@ -456,6 +458,81 @@ def test_write_generated_config_round_trips_through_reader(tmp_path: Path) -> No
 
     # THEN the writer and reader agree on the save locations
     assert read_dirs == written_dirs
+
+
+def test_generated_query_endpoint_reads_wildcard_ip(tmp_path: Path) -> None:
+    # GIVEN a Generated config binding the wildcard address
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text('{"ip": "0.0.0.0", "queryPort": 15637}')
+
+    # WHEN resolving the query endpoint
+    endpoint = generated_query_endpoint(config_file)
+
+    # THEN the loopback address and port are used
+    assert endpoint == QueryEndpoint("127.0.0.1", 15637)
+
+
+def test_generated_query_endpoint_reads_ipv6_wildcard(tmp_path: Path) -> None:
+    # GIVEN an IPv6 wildcard bind
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text('{"ip": "::", "queryPort": 15637}')
+
+    # WHEN resolving the query endpoint
+    endpoint = generated_query_endpoint(config_file)
+
+    # THEN the IPv6 loopback is used
+    assert endpoint == QueryEndpoint("::1", 15637)
+
+
+@pytest.mark.parametrize("port", [0, 65536, True, "15637", 15637.0])
+def test_generated_query_endpoint_rejects_invalid_port(
+    tmp_path: Path,
+    port: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN an invalid query port
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text(json.dumps({"ip": "0.0.0.0", "queryPort": port}))  # noqa: S104
+
+    # WHEN resolving the query endpoint
+    with caplog.at_level("WARNING", logger="enshctl.config"):
+        endpoint = generated_query_endpoint(config_file)
+
+    # THEN no endpoint is returned and the value is named
+    assert endpoint is None
+    assert "queryPort" in caplog.text
+
+
+def test_generated_query_endpoint_rejects_missing_or_invalid_document(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN missing and non-object Generated configs
+    missing = tmp_path / "missing.json"
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("[]")
+
+    # WHEN resolving either endpoint
+    with caplog.at_level("WARNING", logger="enshctl.config"):
+        missing_endpoint = generated_query_endpoint(missing)
+        invalid_endpoint = generated_query_endpoint(invalid)
+
+    # THEN both are unavailable and a warning is logged
+    assert missing_endpoint is None
+    assert invalid_endpoint is None
+    assert "Auto Pause query endpoint is unavailable" in caplog.text
+
+
+def test_generated_query_endpoint_rejects_invalid_address(tmp_path: Path) -> None:
+    # GIVEN an unparseable bind address
+    config_file = tmp_path / "enshrouded_server.json"
+    config_file.write_text('{"ip": "not an address", "queryPort": 15637}')
+
+    # WHEN resolving the query endpoint
+    endpoint = generated_query_endpoint(config_file)
+
+    # THEN loopback is used for A2S
+    assert endpoint == QueryEndpoint("127.0.0.1", 15637)
 
 
 def test_generate_config_without_source_reads_process_environment() -> None:

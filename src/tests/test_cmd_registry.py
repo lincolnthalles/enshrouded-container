@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from enshctl.commands import COMMANDS
+from enshctl.commands.autopause import run as autopause_run
 from enshctl.commands.backup import run as backup_run
 from enshctl.commands.debug_config import run as debug_config_run
 from enshctl.commands.download import run as download_run
@@ -16,6 +17,7 @@ from enshctl.commands.version_info import run as version_info_run
 
 def test_registry_has_all_commands() -> None:
     expected = {
+        "autopause",
         "backup",
         "debug-config",
         "download",
@@ -36,6 +38,7 @@ def test_registry_values_are_callables() -> None:
 
 
 def test_registry_maps_to_correct_functions() -> None:
+    assert COMMANDS["autopause"] is autopause_run
     assert COMMANDS["backup"] is backup_run
     assert COMMANDS["debug-config"] is debug_config_run
     assert COMMANDS["download"] is download_run

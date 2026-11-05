@@ -140,7 +140,7 @@ def test_output_disabled_suppresses_roster_but_keeps_tracking(caplog: pytest.Log
 
     # THEN no roster lines are emitted but the tracker still holds the player
     assert "Player joined" not in caplog.text
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Morgan"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan"),)
 
     # AND a later removal is also tracked without output
     with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
@@ -149,7 +149,7 @@ def test_output_disabled_suppresses_roster_but_keeps_tracking(caplog: pytest.Log
         reporter.log_summary()
     assert "Player left" not in caplog.text
     assert "Players online" not in caplog.text
-    assert tracker.snapshot() == PresenceSnapshot(())
+    assert tracker.snapshot().players == ()
 
 
 def test_warnings_survive_output_suppression(caplog: pytest.LogCaptureFixture) -> None:
@@ -183,7 +183,7 @@ def test_summary_expires_unnamed_handle_with_warning(caplog: pytest.LogCaptureFi
     assert "expired after 300s" in caplog.text
     assert "Player left" not in caplog.text
     assert "Players online: 0" in caplog.text
-    assert tracker.snapshot() == PresenceSnapshot(())
+    assert tracker.snapshot().players == ()
 
 
 def test_observe_and_summary_are_serialized() -> None:

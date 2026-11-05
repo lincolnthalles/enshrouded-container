@@ -9,12 +9,14 @@ from unittest.mock import patch
 
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.lifecycle import runtime
+from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.runtime import ServerLifecycle, exit_server
 from enshctl.lifecycle.types import ExitRequest, ServerProcess
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     import pytest
 
@@ -67,6 +69,8 @@ class FakeProcessControl:
         self.on_start: Callable[[], None] | None = None
         self.stream_on_line: Callable[[str], None] | None = None
         self.stream_line: str | None = None
+        self.resume_calls = 0
+        self.suspend_calls = 0
 
     def start(self) -> ServerProcess:
         self.started = True
@@ -77,10 +81,25 @@ class FakeProcessControl:
             raise self.start_error
         return self.process
 
-    def signal(self, sig: int) -> bool:
-        self.events.append(("signal", sig))
+    def signal_game(self, sig: int) -> bool:
+        self.events.append(("signal_game", sig))
         if self.signal_error is not None:
             raise self.signal_error
+        return True
+
+    def signal_pid(self, pid: int, sig: int) -> bool:
+        del pid, sig
+        return True
+
+    def wine_tree(self) -> None:
+        return None
+
+    def suspend_all(self) -> bool:
+        self.suspend_calls += 1
+        return True
+
+    def resume_all(self) -> bool:
+        self.resume_calls += 1
         return True
 
     def stream(
@@ -110,6 +129,32 @@ class FakeProcessControl:
     def start_resource_poller(self, pid: int, stop_event: threading.Event) -> None:
         del pid, stop_event
         self.events.append("resource_poller")
+
+
+class FakePauseControl:
+    def __init__(self, events: list[object]) -> None:
+        self.events = events
+        self.stop_error: Exception | None = None
+        self.resume_error: Exception | None = None
+
+    def stop(self) -> None:
+        self.events.append("pause_stop")
+        if self.stop_error is not None:
+            raise self.stop_error
+
+    def resume_for_shutdown(self) -> None:
+        self.events.append("pause_resume")
+        if self.resume_error is not None:
+            raise self.resume_error
+
+
+class FakeAutoPause(FakePauseControl):
+    def start(self, stop_event: threading.Event) -> threading.Thread:
+        del stop_event
+        self.events.append("pause_start")
+        thread = threading.Thread(target=lambda: None)
+        thread.start()
+        return thread
 
 
 class FakeLifecycleIO:
@@ -161,6 +206,8 @@ def _exit(
     control: FakeProcessControl,
     io: FakeLifecycleIO,
     settings: AppSettings,
+    *,
+    pause_control: FakePauseControl | None = None,
 ) -> int:
     return exit_server(
         request,
@@ -169,7 +216,127 @@ def _exit(
         stop_event=threading.Event(),
         process_control=control,
         lifecycle_io=io,
+        pause_control=pause_control,
     )
+
+
+def test_pause_control_stops_and_resumes_before_signal() -> None:
+    # GIVEN a running server with Auto Pause attached
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    pause = FakePauseControl(events)
+    settings = _settings(backup_cold=False, backup_emergency=False)
+
+    # WHEN the shutdown exit path runs
+    _exit(ExitRequest(Trigger.SHUTDOWN, 0), process, control, io, settings, pause_control=pause)
+
+    # THEN Auto Pause stops and resumes before SIGINT
+    assert events[:3] == ["pause_stop", "pause_resume", ("signal_game", signal.SIGINT)]
+
+
+def test_pause_control_resumes_without_a_process() -> None:
+    # GIVEN Auto Pause attached to an exit with no wrapper process
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    pause = FakePauseControl(events)
+
+    # WHEN the shutdown exit path runs with no process handle
+    exit_server(
+        ExitRequest(Trigger.SHUTDOWN, 0),
+        settings=_settings(backup_cold=False, backup_emergency=False),
+        process_handle=None,
+        stop_event=threading.Event(),
+        process_control=control,
+        lifecycle_io=io,
+        pause_control=pause,
+        clear_pid=False,
+    )
+
+    # THEN the tree is resumed even though there is no wrapper
+    assert events[:2] == ["pause_stop", "pause_resume"]
+
+
+def test_pause_control_failure_does_not_block_exit() -> None:
+    # GIVEN Auto Pause whose stop and resume both fail
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    pause = FakePauseControl(events)
+    pause.stop_error = OSError("stop failed")
+    pause.resume_error = OSError("resume failed")
+
+    # WHEN the shutdown exit path runs
+    code = _exit(
+        ExitRequest(Trigger.SHUTDOWN, 0),
+        process,
+        control,
+        io,
+        _settings(backup_cold=False, backup_emergency=False),
+        pause_control=pause,
+    )
+
+    # THEN the server is still signalled and cleanup runs
+    assert code == 0
+    assert ("signal_game", signal.SIGINT) in events
+    assert events[-1] == "clear_pid"
+
+
+def test_lifecycle_starts_auto_pause_and_resumes_on_exit() -> None:
+    # GIVEN a lifecycle with Auto Pause enabled
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    pause = FakeAutoPause(events)
+    settings = _settings(auto_pause_enabled=True, backup_live=False, backup_cold=False, backup_emergency=False)
+
+    # WHEN the lifecycle runs
+    with (
+        patch.object(runtime.signal, "signal"),
+        patch.object(runtime.ServerLifecycle, "_build_auto_pause", return_value=pause),
+    ):
+        code = runtime.ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+
+    # THEN Auto Pause starts after the stream and stops/resumes on exit
+    assert code == 0
+    assert "pause_start" in events
+    assert "pause_stop" in events
+    assert "pause_resume" in events
+
+
+def test_lifecycle_startup_clears_transient_auto_pause_state(tmp_path: Path) -> None:
+    # GIVEN leftover runtime state and an enabled marker
+    control_files = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    control_files.set_disabled()
+    control_files.set_paused()
+    control_files.write_status(AutoPauseStatus(state="paused", updated_at=1.0, controller_pid=1))
+    control_files.write_request("resume", "token", now=1.0)
+
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    process_control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+
+    # WHEN the lifecycle starts
+    with patch.object(runtime.signal, "signal"):
+        runtime.ServerLifecycle(
+            _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+            process_control=process_control,
+            lifecycle_io=io,
+            control_files=control_files,
+        ).run()
+
+    # THEN transient state is cleared, the tree is resumed, and disabled survives
+    assert process_control.resume_calls >= 1
+    assert control_files.is_disabled() is True
+    assert control_files.is_paused() is False
+    assert control_files.status_path.exists() is False
+    assert control_files.request_path.exists() is False
 
 
 def test_shutdown_exit_orders_server_backup_wine_pid() -> None:
@@ -186,7 +353,7 @@ def test_shutdown_exit_orders_server_backup_wine_pid() -> None:
     # THEN the server is signalled, the cold backup runs, then Wine cleanup and PID clear
     assert code == 0
     assert events == [
-        ("signal", signal.SIGINT),
+        ("signal_game", signal.SIGINT),
         ("backup", BackupRequest.for_trigger(Trigger.SHUTDOWN, wait_seconds=5)),
         "wine",
         "clear_pid",
@@ -228,7 +395,12 @@ def test_force_kill_after_timeout() -> None:
     # THEN SIGKILL follows the timeout and cleanup still runs
     assert code == 0
     assert process.killed is True
-    assert events == [("signal", signal.SIGINT), ("signal", signal.SIGKILL), "wine", "clear_pid"]
+    assert events == [
+        ("signal_game", signal.SIGINT),
+        ("signal_game", signal.SIGKILL),
+        "wine",
+        "clear_pid",
+    ]
 
 
 def test_exit_sets_stop_event() -> None:

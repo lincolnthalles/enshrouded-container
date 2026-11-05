@@ -124,3 +124,36 @@ The Generated config SHALL be written to the config directory after applying all
 
 - **WHEN** config generation completes with ownership configured
 - **THEN** the persisted config file SHALL be owned by the configured user and group
+
+### Requirement: Generated query endpoint consumption
+
+A2S and wake resolution SHALL read `ip` and `queryPort` from the Generated config without changing
+generation. `queryPort` SHALL be an integer in `1..65535`; booleans, strings, floats, and
+out-of-range values SHALL return no endpoint with a warning. `0.0.0.0` and an empty `ip` SHALL map
+to `127.0.0.1`; `::` and `::0` SHALL map to `::1`; a specific valid address SHALL be used as-is.
+An invalid address SHALL fall back to `127.0.0.1` with a warning.
+
+#### Scenario: Wildcard bind maps to loopback
+
+- **WHEN** the Generated config has `"ip": "0.0.0.0"` and a valid query port
+- **THEN** A2S SHALL use `127.0.0.1` and that port
+- **AND** wake SHALL match UDP traffic by destination port on every interface
+
+#### Scenario: Invalid port has no endpoint
+
+- **WHEN** `queryPort` is a boolean, string, float, or outside `1..65535`
+- **THEN** no query endpoint SHALL be returned
+- **AND** a warning SHALL name the discarded value
+
+#### Scenario: Missing or unreadable config has no endpoint
+
+- **WHEN** the Generated config is missing, unreadable, or not a JSON object
+- **THEN** no query endpoint SHALL be returned
+- **AND** a warning SHALL be logged
+
+#### Scenario: Generation does not consume the endpoint
+
+- **WHEN** config generation runs
+- **THEN** `ip` and `queryPort` SHALL remain driven only by the Base config and environment
+  overrides
+- **AND** query-endpoint resolution SHALL NOT mutate the Generated config

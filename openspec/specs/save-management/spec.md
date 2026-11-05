@@ -89,3 +89,21 @@ The container SHALL set the Generated config's log directory field to an absolut
 
 - **WHEN** the server runs
 - **THEN** `docker logs` SHALL display the server output via the orchestrator's stdout relay, without any log-file symlink or tail process
+
+### Requirement: Auto Pause save-signature consumption
+
+Auto Pause SHALL read the newest top-level `*.ksd` file's path, size, and modification time from the
+same resolved save directory used by Backup and Restore. It SHALL NOT write, rename, delete, or
+restore save files. The pause decision that consumes the signature SHALL follow `auto-pause`.
+
+#### Scenario: Newest save is tracked
+
+- **WHEN** the save directory contains multiple top-level `*.ksd` files
+- **THEN** Auto Pause SHALL read the newest one by modification time
+- **AND** it SHALL read that file's size and modification time without writing it
+
+#### Scenario: Custom save directory is followed
+
+- **WHEN** the Generated config names an absolute save directory outside `/data`
+- **THEN** Auto Pause SHALL read `*.ksd` files from that directory
+- **AND** it SHALL NOT fall back to the volume default

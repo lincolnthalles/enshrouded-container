@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from enshctl.backup_protocol import BackupRequest
+    from enshctl.lifecycle.server import WineTree
     from enshctl.lifecycle.types import ServerProcess
     from enshctl.settings import AppSettings
 
@@ -22,7 +23,15 @@ class ProcessControl(Protocol):
 
     def start(self) -> ServerProcess: ...
 
-    def signal(self, sig: int) -> bool: ...
+    def signal_game(self, sig: int) -> bool: ...
+
+    def signal_pid(self, pid: int, sig: int) -> bool: ...
+
+    def wine_tree(self) -> WineTree | None: ...
+
+    def suspend_all(self) -> bool: ...
+
+    def resume_all(self) -> bool: ...
 
     def stream(
         self,
@@ -61,8 +70,20 @@ class SystemProcessControl:
     def start(self) -> ServerProcess:
         return server.start(self.settings)
 
-    def signal(self, sig: int) -> bool:
-        return server.signal(sig)
+    def signal_game(self, sig: int) -> bool:
+        return server.signal_game(sig)
+
+    def signal_pid(self, pid: int, sig: int) -> bool:
+        return server.signal_pid(pid, sig)
+
+    def wine_tree(self) -> WineTree | None:
+        return server.wine_tree()
+
+    def suspend_all(self) -> bool:
+        return server.suspend_all()
+
+    def resume_all(self) -> bool:
+        return server.resume_all()
 
     def stream(
         self,

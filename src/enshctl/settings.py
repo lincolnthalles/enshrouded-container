@@ -1,5 +1,6 @@
 """Typed settings seam — immutable values, one environment loader, and the backup child contract."""
 
+import logging
 from dataclasses import MISSING, dataclass, field, fields, replace
 from os import environ
 from typing import TYPE_CHECKING, Any, cast
@@ -9,6 +10,8 @@ if TYPE_CHECKING:
     from dataclasses import Field
 
     type _Parser = Callable[[str, object], object]
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_api_url(value: str | None) -> str | None:
@@ -43,6 +46,14 @@ def _parse_bool(raw: str, default: object) -> object:
 
 def _parse_str(raw: str, _default: object) -> str:
     return raw.strip()
+
+
+def _parse_wake_filter(raw: str, _default: object) -> str:
+    value = raw.strip().lower()
+    if value in ("any", "ignore-a2s"):
+        return value
+    logger.warning("Invalid AUTO_PAUSE_WAKE_FILTER %r; using any", raw)
+    return "any"
 
 
 def _parse_version(raw: str, _default: object) -> str:
@@ -112,6 +123,11 @@ class AppSettings:
     resource_poll_interval: int = _env_field(60, "RESOURCE_POLL_INTERVAL", _parse_int)
     player_log: bool = _env_field(default=True, key="PLAYER_LOG", parse=_parse_bool)
     player_poll_interval: int = _env_field(60, "PLAYER_POLL_INTERVAL", _parse_non_negative_int)
+
+    # Auto Pause
+    auto_pause_enabled: bool = _env_field(default=False, key="AUTO_PAUSE_ENABLED", parse=_parse_bool)
+    auto_pause_idle_timeout: int = _env_field(300, "AUTO_PAUSE_IDLE_TIMEOUT", _parse_non_negative_int)
+    auto_pause_wake_filter: str = _env_field("any", "AUTO_PAUSE_WAKE_FILTER", _parse_wake_filter)
 
     # Shutdown
     shutdown_timeout: int = _env_field(60, "SHUTDOWN_TIMEOUT", _parse_non_negative_int)

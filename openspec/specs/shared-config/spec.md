@@ -6,12 +6,20 @@ Centralized configuration for the enshctl orchestrator: settings seam, ownership
 
 ### Requirement: Default filesystem locations
 
-Default persistent locations SHALL live under `/data/`: `/data/saves`, `/data/logs`, `/data/manifests`, `/data/config`, `/data/backups`, `/data/mods`, and `/data/wineprefix`. The Game tree at `/data/gameserver/` is container-internal (rebuilt every start, see `game-tree-rebuild`). User-configured destinations (`BACKUP_DIR`, absolute save/log directories) MAY point outside `/data/`. No module SHALL define its own ad-hoc persistent location.
+Default persistent locations SHALL live under `/data/`: `/data/saves`, `/data/logs`,
+`/data/manifests`, `/data/config`, `/data/backups`, `/data/mods`, and `/data/wineprefix`. Auto Pause
+runtime control state SHALL live under `/data/config/autopause/`. The Game tree at
+`/data/gameserver/` is container-internal (rebuilt every start, see `game-tree-rebuild`).
+User-configured destinations (`BACKUP_DIR`, absolute save/log directories) MAY point outside
+`/data/`. Subsystems SHALL use these declared default locations, and no other default persistent
+location SHALL be introduced.
 
 #### Scenario: Defaults under /data
 
 - **WHEN** no overrides are configured
-- **THEN** saves SHALL default to `/data/saves`, logs to `/data/logs`, and backups to `/data/backups/`
+- **THEN** saves SHALL default to `/data/saves`, logs to `/data/logs`, and backups to
+  `/data/backups/`
+- **AND** Auto Pause state SHALL default to `/data/config/autopause/`
 
 #### Scenario: User override outside /data
 
@@ -59,3 +67,14 @@ The system SHALL read `PUID` and `PGID` once at load time (defaults 1000/1000) a
 
 - **WHEN** `PUID=1001` is set
 - **THEN** all modules SHALL resolve uid 1001 from the settings object, not from independent environment reads
+
+### Requirement: Auto Pause runtime state location
+
+Auto Pause SHALL keep its control files under the existing config location. No new top-level volume
+SHALL be required. The file roles and lifecycle SHALL follow `auto-pause`.
+
+#### Scenario: Control state uses the config volume
+
+- **WHEN** Auto Pause writes a marker, status, or request file
+- **THEN** the file SHALL live under `/data/config/autopause/`
+- **AND** no new top-level volume SHALL be required

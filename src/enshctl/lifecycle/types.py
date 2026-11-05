@@ -22,6 +22,14 @@ class ServerProcess(Protocol):
     def kill(self) -> None: ...
 
 
+class PauseControl(Protocol):
+    """The lifecycle exit seam for Auto Pause."""
+
+    def stop(self) -> None: ...
+
+    def resume_for_shutdown(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class ExitRequest:
     """One ordered lifecycle exit, carrying its Backup trigger and exit code."""

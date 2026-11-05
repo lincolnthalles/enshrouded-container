@@ -99,6 +99,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 - **ntsync**: Can improve game server performance by accurately emulating Windows synchronization primitives. Requires a host with kernel 6.14+, the ntsync module loaded, and mounting `/dev/ntsync` into the container.
 - **Resource polling**: Periodically logs CPU% and RSS for the orchestrator and game server process tree. Set `RESOURCE_POLL_INTERVAL` (default 60s) to control the interval.
 - **Player presence**: Derives the connected-player roster from server output and logs joins, leaves, and a periodic summary. Set `PLAYER_LOG=false` to silence roster lines.
+- **Auto Pause**: Optionally suspends the whole Wine tree after an idle period and resumes on client traffic. Set `AUTO_PAUSE_ENABLED=true` to opt in. It saves CPU, not memory; a paused server may leave the Steam browser until a direct-IP query wakes it.
 
 ## Environment Variables
 
@@ -135,6 +136,35 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 | `PLAYER_LOG`             | `true`  | Log player joins, leaves, and roster summaries                                  |
 | `PLAYER_POLL_INTERVAL`   | `60`    | Seconds between roster summaries (0 = summaries off; joins/leaves still logged) |
 | `LOG_TAIL`               | `false` | Tail server log to container stdout                                             |
+
+### Auto Pause
+
+Auto Pause is opt-in and suspends the game and its Wine services with `SIGSTOP` when no players
+are connected. It resumes on client traffic, `enshctl autopause resume`, or `autopause disable`.
+
+| Variable                  | Default | Description                                                                 |
+| ------------------------- | ------- | --------------------------------------------------------------------------- |
+| `AUTO_PAUSE_ENABLED`      | `false` | Opt in to automatic pause. Manual control needs the controller enabled.     |
+| `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.      |
+| `AUTO_PAUSE_WAKE_FILTER`  | `any`   | `any` wakes on any UDP to the query port; `ignore-a2s` ignores A2S queries. |
+
+Control files live under `/data/config/autopause/`. The persistent `disabled` marker survives
+restarts; `paused`, `status.json`, and `request` are runtime state. Use the CLI from inside the
+container or with `docker compose exec`:
+
+```bash
+enshctl autopause status
+enshctl autopause pause [--force]
+enshctl autopause resume
+enshctl autopause reset [--yes]
+enshctl autopause disable
+enshctl autopause enable
+```
+
+A paused server consumes no Wine CPU but keeps its resident memory. It may disappear from the
+Steam server browser; direct-IP joining wakes it through the query port. Resume reconnects Steam in
+about 10 seconds. The pause waits for an observed autosave; a force-kill while paused can lose up
+to one autosave interval.
 
 ### Enshrouded Server config (any `ENSHROUDED_*` prefix)
 

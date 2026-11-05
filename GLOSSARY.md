@@ -111,3 +111,28 @@ _Avoid_: Player list, Roster cache
 **Player handle**:
 Game-assigned `index(session)` identifier for one connection.
 _Avoid_: Player ID, Slot
+
+**Pending join**:
+Window opened by a session acceptance or Steam authentication line before a player handle
+appears.
+_Avoid_: Login timer, Connecting flag
+
+**Session block**:
+Periodic stdout block listing the local `m#0` machine and any remote `m#N` machines.
+_Avoid_: Status dump, Machine table
+
+**Machine entry**:
+One `m#N` row in a Session block; `m#0` is the local baseline and any `N>0` is a remote machine.
+_Avoid_: Player count, Peer
+
+**Idle timeout**:
+Continuous time with no player presence before Auto Pause suspends the server.
+_Avoid_: Player timeout, Empty time
+
+**Auto pause**:
+Suspending the whole Wine tree after the idle timeout and resuming it on client traffic.
+_Avoid_: Sleep, Hibernate, Shutdown
+
+**Wake traffic**:
+Inbound UDP traffic to the query port that resumes a paused server.
+_Avoid_: Wake packet, Query packet

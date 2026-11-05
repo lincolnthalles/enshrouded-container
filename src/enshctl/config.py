@@ -5,6 +5,7 @@ import logging
 import re
 from contextlib import suppress
 from dataclasses import dataclass
+from ipaddress import ip_address
 from os import chown, environ
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,53 @@ class SaveDirectories:
     def restore_tmp_dir(self) -> Path:
         """Sibling staging directory consumed by Restore."""
         return self.saves_dir.parent / RESTORE_TMP_DIR_NAME
+
+
+@dataclass(frozen=True)
+class QueryEndpoint:
+    """Resolved A2S endpoint from the Generated config."""
+
+    host: str
+    port: int
+
+
+def generated_query_endpoint(config_path: Path = OUTPUT_CONFIG) -> QueryEndpoint | None:
+    """Return the Generated config's query endpoint, or None when it is unusable."""
+    try:
+        generated = json.loads(config_path.read_text())
+    except FileNotFoundError:
+        logger.warning("Could not read Generated config %s; Auto Pause query endpoint is unavailable", config_path)
+        return None
+    except OSError, ValueError:
+        logger.warning("Could not read Generated config %s; Auto Pause query endpoint is unavailable", config_path)
+        return None
+
+    if not isinstance(generated, dict):
+        logger.warning("Generated config %s is not an object; Auto Pause query endpoint is unavailable", config_path)
+        return None
+
+    raw_port = generated.get("queryPort")
+    if isinstance(raw_port, bool) or not isinstance(raw_port, int) or not 1 <= raw_port <= 65535:
+        logger.warning("Generated queryPort %r is invalid; Auto Pause query endpoint is unavailable", raw_port)
+        return None
+
+    raw_ip = generated.get("ip", "")
+    if not isinstance(raw_ip, str):
+        logger.warning("Generated ip %r is not a string; using 127.0.0.1", raw_ip)
+        host = "127.0.0.1"
+    else:
+        stripped = raw_ip.strip()
+        if stripped in ("", "0.0.0.0"):  # noqa: S104 - comparing a configured bind value, not opening a socket
+            host = "127.0.0.1"
+        elif stripped in ("::", "::0"):
+            host = "::1"
+        else:
+            try:
+                host = str(ip_address(stripped))
+            except ValueError:
+                logger.warning("Generated ip %r is invalid; using 127.0.0.1", raw_ip)
+                host = "127.0.0.1"
+    return QueryEndpoint(host, raw_port)
 
 
 def snake_to_camel(name: str) -> str:

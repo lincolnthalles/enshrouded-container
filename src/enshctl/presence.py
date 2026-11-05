@@ -1,4 +1,4 @@
-"""Connected-player tracking derived from dedicated server output."""
+"""Connected-player tracking and pause evidence derived from dedicated server output."""
 
 import re
 import threading
@@ -15,6 +15,8 @@ MAX_PENDING_NAMES = 16
 MAX_NAME_LENGTH = 64
 MAX_PARSED_LINE = 8192
 UNNAMED_HANDLE_GRACE = 5 * 60.0
+PENDING_JOIN_WINDOW = 60.0
+SESSION_BLOCK_TIMEOUT = 90.0
 
 _HANDLE_PATTERN = r"\d+\(\d+\)"
 _LOG_PREFIX = re.compile(r"^\[[^\]]+\]\s+\[[^\]]+\]\s+(?P<message>.*)$")
@@ -22,12 +24,21 @@ _REMOTE_PLAYER_ADDED = re.compile(rf"Remote player added\. Player handle: (?P<ha
 _MACHINE_LOGIN = re.compile(rf"Machine '\d+': Player '(?P<handle>{_HANDLE_PATTERN})' logged in")
 _PLAYER_NAME = re.compile(r"Player '(?P<name>.*)' logged in with Permissions:")
 _PLAYER_REMOVED = re.compile(rf"Player removed\. Player handle: (?P<handle>{_HANDLE_PATTERN})")
+_REMOVE_ENTITY = re.compile(r"Remove Entity for Player '(?P<name>.*)'")
+_SESSION_ACCEPTED = re.compile(r"Session accepted with peer \(steamid:\d+\)")
+_AUTHENTICATED = re.compile(r"Client '\d+' authenticated by steam")
+_RUN_MARKER = re.compile(r"Switching state from LoadEcsScene to Run")
+_SESSION_BLOCK_START = re.compile(r"-{3,}\s+Session\s+-{3,}")
+_SESSION_BLOCK_END = re.compile(r"-{10,}")
+_SESSION_MACHINE = re.compile(r"m#(?P<index>\d+)\b")
+_SESSION_MACHINE_PREFIX = re.compile(r"m#")
 
 
 @dataclass(frozen=True)
 class Player:
     handle: str
     name: str | None = None
+    leaving: bool = False
 
     @property
     def display_name(self) -> str:
@@ -37,6 +48,14 @@ class Player:
 @dataclass(frozen=True)
 class PresenceSnapshot:
     players: tuple[Player, ...]
+    pending_join_until: float | None = None
+    ready: bool = False
+    last_activity_at: float | None = None
+    session_machines: frozenset[int] | None = None
+    session_complete_at: float | None = None
+    session_malformed: bool = False
+    degraded: bool = False
+    activity_generation: int = 0
 
     @property
     def handles(self) -> frozenset[str]:
@@ -45,6 +64,10 @@ class PresenceSnapshot:
     @property
     def is_empty(self) -> bool:
         return not self.players
+
+    @property
+    def has_pending_join(self) -> bool:
+        return self.pending_join_until is not None
 
 
 @dataclass(frozen=True)
@@ -85,10 +108,11 @@ class _Entry:
     handle: str
     name: str | None
     added_at: float
+    leaving: bool = False
 
 
 class PresenceTracker:
-    """Thread-safe connected-player set derived from one stdout stream."""
+    """Thread-safe connected-player set and pause evidence from one stdout stream."""
 
     def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
         self._clock = clock or monotonic
@@ -97,6 +121,18 @@ class PresenceTracker:
         self._pending_names: deque[str] = deque()
         self._queue_warned: set[str] = set()
         self._cap_warned = False
+        self._degraded = False
+        self._pending_join_until: float | None = None
+        self._ready = False
+        self._last_activity_at: float | None = None
+        self._activity_generation = 0
+        self._session_machines: frozenset[int] | None = None
+        self._session_complete_at: float | None = None
+        self._session_malformed = False
+        self._session_open_since: float | None = None
+        self._session_indices: set[int] = set()
+        self._session_open_malformed = False
+        self._session_overdue_warned = False
 
     def observe(self, line: str, now: float | None = None) -> tuple[PresenceEvent, ...]:
         """Process one server output line and return roster events."""
@@ -106,30 +142,97 @@ class PresenceTracker:
         message = _message(line)
         with self._lock:
             events = list(self._expire_unnamed(timestamp))
+            events.extend(self._expire_pending(timestamp))
+            events.extend(self._expire_session(timestamp))
             events.extend(self._apply_line(message, timestamp))
             return tuple(events)
 
     def expire(self, now: float | None = None) -> tuple[PresenceEvent, ...]:
-        """Expire unnamed handles that have outlived the grace period."""
+        """Expire unnamed handles, pending joins, and an overdue session block."""
         timestamp = self._clock() if now is None else now
         with self._lock:
-            return tuple(self._expire_unnamed(timestamp))
+            events = list(self._expire_unnamed(timestamp))
+            events.extend(self._expire_pending(timestamp))
+            events.extend(self._expire_session(timestamp))
+            return tuple(events)
 
     def snapshot(self) -> PresenceSnapshot:
-        """Return an immutable view of the current roster."""
+        """Return an immutable view of the current roster and pause evidence."""
         with self._lock:
-            return PresenceSnapshot(tuple(Player(entry.handle, entry.name) for entry in self._players.values()))
+            return PresenceSnapshot(
+                tuple(Player(entry.handle, entry.name, entry.leaving) for entry in self._players.values()),
+                pending_join_until=self._pending_join_until,
+                ready=self._ready,
+                last_activity_at=self._last_activity_at,
+                session_machines=self._session_machines,
+                session_complete_at=self._session_complete_at,
+                session_malformed=self._session_malformed,
+                degraded=self._degraded,
+                activity_generation=self._activity_generation,
+            )
+
+    def reset(self, now: float | None = None) -> None:
+        """Clear roster and pause evidence without touching the game process."""
+        timestamp = self._clock() if now is None else now
+        with self._lock:
+            self._players.clear()
+            self._pending_names.clear()
+            self._queue_warned.clear()
+            self._cap_warned = False
+            self._degraded = False
+            self._pending_join_until = None
+            self._session_machines = None
+            self._session_complete_at = None
+            self._session_malformed = False
+            self._session_open_since = None
+            self._session_indices.clear()
+            self._session_open_malformed = False
+            self._session_overdue_warned = False
+            self._last_activity_at = timestamp
 
     def _apply_line(self, message: str, now: float) -> list[PresenceEvent]:
+        if _SESSION_BLOCK_START.fullmatch(message):
+            return self._start_session_block(now)
+        if _SESSION_BLOCK_END.fullmatch(message):
+            return self._close_session_block(now)
+        if self._session_open_since is not None:
+            if match := _SESSION_MACHINE.match(message):
+                self._session_indices.add(int(match["index"]))
+                return []
+            if _SESSION_MACHINE_PREFIX.match(message):
+                self._session_open_malformed = True
+                return []
+        if _SESSION_ACCEPTED.fullmatch(message) or _AUTHENTICATED.fullmatch(message):
+            self._touch(now)
+            self._pending_join_until = now + PENDING_JOIN_WINDOW
+            return []
         if match := _REMOTE_PLAYER_ADDED.fullmatch(message):
+            self._touch(now)
+            self._clear_pending_join()
             return self._add_handle(match["handle"], now)
         if match := _MACHINE_LOGIN.fullmatch(message):
+            self._touch(now)
+            self._clear_pending_join()
             return self._add_handle(match["handle"], now)
         if match := _PLAYER_NAME.fullmatch(message):
-            return self._attach_name(match["name"])
+            return self._attach_name(match["name"], now)
+        if match := _REMOVE_ENTITY.fullmatch(message):
+            self._touch(now)
+            return self._mark_leaving(match["name"])
         if match := _PLAYER_REMOVED.fullmatch(message):
+            self._touch(now)
             return self._remove_handle(match["handle"])
+        if _RUN_MARKER.fullmatch(message):
+            self._ready = True
+            self._touch(now)
         return []
+
+    def _touch(self, now: float) -> None:
+        self._last_activity_at = now
+        self._activity_generation += 1
+
+    def _clear_pending_join(self) -> None:
+        self._pending_join_until = None
 
     def _add_handle(self, handle: str, now: float) -> list[PresenceEvent]:
         entry = self._players.get(handle)
@@ -137,6 +240,7 @@ class PresenceTracker:
             return self._enqueue_name(handle)
 
         if len(self._players) >= MAX_HANDLES:
+            self._degraded = True
             if self._cap_warned:
                 return []
             self._cap_warned = True
@@ -160,10 +264,12 @@ class PresenceTracker:
         self._pending_names.append(handle)
         return []
 
-    def _attach_name(self, raw_name: str) -> list[PresenceEvent]:
+    def _attach_name(self, raw_name: str, now: float) -> list[PresenceEvent]:
         name = _sanitize_name(raw_name)
         if name is None:
             return [PresenceWarning("Ignoring empty player name")]
+        self._touch(now)
+        self._clear_pending_join()
 
         handle: str | None = None
         while self._pending_names:
@@ -183,6 +289,16 @@ class PresenceTracker:
         self._players[handle].name = name
         self._discard_pairing(handle)
         return []
+
+    def _mark_leaving(self, raw_name: str) -> list[PresenceEvent]:
+        name = _sanitize_name(raw_name)
+        if name is None:
+            return [PresenceWarning("Ignoring empty player name in Remove Entity")]
+        for entry in self._players.values():
+            if entry.name == name and not entry.leaving:
+                entry.leaving = True
+                return []
+        return [PresenceWarning(f"Remove Entity for unknown player {name!r}")]
 
     def _remove_handle(self, handle: str) -> list[PresenceEvent]:
         entry = self._players.pop(handle, None)
@@ -207,6 +323,49 @@ class PresenceTracker:
             self._reset_cap_warning()
         return events
 
+    def _expire_pending(self, now: float) -> list[PresenceEvent]:
+        if self._pending_join_until is None or now < self._pending_join_until:
+            return []
+        self._pending_join_until = None
+        return [PresenceWarning("Pending player join expired without a completed join")]
+
+    def _start_session_block(self, now: float) -> list[PresenceEvent]:
+        events: list[PresenceEvent] = []
+        if self._session_open_since is not None:
+            self._session_malformed = True
+            events.append(PresenceWarning("Session block did not close before a new block"))
+        self._session_open_since = now
+        self._session_indices.clear()
+        self._session_open_malformed = False
+        self._session_overdue_warned = False
+        return events
+
+    def _close_session_block(self, now: float) -> list[PresenceEvent]:
+        if self._session_open_since is None:
+            return []
+        duration = now - self._session_open_since
+        malformed = self._session_open_malformed or duration >= SESSION_BLOCK_TIMEOUT or 0 not in self._session_indices
+        self._session_machines = frozenset(self._session_indices)
+        self._session_complete_at = now
+        self._session_malformed = malformed
+        if any(index > 0 for index in self._session_indices):
+            self._touch(now)
+        self._session_open_since = None
+        self._session_indices.clear()
+        self._session_open_malformed = False
+        if malformed:
+            return [PresenceWarning("Session block is malformed; Auto Pause is blocked")]
+        return []
+
+    def _expire_session(self, now: float) -> list[PresenceEvent]:
+        if self._session_open_since is None or self._session_overdue_warned:
+            return []
+        if now - self._session_open_since < SESSION_BLOCK_TIMEOUT:
+            return []
+        self._session_malformed = True
+        self._session_overdue_warned = True
+        return [PresenceWarning("Session block did not close within 90s; Auto Pause is blocked")]
+
     def _discard_pairing(self, handle: str) -> None:
         if handle in self._pending_names:
             self._pending_names.remove(handle)
@@ -215,6 +374,7 @@ class PresenceTracker:
     def _reset_cap_warning(self) -> None:
         if len(self._players) < MAX_HANDLES:
             self._cap_warned = False
+            self._degraded = False
 
 
 def _sanitize_name(raw_name: str) -> str | None:

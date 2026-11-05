@@ -7,10 +7,16 @@ import threading
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from enshctl import config
 from enshctl.backup_protocol import BackupRequest, Trigger
+from enshctl.lifecycle.a2s import A2SProbe, UdpA2STransport
+from enshctl.lifecycle.autopause import AutoPauseController
+from enshctl.lifecycle.control import ControlFiles
 from enshctl.lifecycle.io import LifecycleIO, ProcessControl, SystemLifecycleIO, SystemProcessControl
 from enshctl.lifecycle.players import PlayerReporter
-from enshctl.lifecycle.types import ExitRequest, ServerProcess
+from enshctl.lifecycle.types import ExitRequest, PauseControl, ServerProcess
+from enshctl.lifecycle.wake import build_wake_source
+from enshctl.paths import AUTOPAUSE_DIR
 from enshctl.presence import PresenceTracker
 
 if TYPE_CHECKING:
@@ -29,11 +35,15 @@ def exit_server(
     stop_event: threading.Event,
     process_control: ProcessControl,
     lifecycle_io: LifecycleIO,
+    pause_control: PauseControl | None = None,
     clear_pid: bool = True,
 ) -> int:
     """Stop the scheduler and server, run the trigger's backup, and clean up once."""
     stop_event.set()
     logger.info("Exiting server lifecycle (%s, code %d)", request.trigger or "startup failure", request.exit_code)
+    if pause_control is not None:
+        _best_effort(pause_control.stop, "Auto Pause stop")
+        _best_effort(pause_control.resume_for_shutdown, "Auto Pause resume")
     _stop_server(process_handle, settings=settings, process_control=process_control)
     _run_triggered_backup(request.trigger, settings=settings, lifecycle_io=lifecycle_io)
     _best_effort(lifecycle_io.cleanup_wine, "Wine cleanup")
@@ -55,7 +65,7 @@ def _stop_server(
         if process_handle.poll() is not None:
             return
         logger.info("Sending SIGINT to server process")
-        if not process_control.signal(signal.SIGINT):
+        if not process_control.signal_game(signal.SIGINT):
             with suppress(OSError):
                 process_handle.send_signal(signal.SIGINT)
         try:
@@ -63,7 +73,7 @@ def _stop_server(
         except subprocess.TimeoutExpired:
             logger.warning("Server did not exit within %ds, sending SIGKILL", settings.shutdown_timeout)
             with suppress(OSError):
-                process_control.signal(signal.SIGKILL)
+                process_control.signal_game(signal.SIGKILL)
             with suppress(OSError):
                 process_handle.kill()
             with suppress(OSError):
@@ -110,10 +120,16 @@ class ServerLifecycle:
         *,
         process_control: ProcessControl | None = None,
         lifecycle_io: LifecycleIO | None = None,
+        control_files: ControlFiles | None = None,
     ) -> None:
         self._settings = settings
         self._process_control: ProcessControl = process_control or SystemProcessControl(settings)
         self._lifecycle_io: LifecycleIO = lifecycle_io or SystemLifecycleIO(settings)
+        self._control_files = control_files or ControlFiles(
+            AUTOPAUSE_DIR,
+            puid=settings.puid,
+            pgid=settings.pgid,
+        )
         self._request: ExitRequest | None = None
         self._stop_event = threading.Event()
         self._shutdown_event = threading.Event()
@@ -121,6 +137,7 @@ class ServerLifecycle:
         self._stream_thread: threading.Thread | None = None
         self._log_thread: threading.Thread | None = None
         self._reporter_thread: threading.Thread | None = None
+        self._pause_control: AutoPauseController | None = None
         self._presence: PresenceTracker | None = None
         self._reporter: PlayerReporter | None = None
         self._pid_written = False
@@ -143,6 +160,7 @@ class ServerLifecycle:
         self._install_signal_handlers()
         process_handle: ServerProcess | None = None
         try:
+            self._prepare_auto_pause()
             if self._request is not None:
                 return self._finish(None)
             process_handle = self._process_control.start()
@@ -154,6 +172,9 @@ class ServerLifecycle:
             self._reporter = PlayerReporter(self._presence, self._settings)
             self._reporter_thread = self._reporter.start(self._stop_event)
             self._stream_thread = self._process_control.stream(process_handle, on_line=self._reporter.observe)
+            if self._settings.auto_pause_enabled:
+                self._pause_control = self._build_auto_pause(self._stream_thread, self._presence)
+                self._pause_control.start(self._stop_event)
             if self._settings.backup_live:
                 self._lifecycle_io.start_scheduler(self._stop_event)
             else:
@@ -171,6 +192,31 @@ class ServerLifecycle:
             self._finish(process_handle)
             return self._exit_code
         return self._finish(process_handle)
+
+    def _prepare_auto_pause(self) -> None:
+        try:
+            if not self._process_control.resume_all():
+                logger.warning("Auto Pause startup resume could not verify a clean Wine tree")
+        except Exception:
+            logger.exception("Auto Pause startup resume failed")
+        self._control_files.clear_runtime()
+
+    def _build_auto_pause(self, stream_thread: threading.Thread, tracker: PresenceTracker) -> AutoPauseController:
+        endpoint = config.generated_query_endpoint()
+        saves_dir = config.generated_save_directories(settings=self._settings).saves_dir
+        a2s = A2SProbe(UdpA2STransport(endpoint)) if endpoint is not None else None
+        wake_source = build_wake_source(endpoint, self._settings.auto_pause_wake_filter)
+        return AutoPauseController(
+            settings=self._settings,
+            tracker=tracker,
+            process_control=self._process_control,
+            control_files=self._control_files,
+            saves_dir=saves_dir,
+            query_endpoint=endpoint,
+            a2s=a2s,
+            wake_source=wake_source,
+            stream_healthy=stream_thread.is_alive,
+        )
 
     def _install_signal_handlers(self) -> None:
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -203,6 +249,7 @@ class ServerLifecycle:
             stop_event=self._stop_event,
             process_control=self._process_control,
             lifecycle_io=self._lifecycle_io,
+            pause_control=self._pause_control,
             clear_pid=self._pid_written,
         )
         if self._stream_thread is not None:

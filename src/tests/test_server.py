@@ -4,13 +4,15 @@ import signal
 import subprocess
 from dataclasses import replace
 from typing import IO, TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from enshctl.lifecycle import gamelog, server
 from enshctl.paths import GAME_EXE, WINE_PREFIX
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
     from enshctl.lifecycle.types import ServerProcess
 
@@ -60,34 +62,116 @@ def test_start_builds_launch_command_and_environment() -> None:
     }
 
 
-def test_signal_uses_pkill() -> None:
-    # GIVEN a running game server
-    with patch("enshctl.lifecycle.server.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0)
-        # WHEN signaling the game
-        delivered = server.signal(signal.SIGINT)
-    # THEN pkill targets the game binary as steam
+def test_signal_game_targets_exact_game_pid(tmp_path: Path) -> None:
+    # GIVEN a fake proc tree with the game and a Wine service
+    _make_process(tmp_path, 100, [str(GAME_EXE)], comm="enshrouded_server.exe")
+    _make_process(tmp_path, 200, ["C:\\windows\\system32\\services.exe"], comm="services.exe")
+
+    # WHEN signaling the game
+    with patch("enshctl.lifecycle.server.os.kill") as mock_kill:
+        delivered = server.signal_game(signal.SIGINT, proc_root=tmp_path)
+
+    # THEN only the exact game PID is signalled
     assert delivered is True
-    assert mock_run.call_args.args[0] == [
-        "/usr/bin/runuser",
-        "-u",
-        "steam",
-        "--",
-        "pkill",
-        f"-{signal.SIGINT}",
-        "-f",
-        "enshrouded_server.exe",
+    mock_kill.assert_called_once_with(100, signal.SIGINT)
+
+
+def test_signal_game_reports_missing_game(tmp_path: Path) -> None:
+    # GIVEN a proc tree without the game
+    _make_process(tmp_path, 200, ["C:\\windows\\system32\\services.exe"], comm="services.exe")
+
+    # WHEN signaling the game
+    delivered = server.signal_game(signal.SIGTERM, proc_root=tmp_path)
+
+    # THEN no signal is reported
+    assert delivered is False
+
+
+def test_wine_tree_discovers_game_and_services(tmp_path: Path) -> None:
+    # GIVEN a game process, a wineserver, a C:\windows service, and an unrelated process
+    _make_process(tmp_path, 100, [str(GAME_EXE)], comm="enshrouded_server.exe")
+    _make_process(tmp_path, 200, ["wineserver"], comm="wineserver")
+    _make_process(tmp_path, 300, ["C:\\windows\\system32\\services.exe"], comm="services.exe")
+    _make_process(tmp_path, 400, ["/usr/bin/sleep", "1"], comm="sleep")
+
+    # WHEN the tree is discovered with a no-op scan
+    tree = server.wine_tree(proc_root=tmp_path, sleep=lambda _seconds: None, clock=lambda: 0.0)
+
+    # THEN only the game and Wine services are included
+    assert tree == server.WineTree(100, (200, 300))
+
+
+def test_suspend_all_stops_the_tree(tmp_path: Path) -> None:
+    # GIVEN a game and service already reported as stopped
+    _make_process(tmp_path, 100, [str(GAME_EXE)], comm="enshrouded_server.exe", state="T")
+    _make_process(tmp_path, 200, ["wineserver"], comm="wineserver", state="T")
+
+    # WHEN the tree is suspended
+    with patch("enshctl.lifecycle.server.signal_pid", return_value=True) as mock_signal:
+        suspended = server.suspend_all(proc_root=tmp_path, sleep=lambda _seconds: None, clock=lambda: 0.0)
+
+    # THEN both processes receive SIGSTOP and verification passes
+    assert suspended is True
+    assert [call.args for call in mock_signal.call_args_list] == [
+        (100, signal.SIGSTOP),
+        (200, signal.SIGSTOP),
     ]
 
 
-def test_signal_reports_no_match() -> None:
-    # GIVEN no process matches the game binary
-    with patch("enshctl.lifecycle.server.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=1)
-        # WHEN signaling the game
-        delivered = server.signal(signal.SIGTERM)
-    # THEN delivery is reported as false
-    assert delivered is False
+def test_suspend_all_rolls_back_on_verification_failure(tmp_path: Path) -> None:
+    # GIVEN a game that never reaches the stopped state
+    _make_process(tmp_path, 100, [str(GAME_EXE)], comm="enshrouded_server.exe", state="S")
+    _make_process(tmp_path, 200, ["wineserver"], comm="wineserver", state="S")
+
+    # WHEN suspension verification fails
+    with (
+        patch("enshctl.lifecycle.server.signal_pid", return_value=True),
+        patch("enshctl.lifecycle.server.resume_all", return_value=True) as mock_resume,
+    ):
+        suspended = server.suspend_all(proc_root=tmp_path, sleep=lambda _seconds: None, clock=lambda: 0.0)
+
+    # THEN the whole tree is resumed and the pause is rejected
+    assert suspended is False
+    mock_resume.assert_called_once()
+
+
+def test_resume_all_resumes_services_before_game(tmp_path: Path) -> None:
+    # GIVEN a stopped game with a lower PID than its service
+    _make_process(tmp_path, 100, [str(GAME_EXE)], comm="enshrouded_server.exe", state="T")
+    _make_process(tmp_path, 200, ["wineserver"], comm="wineserver", state="T")
+    order: list[int] = []
+
+    def _resume(pid: int, sig: int) -> bool:
+        assert sig == signal.SIGCONT
+        order.append(pid)
+        stat = tmp_path / str(pid) / "stat"
+        stat.write_text(stat.read_text().replace(") T ", ") S "))
+        return True
+
+    # WHEN the tree resumes
+    with patch("enshctl.lifecycle.server.signal_pid", side_effect=_resume):
+        resumed = server.resume_all(proc_root=tmp_path, sleep=lambda _seconds: None, clock=lambda: 0.0)
+
+    # THEN the service is signalled before the game
+    assert resumed is True
+    assert order == [200, 100]
+
+
+def _make_process(
+    root: Path,
+    pid: int,
+    cmdline: list[str],
+    *,
+    comm: str,
+    state: str = "S",
+) -> None:
+    process = root / str(pid)
+    process.mkdir()
+    (process / "cmdline").write_bytes(b"\x00".join(arg.encode() for arg in cmdline) + b"\x00")
+    (process / "comm").write_text(f"{comm}\n")
+    (process / "stat").write_text(f"{pid} ({comm}) {state} 1 2 3\n")
+    if comm == "wineserver":
+        (process / "exe").symlink_to("/usr/lib64/wine/wineserver")
 
 
 def test_stream_drains_to_eof(caplog: pytest.LogCaptureFixture) -> None:

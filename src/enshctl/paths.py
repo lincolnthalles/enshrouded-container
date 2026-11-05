@@ -6,6 +6,7 @@ SAVE_DIR = Path("/data/saves")
 LOG_DIR = Path("/data/logs")
 MANIFESTS_DIR = Path("/data/manifests")
 CONFIG_DIR = Path("/data/config")
+AUTOPAUSE_DIR = CONFIG_DIR / "autopause"
 GAME_TREE_DIR = Path("/data/gameserver")
 BACKUP_BASE_DIR = Path("/data/backups")
 WINE_PREFIX = Path("/data/wineprefix")

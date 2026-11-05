@@ -7,6 +7,8 @@ from enshctl.presence import (
     MAX_HANDLES,
     MAX_NAME_LENGTH,
     MAX_PARSED_LINE,
+    PENDING_JOIN_WINDOW,
+    SESSION_BLOCK_TIMEOUT,
     Player,
     PlayerJoined,
     PlayerLeft,
@@ -24,6 +26,12 @@ _CLEAN_LOGOUT = (
     "[W 00:00:04,200] [session] Remove player from session. Not found in online game info. Player Handle: {handle}"
 )
 _REMOVED = "[I 00:00:04,300] [session] Player removed. Player handle: {handle}"
+_SESSION_ACCEPTED = "[I 00:00:01,000] [online] Session accepted with peer (steamid:99999999999999999)"
+_AUTHENTICATED = "[I 00:00:01,100] [online] Client '99999999999999999' authenticated by steam"
+_SESSION_START = "[I 00:00:01,000] [session] -------------- Session ----------------"
+_SESSION_END = "[I 00:00:01,100] [session] ----------------------------------------"
+_SESSION_MACHINE = "[I 00:00:01,050] [session] m#{index} 59 (369) remote 7 (8)"
+_RUN_MARKER = "[I 00:00:01,200] [server] Switching state from LoadEcsScene to Run"
 
 
 def _add(handle: str) -> str:
@@ -42,6 +50,10 @@ def _removed(handle: str) -> str:
     return _REMOVED.format(handle=handle)
 
 
+def _session_machine(index: int) -> str:
+    return _SESSION_MACHINE.format(index=index)
+
+
 def test_add_and_name_tracks_named_player() -> None:
     # GIVEN a tracker and the verified join sequence
     tracker = PresenceTracker()
@@ -55,7 +67,7 @@ def test_add_and_name_tracks_named_player() -> None:
     assert add_events == (PlayerJoined("0(0)"),)
     assert machine_events == ()
     assert name_events == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Morgan"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan"),)
 
 
 def test_machine_line_adds_a_missed_handle() -> None:
@@ -85,7 +97,7 @@ def test_logout_sequence_removes_only_on_player_removed() -> None:
     assert entity_events == ()
     assert player_events == ()
     assert warning_events == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Morgan"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan", leaving=True),)
 
     # AND only the session removal deletes
     removed_events = tracker.observe(_removed("0(0)"), now=5)
@@ -132,7 +144,7 @@ def test_duplicate_add_and_machine_line_are_idempotent() -> None:
     # THEN no duplicate player is added
     assert duplicate_add == ()
     assert duplicate_machine == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)"),))
+    assert tracker.snapshot().players == (Player("0(0)"),)
 
 
 def test_unknown_removal_warns_without_changing_roster() -> None:
@@ -189,7 +201,7 @@ def test_names_pair_in_login_order() -> None:
     tracker.observe(_name("Bob"), now=3)
 
     # THEN the roster pairs Alice and Bob in first-add order
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Alice"), Player("0(1)", "Bob")))
+    assert tracker.snapshot().players == (Player("0(0)", "Alice"), Player("0(1)", "Bob"))
 
 
 def test_duplicate_name_candidate_does_not_mispair() -> None:
@@ -204,7 +216,7 @@ def test_duplicate_name_candidate_does_not_mispair() -> None:
 
     # THEN the extra name is rejected rather than renaming the handle
     assert events == (PresenceWarning("Player name 'Bob' has no unnamed handle"),)
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Alice"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Alice"),)
 
 
 def test_name_queue_overflow_uses_oldest_unnamed_fallback() -> None:
@@ -223,7 +235,7 @@ def test_name_queue_overflow_uses_oldest_unnamed_fallback() -> None:
     # THEN the overflow warning is reported once and every handle is named
     assert duplicate_events == ()
     assert warnings == [PresenceWarning("Name pairing queue full; 0(16) will use the unnamed fallback")]
-    assert tracker.snapshot() == PresenceSnapshot(tuple(Player(f"0({index})", f"P{index}") for index in range(17)))
+    assert tracker.snapshot().players == tuple(Player(f"0({index})", f"P{index}") for index in range(17))
 
 
 def test_name_cannot_spoof_an_add_line() -> None:
@@ -236,7 +248,7 @@ def test_name_cannot_spoof_an_add_line() -> None:
 
     # THEN the text is treated as a name, not a second player
     assert events == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Remote player added. Player handle: 0(1)"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Remote player added. Player handle: 0(1)"),)
 
 
 def test_name_cannot_spoof_a_removal_line() -> None:
@@ -248,9 +260,9 @@ def test_name_cannot_spoof_a_removal_line() -> None:
     # WHEN a removal-adjacent line carries a player-controlled name containing a removal phrase
     events = tracker.observe(_REMOVE_ENTITY.format(name="Player removed. Player handle: 0(0)"), now=2)
 
-    # THEN presence is unchanged
-    assert events == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Morgan"),))
+    # THEN presence is unchanged and the unknown name is warned about
+    assert events == (PresenceWarning("Remove Entity for unknown player 'Player removed. Player handle: 0(0)'"),)
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan"),)
 
 
 def test_removed_handle_does_not_consume_a_name() -> None:
@@ -264,7 +276,7 @@ def test_removed_handle_does_not_consume_a_name() -> None:
     tracker.observe(_name("Alice"), now=3)
 
     # THEN the later handle receives the name
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(1)", "Alice"),))
+    assert tracker.snapshot().players == (Player("0(1)", "Alice"),)
 
 
 def test_expired_handle_does_not_consume_a_name() -> None:
@@ -278,7 +290,7 @@ def test_expired_handle_does_not_consume_a_name() -> None:
     tracker.observe(_name("Alice"), now=302)
 
     # THEN the later handle receives the name
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(1)", "Alice"),))
+    assert tracker.snapshot().players == (Player("0(1)", "Alice"),)
 
 
 def test_empty_name_does_not_consume_a_name() -> None:
@@ -292,7 +304,7 @@ def test_empty_name_does_not_consume_a_name() -> None:
 
     # THEN the empty name is warned about and the real name is attached
     assert empty_events == (PresenceWarning("Ignoring empty player name"),)
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Alice"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Alice"),)
 
 
 def test_name_line_without_unnamed_handle_warns() -> None:
@@ -367,7 +379,7 @@ def test_named_handle_does_not_expire() -> None:
 
     # THEN the player is still present
     assert events == ()
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "Morgan"),))
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan"),)
 
 
 def test_overlong_line_is_ignored_and_does_not_trigger_expiry() -> None:
@@ -409,7 +421,7 @@ def test_apostrophe_in_name_is_preserved() -> None:
     tracker.observe(_name("O'Brien"), now=1)
 
     # THEN the full name is attached
-    assert tracker.snapshot() == PresenceSnapshot((Player("0(0)", "O'Brien"),))
+    assert tracker.snapshot().players == (Player("0(0)", "O'Brien"),)
 
 
 def test_name_is_sanitized_and_truncated() -> None:
@@ -438,4 +450,181 @@ def test_snapshot_is_immutable() -> None:
         snapshot.players = ()  # type: ignore[misc]
 
     # THEN the original value is unchanged
-    assert snapshot == PresenceSnapshot((Player("0(0)"),))
+    assert snapshot == PresenceSnapshot((Player("0(0)"),), last_activity_at=0, activity_generation=1)
+
+
+def test_pending_join_opens_and_clears() -> None:
+    # GIVEN a tracker that sees an accepted session and authentication line
+    tracker = PresenceTracker()
+
+    # WHEN the session is accepted and then a player is added
+    tracker.observe(_SESSION_ACCEPTED, now=0)
+    opened = tracker.snapshot()
+    tracker.observe(_AUTHENTICATED, now=10)
+    extended = tracker.snapshot()
+    tracker.observe(_add("0(0)"), now=20)
+
+    # THEN the window opens, extends, and clears on the completed join
+    assert opened.pending_join_until == PENDING_JOIN_WINDOW
+    assert extended.pending_join_until == 10 + PENDING_JOIN_WINDOW
+    assert tracker.snapshot().pending_join_until is None
+
+
+def test_unrelated_removal_does_not_clear_pending_join() -> None:
+    # GIVEN one named player and a second client opening a pending join
+    tracker = PresenceTracker()
+    tracker.observe(_add("0(0)"), now=0)
+    tracker.observe(_name("Morgan"), now=1)
+    tracker.observe(_SESSION_ACCEPTED, now=2)
+
+    # WHEN the existing player leaves
+    tracker.observe(_removed("0(0)"), now=3)
+
+    # THEN the pending join remains
+    assert tracker.snapshot().pending_join_until == 2 + PENDING_JOIN_WINDOW
+
+
+def test_pending_join_expires_with_warning() -> None:
+    # GIVEN an open pending-join window
+    tracker = PresenceTracker()
+    tracker.observe(_SESSION_ACCEPTED, now=0)
+
+    # WHEN it reaches the deadline
+    events = tracker.expire(now=PENDING_JOIN_WINDOW)
+
+    # THEN the window clears with a warning
+    assert events == (PresenceWarning("Pending player join expired without a completed join"),)
+    assert tracker.snapshot().pending_join_until is None
+
+
+def test_run_marker_sets_ready_and_activity() -> None:
+    # GIVEN a tracker before the world is ready
+    tracker = PresenceTracker()
+
+    # WHEN the Run marker appears
+    tracker.observe(_RUN_MARKER, now=42)
+
+    # THEN the world is ready and activity starts at that time
+    snapshot = tracker.snapshot()
+    assert snapshot.ready is True
+    assert snapshot.last_activity_at == 42
+
+
+def test_session_block_records_remote_machine_and_ignores_remote_counter() -> None:
+    # GIVEN a complete Session block with the local and one remote machine
+    tracker = PresenceTracker()
+
+    # WHEN the block is observed
+    tracker.observe(_SESSION_START, now=0)
+    tracker.observe(_session_machine(0), now=1)
+    tracker.observe(_session_machine(1), now=2)
+    tracker.observe(_SESSION_END, now=3)
+
+    # THEN both machine indices are evidence and the block became activity
+    snapshot = tracker.snapshot()
+    assert snapshot.session_machines == frozenset({0, 1})
+    assert snapshot.session_complete_at == 3
+    assert snapshot.session_malformed is False
+    assert snapshot.last_activity_at == 3
+
+
+def test_local_only_session_block_is_not_activity() -> None:
+    # GIVEN a block with only the local machine
+    tracker = PresenceTracker()
+
+    # WHEN the block is observed
+    tracker.observe(_SESSION_START, now=0)
+    tracker.observe(_session_machine(0), now=1)
+    tracker.observe(_SESSION_END, now=2)
+
+    # THEN it is empty-server evidence but not player activity
+    snapshot = tracker.snapshot()
+    assert snapshot.session_machines == frozenset({0})
+    assert snapshot.last_activity_at is None
+
+
+def test_session_block_without_local_machine_is_malformed() -> None:
+    # GIVEN a block missing m#0
+    tracker = PresenceTracker()
+
+    # WHEN the block closes
+    tracker.observe(_SESSION_START, now=0)
+    tracker.observe(_session_machine(1), now=1)
+    events = tracker.observe(_SESSION_END, now=2)
+
+    # THEN it is rejected as malformed
+    assert events == (PresenceWarning("Session block is malformed; Auto Pause is blocked"),)
+    assert tracker.snapshot().session_malformed is True
+
+
+def test_session_block_overdue_is_malformed() -> None:
+    # GIVEN a Session block that never closes
+    tracker = PresenceTracker()
+    tracker.observe(_SESSION_START, now=0)
+
+    # WHEN the timeout passes
+    events = tracker.expire(now=SESSION_BLOCK_TIMEOUT)
+
+    # THEN it is marked malformed and warned once
+    assert events == (PresenceWarning("Session block did not close within 90s; Auto Pause is blocked"),)
+    assert tracker.snapshot().session_malformed is True
+    assert tracker.expire(now=SESSION_BLOCK_TIMEOUT + 1) == ()
+
+
+def test_remove_entity_marks_leaving_and_unknown_name_warns() -> None:
+    # GIVEN a named player
+    tracker = PresenceTracker()
+    tracker.observe(_add("0(0)"), now=0)
+    tracker.observe(_name("Morgan"), now=1)
+
+    # WHEN Remove Entity names the player
+    tracker.observe(_REMOVE_ENTITY.format(name="Morgan"), now=2)
+
+    # THEN membership is unchanged and the handle is leaving
+    assert tracker.snapshot().players == (Player("0(0)", "Morgan", leaving=True),)
+
+    # AND an unknown name warns without changing the roster
+    events = tracker.observe(_REMOVE_ENTITY.format(name="Unknown"), now=3)
+    assert events == (PresenceWarning("Remove Entity for unknown player 'Unknown'"),)
+    assert tracker.snapshot().players[0].leaving is True
+
+
+def test_handle_cap_marks_degraded_and_recovers() -> None:
+    # GIVEN a roster filled to the cap
+    tracker = PresenceTracker()
+    for index in range(MAX_HANDLES):
+        tracker.observe(_add(f"0({index})"), now=float(index))
+
+    # WHEN a distinct handle is rejected
+    tracker.observe(_add("0(999)"), now=100)
+
+    # THEN presence is degraded
+    assert tracker.snapshot().degraded is True
+
+    # AND removing one handle clears the degradation
+    tracker.observe(_removed("0(0)"), now=101)
+    assert tracker.snapshot().degraded is False
+
+
+def test_reset_clears_roster_and_session_evidence() -> None:
+    # GIVEN a ready tracker with a player, pending join, and remote-session evidence
+    tracker = PresenceTracker()
+    tracker.observe(_RUN_MARKER, now=0)
+    tracker.observe(_add("0(0)"), now=1)
+    tracker.observe(_SESSION_ACCEPTED, now=2)
+    tracker.observe(_SESSION_START, now=3)
+    tracker.observe(_session_machine(1), now=4)
+    tracker.observe(_SESSION_END, now=5)
+
+    # WHEN the operator reset runs
+    tracker.reset(now=6)
+
+    # THEN the roster and session evidence are cleared but readiness remains
+    snapshot = tracker.snapshot()
+    assert snapshot.players == ()
+    assert snapshot.pending_join_until is None
+    assert snapshot.session_machines is None
+    assert snapshot.session_complete_at is None
+    assert snapshot.session_malformed is False
+    assert snapshot.ready is True
+    assert snapshot.last_activity_at == 6

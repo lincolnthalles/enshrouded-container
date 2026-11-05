@@ -75,10 +75,11 @@ the fallback. A removed or expired handle SHALL NOT consume a later name.
 
 ### Requirement: Player removal lifecycle
 
-`Remove Entity for Player '<name>'`, `Remove Player '<name>'`, and
-`Remove player from session. Not found in online game info.` SHALL NOT change presence.
-`Player removed. Player handle: <handle>` SHALL remove the handle. A removal for an unknown
-handle SHALL be ignored with a warning.
+`Remove Entity for Player '<name>'` SHALL mark the named handle leaving without changing membership
+or logging a leave. `Remove Player '<name>'` and `Remove player from session. Not found in online
+game info.` SHALL NOT change presence. `Player removed. Player handle: <handle>` SHALL remove the
+handle. A removal for an unknown handle or an `Remove Entity` for an unknown name SHALL be ignored
+with a warning.
 
 #### Scenario: Player leaves
 
@@ -87,10 +88,16 @@ handle SHALL be ignored with a warning.
 - **THEN** a `Player left: <name>` line is logged
 - **AND** the next roster summary reports zero players
 
+#### Scenario: Remove Entity keeps membership
+
+- **WHEN** stdout contains `Remove Entity for Player '<name>'` without a following `Player removed`
+  line
+- **THEN** no `Player left` line is logged
+- **AND** the roster still reports that player
+
 #### Scenario: Removal-adjacent lines do not remove
 
-- **WHEN** stdout contains `Remove Entity for Player '<name>'` or `Remove Player '<name>'`
-  without a following `Player removed` line
+- **WHEN** stdout contains `Remove Player '<name>'` without a following `Player removed` line
 - **THEN** no `Player left` line is logged
 - **AND** the next roster summary still reports the player
 
@@ -105,6 +112,12 @@ handle SHALL be ignored with a warning.
 - **WHEN** stdout contains `Player removed. Player handle: <handle>` for a handle that was never
   added
 - **THEN** no `Player left` line is logged
+- **AND** a warning is logged
+
+#### Scenario: Unknown Remove Entity is ignored
+
+- **WHEN** stdout contains `Remove Entity for Player '<name>'` for a name that is not tracked
+- **THEN** the roster is unchanged
 - **AND** a warning is logged
 
 ### Requirement: Handle identity

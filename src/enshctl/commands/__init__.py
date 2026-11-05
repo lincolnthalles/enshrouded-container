@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 
 from enshctl.settings import AppSettings
 
+from .autopause import run as cmd_autopause
 from .backup import run as cmd_backup
 from .debug_config import run as cmd_debug_config
 from .download import run as cmd_download
@@ -17,6 +18,7 @@ from .version_info import run as cmd_version_info
 RunCommand = Callable[[AppSettings | None, Sequence[str]], int]
 
 COMMANDS: dict[str, RunCommand] = {
+    "autopause": cmd_autopause,
     "backup": cmd_backup,
     "debug-config": cmd_debug_config,
     "download": cmd_download,
