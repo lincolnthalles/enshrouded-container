@@ -68,8 +68,23 @@ git-tag TAG:
     git tag -a $TAG -m "Release $TAG"
     git push origin $TAG
 
-# Tag and push to GitHub, triggering the release workflow.
+# Bump the package version. See <https://docs.astral.sh/uv/guides/package/#updating-your-version> for more info.
 [group('maintainer-only')]
-publish TAG: validate
-    just git-tag "{{ TAG }}"
+bump VALUE='major/minor/patch':
+    #!/usr/bin/env bash
+    echo "Current version: "$(uv version --short)""
+    if [[ "{{ VALUE }}" == "major/minor/patch" ]]; then
+        uv help version
+        exit 0
+    fi
+    uv version --bump {{ VALUE }}
+
+# Tag and push to GitHub, triggering the release workflow.
+[confirm("Are you sure you want to publish a new release? Make sure you've bumped the version and pushed your changes.")]
+[group('maintainer-only')]
+publish: validate
+    #!/usr/bin/env bash
+    VERSION="$(uv version --short)
+    echo "Publishing version "$VERSION"…"
+    just git-tag "$VERSION"
     git push origin main

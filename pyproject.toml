@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "enshrouded-server-container"
-version = "0.1.0"
+version = "0.2.0"
 description = "Docker container for Enshrouded dedicated server with version pinning, mod injection, and automated backups"
 requires-python = ">=3.14"
 dependencies = [

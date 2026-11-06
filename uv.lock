@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-10-22T14:35:31.434731941Z"
+exclude-newer = "2026-10-30T04:58:15.545254796Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -31,7 +31,7 @@ wheels = [
 
 [[package]]
 name = "enshrouded-server-container"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },
