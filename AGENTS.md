@@ -20,12 +20,13 @@ When sources disagree: specs for intent, code/config for current behavior, this 
 Done means `just gate` passes. Do NOT deliver code changes before it.
 
 ```bash
-just gate       # quiet:   test → lint → typecheck; prints one status line to keep the context lean
-just validate   # verbose: test → lint → typecheck; run once if `just gate` fails
+just validate   # verbose: dprint check → pytest → ruff lint → pyrefly typecheck; run once if `just gate` fails
+just gate       # high-signal version of `just validate`: prints one status line to keep the context lean
 just lint       # ruff lint
 just typecheck  # pyrefly
 just test       # pytest
-just fmt        # dprint fmt (Python via ruff format)
+just fmt-check  # check code formatting (python — via ruff, markdown, json, toml, yaml, justfile)
+just fmt        # format code (python — via ruff, markdown, json, toml, yaml, justfile)
 ```
 
 Run bare `just` for the full list. Venv auto-creates via `uv`; pytest resolves imports via `pythonpath = ["src"]`, the project is never pip-installed in dev.

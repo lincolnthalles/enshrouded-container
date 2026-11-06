@@ -21,6 +21,7 @@ typecheck:
 # Run all validations (lint, typecheck, test)
 validate *ARGS='':
     #!/usr/bin/env -S bash -euo pipefail
+    uv run dprint check --list-different
     uv run pytest {{ ARGS }} src/tests/ 
     uv run ruff check src/enshctl src/tests/
     uv run pyrefly check --output-format=min-text
@@ -44,6 +45,10 @@ clean:
 # Format code
 fmt:
     uv run dprint fmt
+
+# Check code formatting
+fmt-check:
+    uv run dprint check
 
 [group('test container')]
 dev:
