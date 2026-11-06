@@ -15,6 +15,8 @@ from enshctl.settings import backup_child_env
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from enshctl.lifecycle.pause_gate import PauseGate
+
 BACKUP = 26
 logging.addLevelName(BACKUP, "BACKUP")
 logger = logging.getLogger(__name__)
@@ -58,18 +60,18 @@ def run_backup(request: BackupRequest | None = None, *, env: Mapping[str, str] |
             logger.log(BACKUP, _strip_child_prefix(line))
 
 
-def start_scheduler(cron_expr: str, stop_event: threading.Event) -> threading.Thread:
+def start_scheduler(cron_expr: str, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
     """Start the daemon thread that runs scheduled live backups."""
-    thread = threading.Thread(target=_scheduler_loop, args=(cron_expr, stop_event), daemon=True)
+    thread = threading.Thread(target=_scheduler_loop, args=(cron_expr, stop_event, pause_gate), daemon=True)
     thread.start()
     return thread
 
 
-def _scheduler_loop(cron_expr: str, stop_event: threading.Event) -> None:
+def _scheduler_loop(cron_expr: str, stop_event: threading.Event, pause_gate: PauseGate) -> None:
     """Run scheduled backups as subprocesses. First backup runs immediately."""
     if stop_event.is_set():
         return
-    run_backup(BackupRequest.for_trigger(Trigger.SCHEDULED))
+    _run_scheduled_backup(stop_event, pause_gate)
     while not stop_event.is_set():
         interval = parse_cron(cron_expr)
         if interval is None:
@@ -78,7 +80,18 @@ def _scheduler_loop(cron_expr: str, stop_event: threading.Event) -> None:
             break
         if stop_event.is_set():
             break
+        _run_scheduled_backup(stop_event, pause_gate)
+
+
+def _run_scheduled_backup(stop_event: threading.Event, pause_gate: PauseGate) -> None:
+    if not pause_gate.acquire(stop_event):
+        if not stop_event.is_set():
+            logger.debug("Scheduled backup skipped: quiet window held")
+        return
+    try:
         run_backup(BackupRequest.for_trigger(Trigger.SCHEDULED))
+    finally:
+        pause_gate.release()
 
 
 def _strip_child_prefix(line: str) -> str:

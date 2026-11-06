@@ -13,6 +13,7 @@ from enshctl.lifecycle.a2s import A2SProbe, UdpA2STransport
 from enshctl.lifecycle.autopause import AutoPauseController
 from enshctl.lifecycle.control import ControlFiles
 from enshctl.lifecycle.io import LifecycleIO, ProcessControl, SystemLifecycleIO, SystemProcessControl
+from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.players import PlayerReporter
 from enshctl.lifecycle.types import ExitRequest, PauseControl, ServerProcess
 from enshctl.lifecycle.wake import build_wake_source
@@ -133,6 +134,7 @@ class ServerLifecycle:
         self._request: ExitRequest | None = None
         self._stop_event = threading.Event()
         self._shutdown_event = threading.Event()
+        self._pause_gate = PauseGate()
         self._shutdown_requested = False
         self._stream_thread: threading.Thread | None = None
         self._log_thread: threading.Thread | None = None
@@ -169,19 +171,23 @@ class ServerLifecycle:
             if self._request is not None:
                 return self._finish(process_handle)
             self._presence = PresenceTracker()
-            self._reporter = PlayerReporter(self._presence, self._settings)
+            self._reporter = PlayerReporter(self._presence, self._settings, pause_gate=self._pause_gate)
             self._reporter_thread = self._reporter.start(self._stop_event)
             self._stream_thread = self._process_control.stream(process_handle, on_line=self._reporter.observe)
             if self._settings.auto_pause_enabled:
                 self._pause_control = self._build_auto_pause(self._stream_thread, self._presence)
                 self._pause_control.start(self._stop_event)
             if self._settings.backup_live:
-                self._lifecycle_io.start_scheduler(self._stop_event)
+                self._lifecycle_io.start_scheduler(self._stop_event, pause_gate=self._pause_gate)
             else:
                 logger.info("Live backups disabled")
             if self._settings.log_tail:
                 self._log_thread = self._process_control.start_log_tail(self._stop_event)
-            self._process_control.start_resource_poller(process_handle.pid, self._stop_event)
+            self._process_control.start_resource_poller(
+                process_handle.pid,
+                self._stop_event,
+                pause_gate=self._pause_gate,
+            )
             self._wait_for_exit(process_handle)
         except Exception:
             logger.exception("Server lifecycle failed")
@@ -215,6 +221,7 @@ class ServerLifecycle:
             query_endpoint=endpoint,
             a2s=a2s,
             wake_source=wake_source,
+            pause_gate=self._pause_gate,
             stream_healthy=stream_thread.is_alive,
         )
 

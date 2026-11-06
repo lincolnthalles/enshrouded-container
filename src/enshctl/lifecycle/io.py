@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from enshctl.backup_protocol import BackupRequest
+    from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.server import WineTree
     from enshctl.lifecycle.types import ServerProcess
     from enshctl.settings import AppSettings
@@ -42,7 +43,13 @@ class ProcessControl(Protocol):
 
     def start_log_tail(self, stop_event: threading.Event) -> threading.Thread: ...
 
-    def start_resource_poller(self, pid: int, stop_event: threading.Event) -> threading.Thread | None: ...
+    def start_resource_poller(
+        self,
+        pid: int,
+        stop_event: threading.Event,
+        *,
+        pause_gate: PauseGate,
+    ) -> threading.Thread | None: ...
 
 
 class LifecycleIO(Protocol):
@@ -52,7 +59,7 @@ class LifecycleIO(Protocol):
 
     def run_backup(self, request: BackupRequest) -> None: ...
 
-    def start_scheduler(self, stop_event: threading.Event) -> threading.Thread: ...
+    def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread: ...
 
     def cleanup_wine(self) -> None: ...
 
@@ -96,8 +103,19 @@ class SystemProcessControl:
     def start_log_tail(self, stop_event: threading.Event) -> threading.Thread:
         return gamelog.start_tail(stop_event)
 
-    def start_resource_poller(self, pid: int, stop_event: threading.Event) -> threading.Thread | None:
-        return resources.start_resource_poller(pid, stop_event, interval=self.settings.resource_poll_interval)
+    def start_resource_poller(
+        self,
+        pid: int,
+        stop_event: threading.Event,
+        *,
+        pause_gate: PauseGate,
+    ) -> threading.Thread | None:
+        return resources.start_resource_poller(
+            pid,
+            stop_event,
+            pause_gate=pause_gate,
+            interval=self.settings.resource_poll_interval,
+        )
 
 
 @dataclass(frozen=True)
@@ -114,8 +132,8 @@ class SystemLifecycleIO:
     def run_backup(self, request: BackupRequest) -> None:
         backup.run_backup(request)
 
-    def start_scheduler(self, stop_event: threading.Event) -> threading.Thread:
-        return backup.start_scheduler(self.settings.backup_cron, stop_event)
+    def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
+        return backup.start_scheduler(self.settings.backup_cron, stop_event, pause_gate=pause_gate)
 
     def cleanup_wine(self) -> None:
         wine.cleanup(self.settings)

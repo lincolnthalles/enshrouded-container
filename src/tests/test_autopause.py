@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, override
 from enshctl.config import QueryEndpoint
 from enshctl.lifecycle.autopause import AutoPauseController
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
+from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.saves import SaveSignature
 from enshctl.lifecycle.wake import WakeEvent
 from enshctl.presence import MAX_SESSION_MACHINES, PresenceTracker
@@ -182,6 +183,7 @@ def _controller(
     stream_healthy: Callable[[], bool] = lambda: True,
     save_probe: Callable[[Path], SaveSignature | None] | None = None,
     settings: AppSettings | None = None,
+    pause_gate: PauseGate | None = None,
 ) -> AutoPauseController:
     return AutoPauseController(
         settings=settings or _settings(),
@@ -192,6 +194,7 @@ def _controller(
         query_endpoint=QueryEndpoint("127.0.0.1", 15637),
         a2s=a2s or _A2S(0),
         wake_source=wake,
+        pause_gate=pause_gate or PauseGate(),
         stream_healthy=stream_healthy,
         clock=driver.clock,
         wall_clock=driver.wall_clock,
@@ -216,6 +219,7 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
     process = _Process()
     wake = _Wake()
     control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    gate = PauseGate()
     controller = _controller(
         tmp_path=tmp_path,
         driver=driver,
@@ -223,6 +227,7 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
         process=process,
         control=control,
         wake=wake,
+        pause_gate=gate,
     )
 
     # WHEN the controller passes the idle timeout
@@ -230,6 +235,7 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
 
     # THEN the tree is suspended and the pause marker exists
     assert process.suspended == 1
+    assert gate.is_quiet is True
     assert wake.ignored_source_endpoints[-1] == frozenset({("127.0.0.1", 50000)})
     assert control.is_paused() is True
     assert control.read_status() is not None
@@ -238,7 +244,144 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
     # AND shutdown resume is idempotent
     controller.resume_for_shutdown()
     assert process.resumed >= 1
+    assert gate.is_quiet is False
     assert control.is_paused() is False
+
+
+def test_pause_waits_for_background_work(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GIVEN a ready empty server and a held unit of background work
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    statuses: list[tuple[float, str]] = []
+    original_write_status = ControlFiles.write_status
+
+    def _record(control_files: ControlFiles, status: AutoPauseStatus) -> None:
+        statuses.append((driver.now, status.state))
+        original_write_status(control_files, status)
+
+    monkeypatch.setattr(ControlFiles, "write_status", _record)
+    gate = PauseGate()
+    assert gate.acquire(threading.Event()) is True
+    released = False
+    refusal: list[AutoPauseStatus] = []
+
+    def _finish_work() -> None:
+        nonlocal released
+        if not released and not refusal and driver.now >= 3:
+            status = control.read_status()
+            if status is not None:
+                refusal.append(status)
+        if driver.now >= 4 and not released:
+            gate.release()
+            released = True
+
+    driver.on_wait = _finish_work
+
+    # WHEN the controller passes the idle timeout while the work runs
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=control,
+                wake=_Wake(),
+                pause_gate=gate,
+            ),
+            driver,
+        )
+
+    # THEN the pause is refused until the work finishes and then proceeds without a new idle timeout
+    assert process.suspended == 1
+    assert "background work in progress" in caplog.text
+    assert refusal[0].state == "active"
+    assert refusal[0].last_error is None
+    first_pending = next(timestamp for timestamp, state in statuses if state == "pause-pending")
+    assert first_pending == 5.0
+    assert gate.is_quiet is True
+
+
+def test_manual_pause_refused_while_background_work_runs(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    for action in ("pause", "pause-force"):
+        # GIVEN a ready empty server, held background work, and a manual pause request
+        driver = _Driver(stop_at=10)
+        tracker = _tracker(driver)
+        _ready(tracker)
+        _empty_session(tracker)
+        process = _Process()
+        control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+        control.write_request(action, f"{action}-token", now=1_000.0)
+        gate = PauseGate()
+        assert gate.acquire(threading.Event()) is True
+
+        # WHEN the controller consumes the request
+        with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+            _run(
+                _controller(
+                    tmp_path=tmp_path,
+                    driver=driver,
+                    tracker=tracker,
+                    process=process,
+                    control=control,
+                    wake=_Wake(),
+                    pause_gate=gate,
+                ),
+                driver,
+            )
+
+        # THEN the pause is refused and no suspend attempt is made
+        gate.release()
+        assert process.suspended == 0
+        assert "background work in progress" in caplog.text
+        status = control.read_status()
+        assert status is not None
+        assert status.state == "active"
+        assert status.last_error is None
+        assert status.last_result == "refused"
+        caplog.clear()
+
+
+def test_aborted_pause_ends_quiet_window(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a ready empty server whose save never changes
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    gate = PauseGate()
+
+    # WHEN the pause attempt waits for save quiescence and aborts
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=ControlFiles(root=tmp_path, puid=0, pgid=0),
+                wake=_Wake(),
+                pause_gate=gate,
+                save_probe=_SaveProbe([_OLD_SAVE]),
+            ),
+            driver,
+        )
+
+    # THEN no pause occurs and the quiet window is released
+    assert process.suspended == 0
+    assert gate.is_quiet is False
+    assert "no new save within 60s" in caplog.text
 
 
 def test_status_heartbeat_continues_during_save_wait(
@@ -779,6 +922,7 @@ def test_controller_failure_resumes_tree(tmp_path: Path) -> None:
     _empty_session(tracker)
     process = _Process(suspend_error=RuntimeError("suspend failed"))
     control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    gate = PauseGate()
 
     # WHEN the controller runs
     _run(
@@ -789,12 +933,14 @@ def test_controller_failure_resumes_tree(tmp_path: Path) -> None:
             process=process,
             control=control,
             wake=_Wake(),
+            pause_gate=gate,
         ),
         driver,
     )
 
-    # THEN the controller recovers by resuming the tree
+    # THEN the controller recovers by resuming the tree and background work
     assert process.resumed >= 1
+    assert gate.is_quiet is False
     assert control.read_status() is not None
     assert control.read_status().last_error == "suspend failed"  # type: ignore[union-attr]
 
@@ -809,6 +955,7 @@ def test_failed_resume_preserves_paused_state(tmp_path: Path) -> None:
     wake = _Wake()
     wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
     control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    gate = PauseGate()
 
     # WHEN the controller runs
     _run(
@@ -819,12 +966,14 @@ def test_failed_resume_preserves_paused_state(tmp_path: Path) -> None:
             process=process,
             control=control,
             wake=wake,
+            pause_gate=gate,
         ),
         driver,
     )
 
-    # THEN the pause marker and paused state survive
+    # THEN the pause marker, paused state, and quiet window survive
     assert process.suspended == 1
+    assert gate.is_quiet is True
     assert control.is_paused() is True
     assert control.read_status() is not None
     assert control.read_status().last_error == "resume verification failed"  # type: ignore[union-attr]
@@ -843,6 +992,7 @@ def test_failed_resume_after_disable_preserves_paused_state(tmp_path: Path) -> N
     _ready(tracker)
     _empty_session(tracker)
     process = _Process(resume_result=False)
+    gate = PauseGate()
 
     # WHEN the controller runs
     _run(
@@ -853,12 +1003,14 @@ def test_failed_resume_after_disable_preserves_paused_state(tmp_path: Path) -> N
             process=process,
             control=control,
             wake=_Wake(),
+            pause_gate=gate,
         ),
         driver,
     )
 
-    # THEN the paused state and marker survive for a later resume
+    # THEN the paused state, marker, and quiet window survive for a later resume
     assert process.suspended == 1
+    assert gate.is_quiet is True
     assert control.is_paused() is True
     assert control.read_status() is not None
     assert control.read_status().state == "paused"  # type: ignore[union-attr]
@@ -986,6 +1138,7 @@ def test_stream_end_while_paused_resumes_and_latches_disabled(tmp_path: Path) ->
     _ready(tracker)
     _empty_session(tracker)
     process = _Process()
+    gate = PauseGate()
 
     # WHEN the controller runs
     _run(
@@ -997,6 +1150,7 @@ def test_stream_end_while_paused_resumes_and_latches_disabled(tmp_path: Path) ->
             control=control,
             wake=_Wake(),
             stream_healthy=lambda: healthy,
+            pause_gate=gate,
         ),
         driver,
     )
@@ -1004,6 +1158,7 @@ def test_stream_end_while_paused_resumes_and_latches_disabled(tmp_path: Path) ->
     # THEN the tree resumes, the run latch disables Auto Pause, and no marker is written
     assert process.suspended == 1
     assert process.resumed >= 1
+    assert gate.is_quiet is False
     assert control.is_disabled() is False
     assert control.read_status() is not None
     assert control.read_status().state == "disabled"  # type: ignore[union-attr]
@@ -1030,6 +1185,7 @@ def test_request_during_save_wait_aborts_pause(tmp_path: Path) -> None:
     _empty_session(tracker)
     process = _Process()
     control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    gate = PauseGate()
 
     # WHEN the controller runs
     _run(
@@ -1040,12 +1196,14 @@ def test_request_during_save_wait_aborts_pause(tmp_path: Path) -> None:
             process=process,
             control=control,
             wake=_Wake(),
+            pause_gate=gate,
             save_probe=_RequestSaveProbe(control),
         ),
         driver,
     )
 
-    # THEN the pause aborts and the request is consumed
+    # THEN the pause aborts, the request is consumed, and the quiet window ends
     assert process.suspended == 0
+    assert gate.is_quiet is False
     assert control.read_status() is not None
     assert control.read_status().last_result == "applied"  # type: ignore[union-attr]

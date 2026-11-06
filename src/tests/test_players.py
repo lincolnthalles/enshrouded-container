@@ -2,8 +2,9 @@
 
 import threading
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
+from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.players import PlayerReporter
 from enshctl.presence import Player, PresenceEvent, PresenceSnapshot, PresenceTracker
 from enshctl.settings import AppSettings
@@ -30,16 +31,17 @@ class _FakeClock:
 
 
 class _FakeStopEvent:
-    def __init__(self) -> None:
+    def __init__(self, waits: int = 2) -> None:
         self._waits = 0
+        self._limit = waits
 
     def is_set(self) -> bool:
-        return self._waits >= 2
+        return self._waits >= self._limit
 
     def wait(self, timeout: float) -> bool:
         _ = timeout
         self._waits += 1
-        return self._waits >= 2
+        return self._waits >= self._limit
 
 
 class _BlockingTracker:
@@ -67,7 +69,7 @@ def test_reporter_logs_join_with_handle_and_leave_with_name(caplog: pytest.LogCa
     # GIVEN a reporter with roster output enabled
     clock = _FakeClock()
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=clock)
+    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=clock, pause_gate=PauseGate())
 
     # WHEN the player joins, is named, and leaves
     with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
@@ -85,7 +87,7 @@ def test_reporter_logs_join_with_handle_and_leave_with_name(caplog: pytest.LogCa
 def test_summary_lists_names_in_first_add_order(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN two named players
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock())
+    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock(), pause_gate=PauseGate())
     reporter.observe(_ADD.format(handle="0(2)"))
     reporter.observe(_ADD.format(handle="0(10)"))
     reporter.observe(_NAME.format(name="Alice"))
@@ -102,7 +104,7 @@ def test_summary_lists_names_in_first_add_order(caplog: pytest.LogCaptureFixture
 def test_summary_uses_handles_for_unnamed_players(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN one unnamed player
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock())
+    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock(), pause_gate=PauseGate())
     reporter.observe(_ADD.format(handle="0(0)"))
 
     # WHEN a summary is logged
@@ -116,7 +118,7 @@ def test_summary_uses_handles_for_unnamed_players(caplog: pytest.LogCaptureFixtu
 def test_empty_summary(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN an empty roster
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock())
+    reporter = PlayerReporter(tracker, _settings(player_poll_interval=0), clock=_FakeClock(), pause_gate=PauseGate())
 
     # WHEN a summary is logged
     with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
@@ -130,7 +132,9 @@ def test_output_disabled_suppresses_roster_but_keeps_tracking(caplog: pytest.Log
     # GIVEN a reporter with roster output disabled
     clock = _FakeClock()
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_log=False, player_poll_interval=60), clock=clock)
+    reporter = PlayerReporter(
+        tracker, _settings(player_log=False, player_poll_interval=60), clock=clock, pause_gate=PauseGate()
+    )
 
     # WHEN a player joins and is named
     with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
@@ -155,7 +159,9 @@ def test_output_disabled_suppresses_roster_but_keeps_tracking(caplog: pytest.Log
 def test_warnings_survive_output_suppression(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN roster output disabled
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_log=False, player_poll_interval=60), clock=_FakeClock())
+    reporter = PlayerReporter(
+        tracker, _settings(player_log=False, player_poll_interval=60), clock=_FakeClock(), pause_gate=PauseGate()
+    )
 
     # WHEN the handle cap is exceeded
     with caplog.at_level("WARNING", logger="enshctl.lifecycle.players"):
@@ -174,6 +180,7 @@ def test_disabled_auto_pause_does_not_log_session_policy(caplog: pytest.LogCaptu
         tracker,
         _settings(player_log=True, player_poll_interval=60, auto_pause_enabled=False),
         clock=_FakeClock(),
+        pause_gate=PauseGate(),
     )
 
     # WHEN the block excludes m#0
@@ -191,7 +198,7 @@ def test_summary_expires_unnamed_handle_with_warning(caplog: pytest.LogCaptureFi
     # GIVEN an unnamed handle added at time zero
     clock = _FakeClock()
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_poll_interval=60), clock=clock)
+    reporter = PlayerReporter(tracker, _settings(player_poll_interval=60), clock=clock, pause_gate=PauseGate())
     reporter.observe(_ADD.format(handle="0(0)"))
 
     # WHEN the summary runs after the grace period
@@ -209,7 +216,11 @@ def test_summary_expires_unnamed_handle_with_warning(caplog: pytest.LogCaptureFi
 def test_observe_and_summary_are_serialized() -> None:
     # GIVEN a reporter with observation blocked inside the tracker
     blocker = _BlockingTracker()
-    reporter = PlayerReporter(cast("PresenceTracker", blocker), _settings(player_log=True, player_poll_interval=60))
+    reporter = PlayerReporter(
+        cast("PresenceTracker", blocker),
+        _settings(player_log=True, player_poll_interval=60),
+        pause_gate=PauseGate(),
+    )
     observe_thread = threading.Thread(target=lambda: reporter.observe("line"))
     observe_thread.start()
     assert blocker.observe_entered.wait(timeout=1)
@@ -239,8 +250,16 @@ def test_start_returns_none_when_output_or_interval_is_disabled() -> None:
     stop = threading.Event()
 
     # WHEN starting each reporter
-    disabled = PlayerReporter(tracker, _settings(player_log=False, player_poll_interval=60))
-    zero_interval = PlayerReporter(tracker, _settings(player_log=True, player_poll_interval=0))
+    disabled = PlayerReporter(
+        tracker,
+        _settings(player_log=False, player_poll_interval=60),
+        pause_gate=PauseGate(),
+    )
+    zero_interval = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=0),
+        pause_gate=PauseGate(),
+    )
 
     # THEN neither starts a thread
     assert disabled.start(stop) is None
@@ -250,7 +269,11 @@ def test_start_returns_none_when_output_or_interval_is_disabled() -> None:
 def test_start_returns_running_thread_when_enabled() -> None:
     # GIVEN roster output and a summary interval
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_log=True, player_poll_interval=60))
+    reporter = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=60),
+        pause_gate=PauseGate(),
+    )
     stop = threading.Event()
 
     # WHEN the reporter starts
@@ -266,7 +289,9 @@ def test_start_returns_running_thread_when_enabled() -> None:
 def test_summary_thread_logs_once_per_interval(caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN a reporter with a one-second interval and a stop event that advances deterministically
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_log=True, player_poll_interval=1), clock=_FakeClock())
+    reporter = PlayerReporter(
+        tracker, _settings(player_log=True, player_poll_interval=1), clock=_FakeClock(), pause_gate=PauseGate()
+    )
     stop = _FakeStopEvent()
 
     # WHEN the summary thread runs
@@ -280,10 +305,70 @@ def test_summary_thread_logs_once_per_interval(caplog: pytest.LogCaptureFixture)
     assert caplog.text.count("Players online: 0") == 1
 
 
+def test_summary_skips_quiet_window(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a reporter with a held Auto Pause quiet window
+    tracker = PresenceTracker()
+    gate = PauseGate()
+    assert gate.try_quiet() is True
+    reporter = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=1),
+        clock=_FakeClock(),
+        pause_gate=gate,
+    )
+    stop = _FakeStopEvent()
+
+    # WHEN the summary thread runs
+    with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
+        thread = reporter.start(cast("threading.Event", stop))
+        assert thread is not None
+        thread.join(timeout=1)
+
+    # THEN no summary is logged
+    assert "Players online: 0" not in caplog.text
+
+
+class _ResumeAfterDenialGate(PauseGate):
+    @override
+    def acquire(self, stop_event: threading.Event) -> bool:
+        admitted = super().acquire(stop_event)
+        if not admitted and self.is_quiet:
+            self.resume()
+        return admitted
+
+
+def test_summary_resumes_after_quiet_window(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a held quiet window that ends after the first summary is denied
+    tracker = PresenceTracker()
+    gate = _ResumeAfterDenialGate()
+    assert gate.try_quiet() is True
+    reporter = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=1),
+        clock=_FakeClock(),
+        pause_gate=gate,
+    )
+    stop = _FakeStopEvent(waits=3)
+
+    # WHEN the summary thread runs past the window
+    with caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
+        thread = reporter.start(cast("threading.Event", stop))
+        assert thread is not None
+        thread.join(timeout=1)
+
+    # THEN the next summary due after the window ends is logged
+    assert thread.is_alive() is False
+    assert caplog.text.count("Players online: 0") == 1
+
+
 def test_large_interval_does_not_overflow_the_wait() -> None:
     # GIVEN an extremely large summary interval
     tracker = PresenceTracker()
-    reporter = PlayerReporter(tracker, _settings(player_log=True, player_poll_interval=10**400))
+    reporter = PlayerReporter(
+        tracker,
+        _settings(player_log=True, player_poll_interval=10**400),
+        pause_gate=PauseGate(),
+    )
     stop = threading.Event()
 
     # WHEN the reporter starts and stops

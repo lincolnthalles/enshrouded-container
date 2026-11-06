@@ -360,6 +360,53 @@ marker. A shutdown latch SHALL prevent a new pause from starting or completing.
 - **THEN** the pause SHALL abort
 - **AND** no `paused` marker SHALL be written
 
+### Requirement: Quiet window
+
+A pause SHALL hold a quiet window that starts only when no non-essential background work is in
+flight and lasts until the tree resumes or the attempt aborts. Scheduled live Backups (see
+`backup-system`), resource polling (see `resource-monitoring`), and periodic Player Presence
+summaries (see `player-presence`) are non-essential and SHALL NOT start while the window is held.
+
+When a pause is eligible while that work is in flight, the attempt SHALL be refused with a
+throttled `Auto Pause: cannot pause: background work in progress` warning. A later attempt SHALL
+proceed after the work finishes, while the server is still idle, without waiting for the idle
+timeout to elapse again and without resetting the idle timer. The refusal SHALL leave `state`
+unchanged and SHALL set no `last_error`.
+
+An attempt that aborts before suspension SHALL end the window. A manual pause, including
+`pause --force`, SHALL be refused under the same condition.
+
+#### Scenario: In-flight work delays a pause
+
+- **WHEN** an automatic pause is eligible while non-essential work is in flight
+- **THEN** the tree SHALL remain running
+- **AND** `status.json` SHALL remain in the `active` state with no `last_error`
+- **AND** a throttled `Auto Pause: cannot pause: background work in progress` warning SHALL be
+  logged
+- **AND** the pause SHALL proceed after the work finishes, while the server is still idle,
+  without a new idle timeout
+
+#### Scenario: New work does not start in the quiet window
+
+- **WHEN** a quiet window is held and a scheduled backup, resource poll, or periodic summary becomes
+  due
+- **THEN** that work SHALL NOT start
+- **AND** the tree SHALL NOT be suspended with the work in flight
+
+#### Scenario: Manual pause is refused while background work runs
+
+- **WHEN** the operator requests `autopause pause` or `autopause pause --force` while non-essential
+  work is in flight
+- **THEN** no pause SHALL occur
+- **AND** the command SHALL report a refusal
+
+#### Scenario: Aborted attempt ends the quiet window
+
+- **WHEN** a quiet window ends because the attempt aborts before suspension, such as when no new
+  save appears
+- **THEN** the non-essential work described in `backup-system`, `resource-monitoring`, and
+  `player-presence` SHALL continue normally
+
 ### Requirement: Wake source
 
 While paused, Auto Pause SHALL resume on accepted wake traffic or a resume request. Default wake
@@ -408,9 +455,9 @@ packet in that window is retained. Outgoing probe traffic SHALL be ignored.
 
 `autopause pause` SHALL use the same gate and SHALL refuse when a player is online. `pause --force`
 SHALL bypass pending-join, handle, Session-table, and A2S vetoes only; enabled state, no `disabled`
-marker, world-ready marker, healthy stdout stream, non-degraded tracker, save gate, wake source, and
-clear stop latch SHALL still apply. The command SHALL warn that a forced pause can freeze connected
-players.
+marker, world-ready marker, healthy stdout stream, non-degraded tracker, no non-essential background
+work in flight, save gate, wake source, and clear stop latch SHALL still apply. The command SHALL
+warn that a forced pause can freeze connected players.
 
 #### Scenario: Manual pause refuses a player
 
@@ -423,7 +470,8 @@ players.
 - **WHEN** a player is online and the operator runs `autopause pause --force`
 - **THEN** the presence vetoes SHALL be bypassed
 - **AND** enabled state, no `disabled` marker, world-ready marker, healthy stream, non-degraded
-  tracker, save gate, wake source, and clear stop latch SHALL still be required
+  tracker, no non-essential background work in flight, save gate, wake source, and clear stop
+  latch SHALL still be required
 - **AND** the command SHALL warn that connected players may be frozen
 
 ### Requirement: Reset and resume

@@ -166,6 +166,11 @@ Steam server browser; direct-IP joining wakes it through the query port. Resume 
 about 10 seconds. The pause waits for an observed autosave; a force-kill while paused can lose up
 to one autosave interval.
 
+While Auto Pause is preparing to pause or has the server paused, scheduled live backups, resource
+polling, and periodic roster summaries are suspended. A pause attempt is refused while non-essential
+background work is running and is reattempted when it finishes; ticks skipped during the pause are
+not replayed after wake.
+
 ### Enshrouded Server config (any `ENSHROUDED_*` prefix)
 
 See [Environment Variable Config Reference](./docs/env-config-reference.md) for a full list of `ENSHROUDED_*` environment variables.

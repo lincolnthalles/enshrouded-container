@@ -146,7 +146,9 @@ lines SHALL NOT be treated as player handles. Duplicate adds SHALL be idempotent
 The container SHALL log `Player joined: <name-or-handle>` when a handle is first added and
 `Player left: <name-or-handle>` when `Player removed` deletes a handle. Join and leave lines SHALL
 be logged before the next roster summary. It SHALL log `Players online: <count> - <names>` or
-`Players online: 0` every `PLAYER_POLL_INTERVAL` seconds. Summaries SHALL list players in order of
+`Players online: 0` every `PLAYER_POLL_INTERVAL` seconds. While Auto Pause holds a quiet window (see
+`auto-pause`), scheduled summaries SHALL NOT be emitted. The summary cadence SHALL continue; the
+next summary due after the window ends SHALL be logged. Summaries SHALL list players in order of
 first add and SHALL use the handle for unnamed players.
 
 #### Scenario: Join and leave line format
@@ -170,6 +172,12 @@ first add and SHALL use the handle for unnamed players.
 
 - **WHEN** no players are online at a summary tick
 - **THEN** the summary is `Players online: 0`
+
+#### Scenario: Summary suspends in the quiet window
+
+- **WHEN** Auto Pause holds a quiet window and a summary interval elapses
+- **THEN** no `Players online` line SHALL be logged
+- **AND** the next summary due after the window ends SHALL be logged
 
 #### Scenario: Default interval
 

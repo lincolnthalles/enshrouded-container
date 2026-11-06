@@ -133,6 +133,11 @@ _Avoid_: Player timeout, Empty time
 Suspending the whole Wine tree after the idle timeout and resuming it on client traffic.
 _Avoid_: Sleep, Hibernate, Shutdown
 
+**Quiet window**:
+Interval when Auto Pause blocks scheduled live Backups and non-essential background loops so the
+tree can be suspended without work in flight.
+_Avoid_: Pause attempt, Exclusion
+
 **Wake traffic**:
 Inbound UDP traffic to the query port that resumes a paused server.
 _Avoid_: Wake packet, Query packet

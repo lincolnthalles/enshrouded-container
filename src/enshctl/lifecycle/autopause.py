@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from enshctl.config import QueryEndpoint
+    from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.wake import WakeSource
     from enshctl.presence import PresenceSnapshot, PresenceTracker
     from enshctl.settings import AppSettings
@@ -65,6 +66,7 @@ class AutoPauseController:
         query_endpoint: QueryEndpoint | None,
         a2s: _A2SProbe | None,
         wake_source: WakeSource,
+        pause_gate: PauseGate,
         stream_healthy: Callable[[], bool],
         clock: Callable[[], float] = monotonic,
         wall_clock: Callable[[], float] = time.time,
@@ -80,6 +82,7 @@ class AutoPauseController:
         self._query_endpoint = query_endpoint
         self._a2s = a2s
         self._wake_source = wake_source
+        self._pause_gate = pause_gate
         self._stream_healthy = stream_healthy
         self._clock = clock
         self._wall_clock = wall_clock
@@ -137,6 +140,7 @@ class AutoPauseController:
                     logger.error("Auto Pause shutdown resume failed; preserving the paused marker")
                     self._write_status(force=True)
                     return
+                self._pause_gate.resume()
                 if not self._control_files.clear_paused():
                     self._last_error = "could not remove paused marker"
                     logger.error("Auto Pause: could not remove the paused marker during shutdown")
@@ -155,14 +159,18 @@ class AutoPauseController:
             logger.exception("Auto Pause controller failed")
             try:
                 if self._process_control.resume_all():
+                    self._pause_gate.resume()
                     self._control_files.clear_paused()
                     self._state = DISABLED
                 elif was_paused:
                     self._state = PAUSED
                     logger.exception("Auto Pause failure recovery could not resume the Wine tree")
                 else:
+                    self._pause_gate.resume()
                     self._state = DISABLED
             except Exception:
+                if not was_paused:
+                    self._pause_gate.resume()
                 self._state = PAUSED if was_paused else DISABLED
                 logger.exception("Auto Pause failure recovery could not resume the Wine tree")
             self._write_status(force=True)
@@ -309,53 +317,63 @@ class AutoPauseController:
             self._a2s_state = "unavailable"
             self._log_veto("query endpoint unavailable")
             return False
-        self._save_activity_generation = self._tracker.snapshot().activity_generation
-        if not force and not self._probe_a2s():
-            return False
-        self._state = PAUSE_PENDING
-        self._write_status(force=True)
-        if not self._wait_for_save(force=force):
-            self._state = DISABLED if self._control_files.is_disabled() else ACTIVE
-            self._write_status(force=True)
-            return False
-        if not self._wake_source.arm():
-            self._log_veto("wake source unavailable")
-            self._state = ACTIVE
-            self._write_status(force=True)
+        if not self._pause_gate.try_quiet():
+            self._log_veto("background work in progress")
             return False
         try:
+            self._save_activity_generation = self._tracker.snapshot().activity_generation
             if not force and not self._probe_a2s():
                 return False
-            if not self._save_still_quiescent():
-                self._log_veto("save changed before suspension")
-                return False
-            with self._lock:
-                if self._stop_event.is_set() or self._latch.is_set() or self._control_files.is_disabled():
-                    return False
-                if not self._stream_healthy() or self._tracker.snapshot().degraded:
-                    return False
-                if not force and self._veto_reason(force=False) is not None:
-                    return False
-                if not force and self._tracker.snapshot().activity_generation != self._save_activity_generation:
-                    self._log_veto("player activity during save wait")
-                    return False
-                if not self._process_control.suspend_all():
-                    self._last_error = "suspend verification failed"
-                    self._transition(ACTIVE)
-                    return False
-                self._control_files.set_paused()
-                self._state = PAUSED
-                self._paused_since = self._wall_clock()
-                self._last_activity_at = self._clock()
-                logger.info("Auto Pause: paused the Wine tree")
+            self._state = PAUSE_PENDING
+            self._write_status(force=True)
+            if not self._wait_for_save(force=force):
+                self._state = DISABLED if self._control_files.is_disabled() else ACTIVE
                 self._write_status(force=True)
-                return True
+                return False
+            if not self._wake_source.arm():
+                self._log_veto("wake source unavailable")
+                self._state = ACTIVE
+                self._write_status(force=True)
+                return False
+            try:
+                if not force and not self._probe_a2s():
+                    return False
+                if not self._save_still_quiescent():
+                    self._log_veto("save changed before suspension")
+                    return False
+                return self._suspend_tree(force=force)
+            finally:
+                if self._state != PAUSED:
+                    self._wake_source.close()
+                    if self._state == PAUSE_PENDING:
+                        self._state = DISABLED if self._control_files.is_disabled() else ACTIVE
+                        self._write_status(force=True)
         finally:
             if self._state != PAUSED:
-                self._wake_source.close()
-                if self._state == PAUSE_PENDING:
-                    self._state = DISABLED if self._control_files.is_disabled() else ACTIVE
-                    self._write_status(force=True)
+                self._pause_gate.resume()
+
+    def _suspend_tree(self, *, force: bool) -> bool:
+        with self._lock:
+            if self._stop_event.is_set() or self._latch.is_set() or self._control_files.is_disabled():
+                return False
+            if not self._stream_healthy() or self._tracker.snapshot().degraded:
+                return False
+            if not force and self._veto_reason(force=False) is not None:
+                return False
+            if not force and self._tracker.snapshot().activity_generation != self._save_activity_generation:
+                self._log_veto("player activity during save wait")
+                return False
+            if not self._process_control.suspend_all():
+                self._last_error = "suspend verification failed"
+                self._transition(ACTIVE)
+                return False
+            self._state = PAUSED
+            self._control_files.set_paused()
+            self._paused_since = self._wall_clock()
+            self._last_activity_at = self._clock()
+            logger.info("Auto Pause: paused the Wine tree")
+            self._write_status(force=True)
+            return True
 
     def _resume(self, reason: str) -> bool:
         with self._lock:
@@ -365,6 +383,7 @@ class AutoPauseController:
                 logger.error("Auto Pause: resume failed (%s); preserving the paused state", reason)
                 self._write_status(force=True)
                 return False
+            self._pause_gate.resume()
             self._wake_source.close()
             if not self._control_files.clear_paused():
                 self._last_error = "could not remove paused marker"

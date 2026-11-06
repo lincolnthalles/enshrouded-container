@@ -10,6 +10,7 @@ from enshctl.presence import PlayerJoined, PlayerLeft, PresenceWarning
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.presence import PresenceEvent, PresenceTracker
     from enshctl.settings import AppSettings
 
@@ -26,10 +27,12 @@ class PlayerReporter:
         tracker: PresenceTracker,
         settings: AppSettings,
         *,
+        pause_gate: PauseGate,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._tracker = tracker
         self._settings = settings
+        self._pause_gate = pause_gate
         self._clock = clock or monotonic
         self._lock = threading.Lock()
 
@@ -70,7 +73,11 @@ class PlayerReporter:
                 return
             remaining -= chunk
             if remaining <= 0:
-                self.log_summary()
+                if self._pause_gate.acquire(stop_event):
+                    try:
+                        self.log_summary()
+                    finally:
+                        self._pause_gate.release()
                 remaining = interval
 
     def _emit(self, events: tuple[PresenceEvent, ...]) -> None:

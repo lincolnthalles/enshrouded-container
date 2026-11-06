@@ -24,6 +24,9 @@ resident memory and a Steam reconnect after resume.
 - A paused server may disappear from the Steam browser; direct-IP join is the supported wake path.
 - Resume has a Steam reconnect cost of about 10 seconds.
 - A force-kill while paused can lose up to one autosave interval; rotating saves mitigate this.
+- Scheduled live backups, resource polling, and periodic roster summaries pause with the tree. A
+  pause attempt is refused while non-essential background work runs, so the tree is not suspended
+  mid-work.
 - `AF_PACKET` needs `CAP_NET_RAW`; the queue fallback sees all traffic and cannot honor
   `ignore-a2s`.
 - Shutdown must `SIGCONT` every stopped process before `SIGINT`, including when the wrapper or game

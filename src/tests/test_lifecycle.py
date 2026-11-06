@@ -8,8 +8,10 @@ from typing import IO, TYPE_CHECKING
 from unittest.mock import patch
 
 from enshctl.backup_protocol import BackupRequest, Trigger
+from enshctl.config import SaveDirectories
 from enshctl.lifecycle import runtime
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
+from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.runtime import ServerLifecycle, exit_server
 from enshctl.lifecycle.types import ExitRequest, ServerProcess
 from enshctl.settings import AppSettings
@@ -71,6 +73,7 @@ class FakeProcessControl:
         self.stream_line: str | None = None
         self.resume_calls = 0
         self.suspend_calls = 0
+        self.resource_gate: PauseGate | None = None
 
     def start(self) -> ServerProcess:
         self.started = True
@@ -126,8 +129,15 @@ class FakeProcessControl:
         thread.start()
         return thread
 
-    def start_resource_poller(self, pid: int, stop_event: threading.Event) -> None:
+    def start_resource_poller(
+        self,
+        pid: int,
+        stop_event: threading.Event,
+        *,
+        pause_gate: PauseGate,
+    ) -> None:
         del pid, stop_event
+        self.resource_gate = pause_gate
         self.events.append("resource_poller")
 
 
@@ -165,6 +175,7 @@ class FakeLifecycleIO:
         self.write_error: Exception | None = None
         self.cleanup_error: Exception | None = None
         self.clear_error: Exception | None = None
+        self.scheduler_gate: PauseGate | None = None
 
     def backup_needed(self) -> bool:
         return self.backup_required
@@ -173,8 +184,9 @@ class FakeLifecycleIO:
         self.backups.append(request)
         self.events.append(("backup", request))
 
-    def start_scheduler(self, stop_event: threading.Event) -> threading.Thread:
+    def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
         del stop_event
+        self.scheduler_gate = pause_gate
         self.events.append("scheduler")
         thread = threading.Thread(target=lambda: None)
         thread.start()
@@ -307,6 +319,50 @@ def test_lifecycle_starts_auto_pause_and_resumes_on_exit() -> None:
     assert "pause_start" in events
     assert "pause_stop" in events
     assert "pause_resume" in events
+
+
+def test_lifecycle_shares_one_pause_gate(tmp_path: Path) -> None:
+    # GIVEN a lifecycle with Auto Pause and live backups enabled
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    settings = _settings(auto_pause_enabled=True, backup_live=True, backup_cold=False, backup_emergency=False)
+    captured: dict[str, object] = {}
+
+    class _CapturedAutoPause(FakeAutoPause):
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+            super().__init__(events)
+
+    class _CapturedReporter:
+        def __init__(self, tracker: object, settings: object, *, pause_gate: PauseGate) -> None:
+            del tracker, settings
+            captured["reporter_gate"] = pause_gate
+
+        def start(self, stop_event: threading.Event) -> None:
+            del stop_event
+
+        def observe(self, line: str) -> None:
+            del line
+
+    # WHEN the lifecycle runs
+    with (
+        patch.object(runtime.signal, "signal"),
+        patch.object(runtime, "AutoPauseController", _CapturedAutoPause),
+        patch.object(runtime, "PlayerReporter", _CapturedReporter),
+        patch.object(runtime.config, "generated_query_endpoint", return_value=None),
+        patch.object(runtime.config, "generated_save_directories", return_value=SaveDirectories(tmp_path)),
+    ):
+        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+
+    # THEN the controller, reporter, scheduler, and resource poller share one gate
+    gate = captured["pause_gate"]
+    assert code == 0
+    assert isinstance(gate, PauseGate)
+    assert captured["reporter_gate"] is gate
+    assert control.resource_gate is gate
+    assert io.scheduler_gate is gate
 
 
 def test_lifecycle_startup_clears_transient_auto_pause_state(tmp_path: Path) -> None:

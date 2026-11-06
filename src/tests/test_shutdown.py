@@ -1,11 +1,43 @@
 """Tests for scheduled backups and the parent-side backup spawner."""
 
 import threading
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 from enshctl.backup.category import Category
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.lifecycle import backup as lifecycle_backup
+from enshctl.lifecycle.pause_gate import PauseGate
+
+
+class _StopAfterFirstWait:
+    def __init__(self) -> None:
+        self._waits = 0
+
+    def is_set(self) -> bool:
+        return self._waits >= 1
+
+    def wait(self, timeout: float) -> bool:
+        del timeout
+        self._waits += 1
+        return True
+
+
+class _ResumeGateOnWait:
+    def __init__(self, gate: PauseGate) -> None:
+        self._gate = gate
+        self._waits = 0
+
+    def is_set(self) -> bool:
+        return self._waits >= 2
+
+    def wait(self, timeout: float) -> bool:
+        del timeout
+        self._waits += 1
+        if self._waits == 1:
+            self._gate.resume()
+            return False
+        return True
 
 
 def test_scheduler_runs_scheduled_trigger_and_stops() -> None:
@@ -19,7 +51,7 @@ def test_scheduler_runs_scheduled_trigger_and_stops() -> None:
 
     # WHEN the scheduler runs
     with patch.object(lifecycle_backup, "run_backup", side_effect=_record):
-        thread = lifecycle_backup.start_scheduler("*/60 * * * *", stop)
+        thread = lifecycle_backup.start_scheduler("*/60 * * * *", stop, pause_gate=PauseGate())
         thread.join(timeout=1)
 
     # THEN the immediate backup uses the scheduled trigger and the loop exits
@@ -33,11 +65,59 @@ def test_scheduler_skips_immediate_backup_when_stopped() -> None:
 
     # WHEN the scheduler starts
     with patch.object(lifecycle_backup, "run_backup") as mock_run:
-        thread = lifecycle_backup.start_scheduler("*/60 * * * *", stop)
+        thread = lifecycle_backup.start_scheduler("*/60 * * * *", stop, pause_gate=PauseGate())
         thread.join(timeout=1)
 
     # THEN no backup runs after shutdown began
     mock_run.assert_not_called()
+
+
+def test_scheduler_skips_backup_while_quiet_window_is_held() -> None:
+    # GIVEN a held Auto Pause quiet window
+    stop = _StopAfterFirstWait()
+    gate = PauseGate()
+    assert gate.try_quiet() is True
+    calls: list[BackupRequest] = []
+
+    def _record(request: BackupRequest | None = None) -> None:
+        calls.append(request or BackupRequest())
+
+    # WHEN the scheduler runs a tick
+    with patch.object(lifecycle_backup, "run_backup", side_effect=_record):
+        thread = lifecycle_backup.start_scheduler(
+            "*/60 * * * *",
+            cast("threading.Event", stop),
+            pause_gate=gate,
+        )
+        thread.join(timeout=1)
+
+    # THEN no backup runs and the scheduler thread exits
+    assert calls == []
+    assert thread.is_alive() is False
+
+
+def test_scheduler_runs_next_tick_after_quiet_window_ends() -> None:
+    # GIVEN a held quiet window that ends before the next scheduled tick
+    gate = PauseGate()
+    assert gate.try_quiet() is True
+    stop = _ResumeGateOnWait(gate)
+    calls: list[BackupRequest] = []
+
+    def _record(request: BackupRequest | None = None) -> None:
+        calls.append(request or BackupRequest())
+
+    # WHEN the scheduler runs past the quiet window
+    with patch.object(lifecycle_backup, "run_backup", side_effect=_record):
+        thread = lifecycle_backup.start_scheduler(
+            "*/60 * * * *",
+            cast("threading.Event", stop),
+            pause_gate=gate,
+        )
+        thread.join(timeout=1)
+
+    # THEN only the post-window tick runs, with no catch-up for the skipped tick
+    assert calls == [BackupRequest.for_trigger(Trigger.SCHEDULED)]
+    assert thread.is_alive() is False
 
 
 def test_run_backup_forwards_settings_env() -> None:

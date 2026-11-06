@@ -6,7 +6,7 @@ Scheduled, shutdown-triggered, and crash-triggered backups of the saves director
 
 ### Requirement: Scheduled live backups
 
-The container SHALL run periodic Backups of the saves directory (see `save-management`) in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup.
+The container SHALL run periodic Backups of the saves directory (see `save-management`) in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup. While Auto Pause holds a quiet window (see `auto-pause`), a scheduled tick SHALL be skipped. Skipped ticks SHALL NOT create a backlog or move the next tick; the schedule SHALL keep its cadence after resume. Manual Backups SHALL remain available while the server is suspended.
 
 #### Scenario: Default backup schedule
 
@@ -27,6 +27,18 @@ The container SHALL run periodic Backups of the saves directory (see `save-manag
 
 - **WHEN** a scheduled backup triggers with the saves directory missing or empty
 - **THEN** that backup SHALL be skipped and the scheduler SHALL continue
+
+#### Scenario: Quiet window skips scheduled backup
+
+- **WHEN** a scheduled tick arrives while Auto Pause holds a quiet window
+- **THEN** no Backup SHALL be created for that tick
+- **AND** no catch-up Backup SHALL run when the window ends
+- **AND** the next tick SHALL keep the configured cadence
+
+#### Scenario: Manual backup runs while paused
+
+- **WHEN** the operator runs `enshctl backup` while the server is suspended
+- **THEN** a live Backup SHALL be created
 
 #### Scenario: Shutdown stops scheduler
 

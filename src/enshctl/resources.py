@@ -4,8 +4,12 @@ import logging
 import threading
 from os import getpid, sysconf, sysconf_names
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from enshctl.utils import human_size
+
+if TYPE_CHECKING:
+    from enshctl.lifecycle.pause_gate import PauseGate
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +62,34 @@ def read_system_cpu_ticks() -> int:
         return 0
 
 
-def _resource_poller(server_pid: int, interval: int, stop_event: threading.Event) -> None:
+def _read_baselines(
+    server_pid: int,
+    enshctl_pid: int,
+    pause_gate: PauseGate,
+    stop_event: threading.Event,
+) -> tuple[int, int, int] | None:
+    """Read starting CPU counters while admitted, or return None when stopping."""
+    while not pause_gate.acquire(stop_event):
+        if stop_event.is_set() or not pause_gate.wait_until_running(stop_event):
+            return None
+    try:
+        return (
+            read_pid_cpu_ticks(enshctl_pid),
+            read_system_cpu_ticks(),
+            sum(read_pid_cpu_ticks(p) for p in [server_pid, *get_all_child_pids(server_pid)]),
+        )
+    finally:
+        pause_gate.release()
+
+
+def _resource_poller(
+    server_pid: int,
+    interval: int,
+    stop_event: threading.Event,
+    pause_gate: PauseGate,
+) -> None:
     """Thread target: periodically log CPU/MEM of enshctl and the game server."""
     enshctl_pid = getpid()
-    prev_enshctl_ticks = read_pid_cpu_ticks(enshctl_pid)
-    prev_sys_ticks = read_system_cpu_ticks()
-    prev_server_ticks = 0
 
     logger.info(
         "Resource polling every %ds (enshctl PID=%d, server wrapper PID=%d)",
@@ -72,7 +98,24 @@ def _resource_poller(server_pid: int, interval: int, stop_event: threading.Event
         server_pid,
     )
 
+    baselines = _read_baselines(server_pid, enshctl_pid, pause_gate, stop_event)
+    if baselines is None:
+        return
+    prev_enshctl_ticks, prev_sys_ticks, prev_server_ticks = baselines
+
     while not stop_event.wait(interval):
+        if not pause_gate.acquire(stop_event):
+            if stop_event.is_set():
+                break
+            logger.info("Resource polling suspended by Auto Pause")
+            if not pause_gate.wait_until_running(stop_event) or stop_event.is_set():
+                break
+            logger.info("Resource polling resumed")
+            baselines = _read_baselines(server_pid, enshctl_pid, pause_gate, stop_event)
+            if baselines is None:
+                break
+            prev_enshctl_ticks, prev_sys_ticks, prev_server_ticks = baselines
+            continue
         try:
             server_pids = [server_pid, *get_all_child_pids(server_pid)]
             cur_server_ticks = sum(read_pid_cpu_ticks(p) for p in server_pids)
@@ -105,11 +148,15 @@ def _resource_poller(server_pid: int, interval: int, stop_event: threading.Event
             prev_sys_ticks = cur_sys_ticks
         except OSError:
             break
+        finally:
+            pause_gate.release()
 
 
 def start_resource_poller(
     server_pid: int,
     stop_event: threading.Event,
+    *,
+    pause_gate: PauseGate,
     interval: int = 60,
 ) -> threading.Thread | None:
     """Spawn a daemon thread that logs CPU/memory usage periodically.
@@ -121,7 +168,7 @@ def start_resource_poller(
         return None
     thread = threading.Thread(
         target=_resource_poller,
-        args=(server_pid, interval, stop_event),
+        args=(server_pid, interval, stop_event, pause_gate),
         daemon=True,
     )
     thread.start()
