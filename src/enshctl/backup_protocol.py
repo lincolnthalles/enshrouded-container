@@ -18,6 +18,7 @@ class Trigger(StrEnum):
 
     SCHEDULED = "scheduled"
     SHUTDOWN = "shutdown"
+    UPDATE = "update"
     CRASH = "crash"
     MANUAL = "manual"
 
@@ -25,6 +26,7 @@ class Trigger(StrEnum):
 _TRIGGER_CATEGORIES = {
     Trigger.SCHEDULED: Category.LIVE,
     Trigger.SHUTDOWN: Category.COLD,
+    Trigger.UPDATE: Category.COLD,
     Trigger.CRASH: Category.EMERGENCY,
 }
 
@@ -51,7 +53,7 @@ class BackupRequest:
         return cls(
             category=category,
             wait_seconds=wait_seconds,
-            detach=trigger in (Trigger.SHUTDOWN, Trigger.CRASH),
+            detach=trigger in (Trigger.SHUTDOWN, Trigger.UPDATE, Trigger.CRASH),
         )
 
     def to_argv(self) -> list[str]:

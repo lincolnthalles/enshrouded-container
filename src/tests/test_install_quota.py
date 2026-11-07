@@ -177,6 +177,29 @@ def test_ensure_install_uses_custom_manifests_dir_and_seams(tmp_path: Path) -> N
     host.chown.assert_called_once()
 
 
+def test_ensure_manifest_skips_version_resolution(tmp_path: Path) -> None:
+    # GIVEN a pinned Version spec and an explicit pending Manifest ID
+    settings = _settings(version="build:999")
+    host = _host()
+    download = _download()
+    manifests_dir = tmp_path / "manifests"
+
+    # WHEN ensuring the explicit Manifest
+    with patch("enshctl.install.resolve_manifest") as mock_resolve:
+        result = install.ensure_manifest(
+            "999",
+            settings,
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", download),
+        )
+
+    # THEN the explicit ID is downloaded without re-resolving the Version spec
+    assert result == manifests_dir / "999"
+    mock_resolve.assert_not_called()
+    download.download_depots.assert_called_once()
+
+
 class TestDownloadVersionLifecycle:
     """Tests for the installed marker and ownership behavior."""
 

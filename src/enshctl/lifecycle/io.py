@@ -5,7 +5,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl import config, resources
 from enshctl.backup.core import backup_needed as backup_is_needed
+from enshctl.download import flow as download_flow
 from enshctl.lifecycle import backup, gamelog, server, wine
+from enshctl.lifecycle.auto_update import AutoUpdateController, is_auto_update_active
+from enshctl.manifests import latest_manifest, record_latest_manifest
 from enshctl.pidfile import PidFile
 
 if TYPE_CHECKING:
@@ -13,9 +16,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from enshctl.backup_protocol import BackupRequest
+    from enshctl.download.types import ManifestRecord
     from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.server import WineTree
-    from enshctl.lifecycle.types import ServerProcess
+    from enshctl.lifecycle.types import RestartRequest, ServerProcess
+    from enshctl.presence import PresenceTracker
     from enshctl.settings import AppSettings
 
 
@@ -60,6 +65,18 @@ class LifecycleIO(Protocol):
     def run_backup(self, request: BackupRequest) -> None: ...
 
     def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread: ...
+
+    def start_updater(
+        self,
+        tracker: PresenceTracker,
+        *,
+        active_manifest: ManifestRecord,
+        stop_event: threading.Event,
+        restart_request: RestartRequest,
+        stream_healthy: Callable[[], bool],
+        is_paused: Callable[[], bool],
+        pause_gate: PauseGate,
+    ) -> threading.Thread | None: ...
 
     def cleanup_wine(self) -> None: ...
 
@@ -134,6 +151,36 @@ class SystemLifecycleIO:
 
     def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
         return backup.start_scheduler(self.settings.backup_cron, stop_event, pause_gate=pause_gate)
+
+    def start_updater(
+        self,
+        tracker: PresenceTracker,
+        *,
+        active_manifest: ManifestRecord,
+        stop_event: threading.Event,
+        restart_request: RestartRequest,
+        stream_healthy: Callable[[], bool],
+        is_paused: Callable[[], bool],
+        pause_gate: PauseGate,
+    ) -> threading.Thread | None:
+        if not is_auto_update_active(self.settings):
+            return None
+        controller = AutoUpdateController(
+            settings=self.settings,
+            active_manifest=active_manifest,
+            tracker=tracker,
+            pause_gate=pause_gate,
+            list_latest=latest_manifest,
+            download=self._download_manifest,
+            restart_request=restart_request,
+            stream_healthy=stream_healthy,
+            is_paused=is_paused,
+        )
+        return controller.start(stop_event)
+
+    def _download_manifest(self, manifest: ManifestRecord) -> None:
+        download_flow.download_version(manifest.manifest_id, self.settings, version_spec="latest")
+        record_latest_manifest(manifest.manifest_id, manifest.timestamp)
 
     def cleanup_wine(self) -> None:
         wine.cleanup(self.settings)

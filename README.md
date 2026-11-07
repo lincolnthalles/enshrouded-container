@@ -84,7 +84,7 @@ docker compose down
 > Set `ENSHROUDED_USER_GROUPS__0__PASSWORD` to protect it:
 > `docker run -e ENSHROUDED_USER_GROUPS__0__PASSWORD=...`
 
-- The first start downloads the game server files (~8 GB) before launching. Check progress with `docker compose logs -f`. Later starts reuse the downloaded version and only check for updates.
+- The first start downloads the game server files (~8 GB) before launching. Check progress with `docker compose logs -f`. Later starts reuse the downloaded version; with `VERSION=latest`, Auto Update checks periodically and can restart into a newer version without recreating the container.
 
 - Automated backups are enabled by default: scheduled hourly plus one on every graceful stop, stored in `./enshrouded-data/backups/` (categories and retention below).
 
@@ -92,7 +92,8 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 
 ## Container Features
 
-- **Version pinning**: Pin exact game server versions via Steam manifest IDs. Set `VERSION=latest` (or omit it entirely) for automatic updates on restarts or `VERSION=<manifest_id>` for deterministic deployments.
+- **Version pinning**: Pin exact game server versions via Steam manifest IDs. Set `VERSION=latest` (or omit it entirely) for automatic in-process updates (see Auto Update below) or `VERSION=<manifest_id>` for deterministic deployments.
+- **Auto Update**: With `VERSION=latest`, checks for a newer Manifest on a schedule, warns while an update is pending, and restarts into it when no players are online. Log-only mode reports without acting.
 - **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the game server install, keeping the original files untouched.
 - **Config via env vars**: Any `ENSHROUDED_*` env var is converted to a nested JSON key in `enshrouded_server.json`. Works with any config field, including future game updates.
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
@@ -110,6 +111,28 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 | `VERSION`       | `latest` | Steam manifest ID, `latest`, or `build:<id>` |
 | `FORCE_INSTALL` | `false`  | Force re-download even if already installed  |
 
+### Auto Update
+
+Auto Update is enabled by default and only runs when `VERSION=latest` (or unset). It checks for a
+newer Manifest on a minute-level cron and logs a warning on every scheduled check while an update is
+pending. By default it downloads the new Manifest immediately and restarts the server as soon as
+the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD` is true, and
+a paused server is resumed first. Pinned versions never check.
+
+| Variable                               | Default        | Description                                           |
+| -------------------------------------- | -------------- | ----------------------------------------------------- |
+| `AUTO_UPDATE_ENABLED`                  | `true`         | Enable Auto Update for `latest`                       |
+| `AUTO_UPDATE_CRON`                     | `*/60 * * * *` | Minute-level check schedule                           |
+| `AUTO_UPDATE_LOG_ONLY`                 | `false`        | Warn on updates without downloading or restarting     |
+| `AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY` | `false`        | Defer the download until the empty-server gate clears |
+
+The restart requires an empty player roster, no pending join, a ready world, a healthy server output
+stream, a non-degraded tracker, and a recent complete Session block containing only the local
+machine. A2S is not required. A paused tree is resumed first and qualifies without a fresh Session
+block. Mod files trigger a startup warning because automatic updates may break mods. Old Manifest
+installs are kept; when disk space runs out, the update download fails with a warning and the
+running server stays put.
+
 ### Backups
 
 <details>
@@ -122,7 +145,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 | `BACKUP_LEVEL`     | format default  | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
 | `BACKUP_KEEP_LAST` | `24`            | Number of recent backups to keep (`-1` = keep all)                        |
 | `BACKUP_LIVE`      | `true`          | Enable scheduled backups                                                  |
-| `BACKUP_COLD`      | `true`          | Enable graceful-shutdown backups                                          |
+| `BACKUP_COLD`      | `true`          | Enable graceful-shutdown and update-restart backups                       |
 | `BACKUP_EMERGENCY` | `true`          | Enable crash-triggered backups                                            |
 | `BACKUP_DIR`       | `/data/backups` | Backup destination                                                        |
 
@@ -280,7 +303,9 @@ If you do not provide any authentication and request an older manifest, the orch
 ### Existing files
 
 > [!TIP]
-> Old manifests are kept by the orchestrator as long as there’s enough free storage, allowing you to pin `VERSION` to any manifest that is still available in storage.
+> Old manifests are kept by the orchestrator, allowing you to pin `VERSION` to any manifest still
+> present in storage. Auto Update never deletes them; when free storage is too low, new downloads
+> fail until you remove old installs.
 >
 > This fits most users who want to upgrade at a slower pace due to mod compatibility or other reasons.
 

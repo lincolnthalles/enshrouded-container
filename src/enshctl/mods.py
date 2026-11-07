@@ -110,6 +110,13 @@ def resolve_dll_overrides(settings: AppSettings) -> str:
     return generated
 
 
+def mod_files(mod_overlay_dir: Path = MOD_OVERLAY_DIR) -> tuple[Path, ...]:
+    """Return the files in the Mod overlay as relative paths."""
+    if not mod_overlay_dir.exists():
+        return ()
+    return tuple(sorted(path.relative_to(mod_overlay_dir) for path in mod_overlay_dir.rglob("*") if path.is_file()))
+
+
 def _overlay_mods(mod_overlay_dir: Path, target: Path) -> None:
     """Overlay mod files by creating symlinks, overriding manifest symlinks."""
     for mod_file in mod_overlay_dir.rglob("*"):
@@ -200,9 +207,13 @@ def build_game_tree(plan: GameTreePlan) -> None:
 
     # Overlay mod files
     if plan.mod_overlay_dir.exists():
-        mod_files = sorted(f.relative_to(plan.mod_overlay_dir) for f in plan.mod_overlay_dir.rglob("*") if f.is_file())
-        if mod_files:
-            logger.info("Overlaying %d mod file(s): %s", len(mod_files), ", ".join(str(m) for m in mod_files))
+        overlay_files = mod_files(plan.mod_overlay_dir)
+        if overlay_files:
+            logger.info(
+                "Overlaying %d mod file(s): %s",
+                len(overlay_files),
+                ", ".join(str(path) for path in overlay_files),
+            )
         else:
             logger.info("No mod files found in %s", plan.mod_overlay_dir)
         _overlay_mods(plan.mod_overlay_dir, target)

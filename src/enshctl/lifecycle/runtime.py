@@ -15,7 +15,7 @@ from enshctl.lifecycle.control import ControlFiles
 from enshctl.lifecycle.io import LifecycleIO, ProcessControl, SystemLifecycleIO, SystemProcessControl
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.players import PlayerReporter
-from enshctl.lifecycle.types import ExitRequest, PauseControl, ServerProcess
+from enshctl.lifecycle.types import ExitRequest, PauseControl, RestartRequest, ServerProcess
 from enshctl.lifecycle.wake import build_wake_source
 from enshctl.paths import AUTOPAUSE_DIR
 from enshctl.presence import PresenceTracker
@@ -23,6 +23,7 @@ from enshctl.presence import PresenceTracker
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from enshctl.download.types import ManifestRecord
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,10 @@ def exit_server(
     if pause_control is not None:
         _best_effort(pause_control.stop, "Auto Pause stop")
         _best_effort(pause_control.resume_for_shutdown, "Auto Pause resume")
-    _stop_server(process_handle, settings=settings, process_control=process_control)
+    stopped = _stop_server(process_handle, settings=settings, process_control=process_control)
+    if request.trigger is Trigger.UPDATE and not stopped:
+        logger.error("Update restart could not stop the server; skipping backup and cleanup")
+        return 1
     _run_triggered_backup(request.trigger, settings=settings, lifecycle_io=lifecycle_io)
     _best_effort(lifecycle_io.cleanup_wine, "Wine cleanup")
     if clear_pid:
@@ -59,12 +63,12 @@ def _stop_server(
     *,
     settings: AppSettings,
     process_control: ProcessControl,
-) -> None:
+) -> bool:
     if process_handle is None:
-        return
+        return True
     try:
         if process_handle.poll() is not None:
-            return
+            return True
         logger.info("Sending SIGINT to server process")
         if not process_control.signal_game(signal.SIGINT):
             with suppress(OSError):
@@ -81,14 +85,16 @@ def _stop_server(
                 process_handle.wait()
     except Exception:
         logger.exception("Failed to stop server process")
+        return process_handle.poll() is not None
+    return process_handle.poll() is not None
 
 
 def _run_triggered_backup(trigger: Trigger | None, *, settings: AppSettings, lifecycle_io: LifecycleIO) -> None:
-    if trigger is Trigger.SHUTDOWN:
+    if trigger is Trigger.SHUTDOWN or trigger is Trigger.UPDATE:
         if not settings.backup_cold:
             return
         wait_seconds = settings.shutdown_backup_wait
-        label = "cold shutdown"
+        label = "cold update restart" if trigger is Trigger.UPDATE else "cold shutdown"
     elif trigger is Trigger.CRASH:
         if not settings.backup_emergency:
             return
@@ -122,6 +128,8 @@ class ServerLifecycle:
         process_control: ProcessControl | None = None,
         lifecycle_io: LifecycleIO | None = None,
         control_files: ControlFiles | None = None,
+        active_manifest: ManifestRecord | None = None,
+        shutdown_event: threading.Event | None = None,
     ) -> None:
         self._settings = settings
         self._process_control: ProcessControl = process_control or SystemProcessControl(settings)
@@ -131,9 +139,13 @@ class ServerLifecycle:
             puid=settings.puid,
             pgid=settings.pgid,
         )
+        self._active_manifest = active_manifest
         self._request: ExitRequest | None = None
         self._stop_event = threading.Event()
-        self._shutdown_event = threading.Event()
+        self._shutdown_event = shutdown_event if shutdown_event is not None else threading.Event()
+        self._restart_request = RestartRequest()
+        self._restart_manifest: ManifestRecord | None = None
+        self._restart_requested = False
         self._pause_gate = PauseGate()
         self._shutdown_requested = False
         self._stream_thread: threading.Thread | None = None
@@ -157,13 +169,23 @@ class ServerLifecycle:
         if self._request is None:
             self._request = ExitRequest(trigger, 0)
 
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
+
+    @property
+    def restart_manifest(self) -> ManifestRecord | None:
+        return self._restart_manifest
+
     def run(self) -> int:
         """Launch, supervise, and exit the server; return the process exit code."""
         self._install_signal_handlers()
         process_handle: ServerProcess | None = None
         try:
             self._prepare_auto_pause()
-            if self._request is not None:
+            if self._shutdown_event.is_set():
+                if self._request is None:
+                    self._request = ExitRequest(None, 0)
                 return self._finish(None)
             process_handle = self._process_control.start()
             self._lifecycle_io.write_pid(process_handle.pid)
@@ -181,6 +203,16 @@ class ServerLifecycle:
                 self._lifecycle_io.start_scheduler(self._stop_event, pause_gate=self._pause_gate)
             else:
                 logger.info("Live backups disabled")
+            if self._active_manifest is not None:
+                self._lifecycle_io.start_updater(
+                    self._presence,
+                    active_manifest=self._active_manifest,
+                    stop_event=self._stop_event,
+                    restart_request=self._restart_request,
+                    stream_healthy=self._stream_thread.is_alive,
+                    is_paused=self._control_files.is_paused,
+                    pause_gate=self._pause_gate,
+                )
             if self._settings.log_tail:
                 self._log_thread = self._process_control.start_log_tail(self._stop_event)
             self._process_control.start_resource_poller(
@@ -234,6 +266,13 @@ class ServerLifecycle:
 
     def _wait_for_exit(self, process_handle: ServerProcess) -> None:
         while self._request is None:
+            if self._shutdown_event.is_set():
+                self._record_shutdown(Trigger.SHUTDOWN)
+                break
+            if self._restart_request.event.is_set():
+                self._accept_restart_request()
+                if self._request is not None:
+                    break
             if process_handle.poll() is not None:
                 exit_code = process_handle.wait()
                 if not self._shutdown_requested and self._request is None:
@@ -243,6 +282,15 @@ class ServerLifecycle:
                         self._request = ExitRequest(Trigger.CRASH, exit_code)
                 break
             self._shutdown_event.wait(timeout=0.5)
+
+    def _accept_restart_request(self) -> None:
+        manifest = self._restart_request.consume()
+        if manifest is None:
+            logger.error("Auto Update: restart request had no pending Manifest; ignoring")
+            return
+        self._restart_manifest = manifest
+        self._restart_requested = True
+        self._request = ExitRequest(Trigger.UPDATE, 0)
 
     def _finish(self, process_handle: ServerProcess | None) -> int:
         if self._finished:
@@ -259,6 +307,11 @@ class ServerLifecycle:
             pause_control=self._pause_control,
             clear_pid=self._pid_written,
         )
+        if request.trigger is Trigger.UPDATE and process_handle is not None and process_handle.poll() is None:
+            logger.error("Auto Update: server did not stop; not relaunching")
+            self._restart_requested = False
+            self._restart_manifest = None
+            self._exit_code = 1
         if self._stream_thread is not None:
             self._stream_thread.join(timeout=5)
         if self._log_thread is not None:

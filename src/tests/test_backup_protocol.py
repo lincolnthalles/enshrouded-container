@@ -25,6 +25,14 @@ def test_for_trigger_maps_shutdown_cold() -> None:
     assert request == BackupRequest(category=Category.COLD, wait_seconds=5, detach=True)
 
 
+def test_for_trigger_maps_update_cold() -> None:
+    # GIVEN an update restart trigger with a lock wait
+    request = BackupRequest.for_trigger(Trigger.UPDATE, wait_seconds=5)
+
+    # THEN it maps to a detached cold backup carrying the wait
+    assert request == BackupRequest(category=Category.COLD, wait_seconds=5, detach=True)
+
+
 def test_for_trigger_maps_crash_emergency() -> None:
     # GIVEN a crash trigger
     request = BackupRequest.for_trigger(Trigger.CRASH)

@@ -20,7 +20,7 @@ The container SHALL include a self-contained DepotDownloader binary that runs wi
 
 ### Requirement: Version spec resolution
 
-The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: explicit digits, Steam build ID with `build:` prefix, and the `latest` keyword (newest Manifest by timestamp). A resolved `latest` Manifest ID SHALL be persisted in a control file for offline fallback.
+The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: explicit digits, Steam build ID with `build:` prefix, and the `latest` keyword (newest Manifest by timestamp). A resolved `latest` Manifest ID and its timestamp SHALL be persisted in a control file for offline fallback.
 
 #### Scenario: Explicit Manifest ID
 
@@ -45,7 +45,7 @@ The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: 
 #### Scenario: Latest resolution and persistence
 
 - **WHEN** `VERSION=latest` (or unset) is set and DepotDownloader reports manifests
-- **THEN** the newest Manifest ID SHALL be used and persisted to the control file
+- **THEN** the newest Manifest ID and its timestamp SHALL be used and persisted to the control file
 
 #### Scenario: Offline fallback to cached latest
 
@@ -61,6 +61,28 @@ The entrypoint SHALL resolve a Version spec to a Manifest ID via three methods: 
 
 - **WHEN** `VERSION=latest` is set, the listing fails, and no cached Manifest ID exists
 - **THEN** the entrypoint SHALL exit with code 1 naming the listing failure as the cause
+
+### Requirement: Latest candidate lookup without install
+
+An update check SHALL select the newest listed Manifest by timestamp without installing it or
+replacing the cached latest Manifest. A successful Auto Update install SHALL replace the cached
+latest Manifest with the installed Manifest ID and timestamp; a failed Auto Update download or
+install SHALL leave the cache unchanged.
+
+#### Scenario: Update check does not rewrite the cache
+
+- **WHEN** an update check finds a different Manifest
+- **THEN** the cached latest Manifest SHALL remain unchanged until the install succeeds
+
+#### Scenario: Successful Auto Update install records the candidate
+
+- **WHEN** the Manifest install for an Auto Update candidate completes
+- **THEN** the cached latest Manifest SHALL be replaced with that Manifest ID and timestamp
+
+#### Scenario: Failed Auto Update install keeps the cache
+
+- **WHEN** the Auto Update download or install fails
+- **THEN** the cached latest Manifest SHALL remain unchanged
 
 ### Requirement: Install ensures Manifest ID present
 
@@ -146,3 +168,13 @@ Manifest installs SHALL live on a persistent volume mapped to the manifests dire
 
 - **WHEN** the container is removed and recreated with the same manifests volume
 - **THEN** all previously downloaded Manifest installs SHALL still be present
+
+### Requirement: Manifest install retention
+
+The container SHALL NOT delete a Manifest install automatically, including after an Auto Update
+restart. Removing old installs is operator-managed.
+
+#### Scenario: Update restart keeps the previous install
+
+- **WHEN** Auto Update restarts into a new Manifest
+- **THEN** the previous Manifest install SHALL remain

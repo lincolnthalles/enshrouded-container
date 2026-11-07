@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature, newest_save_signature
-from enshctl.presence import PresenceWarning
+from enshctl.presence import PresenceWarning, active_presence_veto, presence_health_veto, session_veto
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -227,7 +227,7 @@ class AutoPauseController:
         if self._state not in (ACTIVE, PAUSE_PENDING):
             return
         snapshot = self._tracker.snapshot()
-        reason = self._session_veto(snapshot, now)
+        reason = session_veto(snapshot, now=now)
         if reason is not None:
             self._log_veto(reason)
 
@@ -402,22 +402,15 @@ class AutoPauseController:
             return "disabled marker"
         snapshot = self._tracker.snapshot()
         now = self._clock()
-        if not snapshot.ready:
-            return "world not ready"
-        if not self._stream_healthy():
-            return "stdout stream ended"
-        if snapshot.degraded:
-            return "tracker degraded"
+        health = presence_health_veto(snapshot, stream_healthy=self._stream_healthy())
+        if health is not None:
+            return health
         if force:
             return None
-        if self._pending_join(snapshot, now):
-            return "pending player join"
-        if snapshot.players:
-            return "players online"
-        session_reason = self._session_veto(snapshot, now)
-        if session_reason is not None:
-            return session_reason
-        return None
+        active = active_presence_veto(snapshot, now=now)
+        if active is not None:
+            return active
+        return session_veto(snapshot, now=now)
 
     def _has_player_evidence(self, snapshot: PresenceSnapshot, now: float) -> bool:
         if self._pending_join(snapshot, now) or snapshot.players:
@@ -426,18 +419,6 @@ class AutoPauseController:
 
     def _pending_join(self, snapshot: PresenceSnapshot, now: float) -> bool:
         return snapshot.pending_join_until is not None and now < snapshot.pending_join_until
-
-    def _session_veto(self, snapshot: PresenceSnapshot, now: float) -> str | None:
-        if snapshot.session_malformed:
-            return "session block malformed"
-        if snapshot.session_complete_at is None:
-            return "session block missing"
-        if now - snapshot.session_complete_at > 90.0:
-            return "session block stale"
-        machines = snapshot.session_machines
-        if machines is None or 0 not in machines or any(index > 0 for index in machines):
-            return "session machine veto"
-        return None
 
     def _probe_a2s(self) -> bool:
         if self._a2s is None:
@@ -546,7 +527,7 @@ class AutoPauseController:
                 state=self._state,
                 players=tuple(player.display_name for player in snapshot.players),
                 pending_join=self._pending_join(snapshot, now),
-                session_veto=self._session_veto(snapshot, now) is not None,
+                session_veto=session_veto(snapshot, now=now) is not None,
                 degraded=snapshot.degraded,
                 paused_since=self._paused_since,
                 last_error=self._last_error,

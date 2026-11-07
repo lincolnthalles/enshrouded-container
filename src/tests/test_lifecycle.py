@@ -9,11 +9,12 @@ from unittest.mock import patch
 
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.config import SaveDirectories
+from enshctl.download.types import ManifestRecord
 from enshctl.lifecycle import runtime
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.runtime import ServerLifecycle, exit_server
-from enshctl.lifecycle.types import ExitRequest, ServerProcess
+from enshctl.lifecycle.types import ExitRequest, RestartRequest, ServerProcess
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -21,17 +22,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+    from enshctl.presence import PresenceTracker
 
 
 class FakeProcess:
     pid: int
     stdout: IO[bytes] | None
 
-    def __init__(self, *, returncode: int | None = None, timeouts: int = 0) -> None:
+    def __init__(self, *, returncode: int | None = None, timeouts: int = 0, stuck: bool = False) -> None:
         self.pid = 4321
         self.stdout = None
         self._returncode = returncode
         self._timeouts = timeouts
+        self._stuck = stuck
         self.signals: list[int] = []
         self.killed = False
         self.waits: list[float | None] = []
@@ -48,6 +51,8 @@ class FakeProcess:
             self._timeouts -= 1
             command = "server"
             raise subprocess.TimeoutExpired(command, timeout if timeout is not None else 0.0)
+        if self._stuck:
+            return 0
         if self._returncode is None:
             self._returncode = 0
         return self._returncode
@@ -176,6 +181,9 @@ class FakeLifecycleIO:
         self.cleanup_error: Exception | None = None
         self.clear_error: Exception | None = None
         self.scheduler_gate: PauseGate | None = None
+        self.restart_request: RestartRequest | None = None
+        self.active_manifest: ManifestRecord | None = None
+        self.updater_started = threading.Event()
 
     def backup_needed(self) -> bool:
         return self.backup_required
@@ -191,6 +199,23 @@ class FakeLifecycleIO:
         thread = threading.Thread(target=lambda: None)
         thread.start()
         return thread
+
+    def start_updater(
+        self,
+        tracker: PresenceTracker,
+        *,
+        active_manifest: ManifestRecord,
+        stop_event: threading.Event,
+        restart_request: RestartRequest,
+        stream_healthy: Callable[[], bool],
+        is_paused: Callable[[], bool],
+        pause_gate: PauseGate,
+    ) -> None:
+        del tracker, stop_event, stream_healthy, is_paused, pause_gate
+        self.active_manifest = active_manifest
+        self.restart_request = restart_request
+        self.events.append("updater")
+        self.updater_started.set()
 
     def cleanup_wine(self) -> None:
         self.events.append("wine")
@@ -296,6 +321,62 @@ def test_pause_control_failure_does_not_block_exit() -> None:
     assert code == 0
     assert ("signal_game", signal.SIGINT) in events
     assert events[-1] == "clear_pid"
+
+
+def test_lifecycle_shared_shutdown_aborts_before_launch() -> None:
+    # GIVEN a shared shutdown event set during the update restart window
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    shutdown = threading.Event()
+    shutdown.set()
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = ServerLifecycle(
+            _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+            process_control=control,
+            lifecycle_io=io,
+            shutdown_event=shutdown,
+        ).run()
+
+    # THEN it exits cleanly without launching a server
+    assert code == 0
+    assert "start" not in events
+    assert "wine" in events
+
+
+def test_lifecycle_signal_before_launch_preserves_shutdown_backup() -> None:
+    # GIVEN a shutdown signal arriving during pre-launch preparation
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(
+            backup_live=False,
+            backup_cold=True,
+            backup_emergency=False,
+            shutdown_backup_wait=5,
+        ),
+        process_control=control,
+        lifecycle_io=io,
+    )
+
+    # WHEN preparation triggers the shutdown before any server launch
+    with (
+        patch.object(runtime.signal, "signal"),
+        patch.object(lifecycle, "_prepare_auto_pause", side_effect=lifecycle.request_shutdown),
+    ):
+        code = lifecycle.run()
+
+    # THEN the shutdown trigger survives and the cold backup runs
+    assert code == 0
+    assert "start" not in events
+    assert io.backups == [BackupRequest.for_trigger(Trigger.SHUTDOWN, wait_seconds=5)]
+    assert "wine" in events
+    assert "clear_pid" not in events
 
 
 def test_lifecycle_starts_auto_pause_and_resumes_on_exit() -> None:
@@ -415,6 +496,94 @@ def test_shutdown_exit_orders_server_backup_wine_pid() -> None:
         "clear_pid",
     ]
     assert process.waits == [7]
+
+
+def test_update_exit_orders_server_cold_backup_wine_pid() -> None:
+    # GIVEN a running server and save data present
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    settings = _settings(shutdown_timeout=7, shutdown_backup_wait=5, backup_cold=True, backup_emergency=False)
+
+    # WHEN the update restart exit path runs
+    code = _exit(ExitRequest(Trigger.UPDATE, 0), process, control, io, settings)
+
+    # THEN the server is signalled, the cold backup runs, then Wine cleanup and PID clear
+    assert code == 0
+    assert events == [
+        ("signal_game", signal.SIGINT),
+        ("backup", BackupRequest.for_trigger(Trigger.UPDATE, wait_seconds=5)),
+        "wine",
+        "clear_pid",
+    ]
+    assert process.waits == [7]
+
+
+def test_lifecycle_update_restart_uses_pending_manifest() -> None:
+    # GIVEN a lifecycle with an active Manifest and a pending update target
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    target = ManifestRecord("222", "05/29/2026 13:00:00")
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        active_manifest=active,
+    )
+    codes: list[int] = []
+
+    # WHEN the update controller requests a restart while the lifecycle waits
+    with patch.object(runtime.signal, "signal"):
+        thread = threading.Thread(target=lambda: codes.append(lifecycle.run()))
+        thread.start()
+        assert io.updater_started.wait(timeout=1)
+        assert io.active_manifest == active
+        assert io.restart_request is not None
+        io.restart_request.request(target)
+        thread.join(timeout=2)
+
+    # THEN the lifecycle exits with the update trigger and exposes the target
+    assert not thread.is_alive()
+    assert codes == [0]
+    assert lifecycle.restart_requested is True
+    assert lifecycle.restart_manifest == target
+    assert "updater" in events
+
+
+def test_lifecycle_update_restart_stop_failure_exits_without_relaunch() -> None:
+    # GIVEN a server process that ignores the stop wait
+    events: list[object] = []
+    process = FakeProcess(stuck=True)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        active_manifest=ManifestRecord("111", "05/29/2026 12:00:00"),
+    )
+    codes: list[int] = []
+
+    # WHEN an update restart is requested but the server remains alive
+    with patch.object(runtime.signal, "signal"):
+        thread = threading.Thread(target=lambda: codes.append(lifecycle.run()))
+        thread.start()
+        assert io.updater_started.wait(timeout=1)
+        assert io.restart_request is not None
+        io.restart_request.request(ManifestRecord("222", "05/29/2026 13:00:00"))
+        thread.join(timeout=2)
+
+    # THEN the lifecycle exits non-zero and does not expose a relaunch target
+    assert not thread.is_alive()
+    assert codes == [1]
+    assert lifecycle.restart_requested is False
+    assert lifecycle.restart_manifest is None
+    assert "wine" not in events
+    assert "clear_pid" not in events
 
 
 def test_crash_exit_skips_signal_and_uses_emergency() -> None:

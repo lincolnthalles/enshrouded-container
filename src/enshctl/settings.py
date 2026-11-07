@@ -98,6 +98,16 @@ class AppSettings:
     force_install: bool = _env_field(default=False, key="FORCE_INSTALL", parse=_parse_bool)
     min_free_space: int = _env_field(10 * 1024**3, "INSTALL_MIN_FREE_SPACE", _parse_int)
 
+    # Auto Update
+    auto_update_enabled: bool = _env_field(default=True, key="AUTO_UPDATE_ENABLED", parse=_parse_bool)
+    auto_update_cron: str = _env_field("*/60 * * * *", "AUTO_UPDATE_CRON", _parse_str)
+    auto_update_log_only: bool = _env_field(default=False, key="AUTO_UPDATE_LOG_ONLY", parse=_parse_bool)
+    auto_update_download_only_when_empty: bool = _env_field(
+        default=False,
+        key="AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY",
+        parse=_parse_bool,
+    )
+
     # ManifestHub / depot keys
     manifesthub_api_token: str | None = _env_field(None, "MANIFESTHUB_API_TOKEN", _parse_optional_str)
     manifesthub_api_url: str | None = _env_field(None, "MANIFESTHUB_API_URL", _parse_url)

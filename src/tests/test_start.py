@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from enshctl.commands import start as start_cmd
 from enshctl.config import SaveDirectories
-from enshctl.download.types import InstallError
+from enshctl.download.types import InstallError, ManifestRecord
 from enshctl.paths import GAME_TREE_DIR, SAVE_DIR
 from enshctl.settings import AppSettings
 
@@ -25,9 +25,15 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
+        patch.object(
+            start_cmd.manifests,
+            "cached_latest_manifest",
+            return_value=ManifestRecord("999", "05/29/2026 12:00:00"),
+        ),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
         patch.object(start_cmd.config, "write_config") as mock_write,
@@ -35,6 +41,7 @@ def test_start_run_creates_custom_save_dir(tmp_path: Path) -> None:
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
         mock_lifecycle.return_value.run.return_value = 0
+        mock_lifecycle.return_value.restart_requested = False
 
         # WHEN the start command runs
         code = start_cmd.run(settings)
@@ -55,9 +62,15 @@ def test_start_run_resolves_unsafe_save_dir_before_write(tmp_path: Path) -> None
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
+        patch.object(
+            start_cmd.manifests,
+            "cached_latest_manifest",
+            return_value=ManifestRecord("999", "05/29/2026 12:00:00"),
+        ),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value=new_config),
         patch.object(start_cmd.config, "write_config") as mock_write,
@@ -65,6 +78,7 @@ def test_start_run_resolves_unsafe_save_dir_before_write(tmp_path: Path) -> None
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
         mock_lifecycle.return_value.run.return_value = 0
+        mock_lifecycle.return_value.restart_requested = False
 
         # WHEN the start command runs
         code = start_cmd.run(settings)
@@ -88,9 +102,15 @@ def test_start_run_warns_on_ownership_failure(
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
+        patch.object(
+            start_cmd.manifests,
+            "cached_latest_manifest",
+            return_value=ManifestRecord("999", "05/29/2026 12:00:00"),
+        ),
         patch.object(start_cmd.mods, "build_game_tree"),
         patch.object(start_cmd.config, "generate_config", return_value={"saveDirectory": str(saves)}),
         patch.object(start_cmd.config, "write_config"),
@@ -99,6 +119,7 @@ def test_start_run_warns_on_ownership_failure(
         caplog.at_level("WARNING", logger="enshctl.commands.start"),
     ):
         mock_lifecycle.return_value.run.return_value = 0
+        mock_lifecycle.return_value.restart_requested = False
 
         # WHEN the start command runs
         code = start_cmd.run(settings)
@@ -118,14 +139,21 @@ def test_start_uses_installed_manifest_id(tmp_path: Path) -> None:
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd.download_flow, "prepare_manifests"),
         patch.object(start_cmd.install, "ensure_install", return_value=tmp_path / "manifests" / "999"),
+        patch.object(
+            start_cmd.manifests,
+            "cached_latest_manifest",
+            return_value=ManifestRecord("999", "05/29/2026 12:00:00"),
+        ),
         patch.object(start_cmd.mods, "build_game_tree") as mock_build,
         patch.object(start_cmd.config, "write_generated_config", return_value=SaveDirectories(SAVE_DIR)),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
         mock_lifecycle.return_value.run.return_value = 0
+        mock_lifecycle.return_value.restart_requested = False
 
         # WHEN the start command runs
         code = start_cmd.run(settings)
@@ -160,6 +188,7 @@ def test_run_returns_one_on_install_error() -> None:
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd, "_prepare_install_and_config", side_effect=InstallError("install failed")),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
@@ -180,14 +209,138 @@ def test_run_returns_lifecycle_code() -> None:
         patch.object(start_cmd, "_setup_timezone"),
         patch.object(start_cmd, "_setup_directories"),
         patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
         patch.object(start_cmd, "ensure_prefix"),
         patch.object(start_cmd, "_prepare_install_and_config"),
         patch.object(start_cmd, "ServerLifecycle") as mock_lifecycle,
     ):
         mock_lifecycle.return_value.run.return_value = 7
+        mock_lifecycle.return_value.restart_requested = False
 
         # WHEN the start command runs
         code = start_cmd.run(settings)
 
     # THEN it returns the lifecycle exit code
     assert code == 7
+
+
+def test_start_relaunches_with_pending_manifest() -> None:
+    # GIVEN an update lifecycle that requests a restart into a downloaded Manifest
+    settings = replace(AppSettings(), version="latest")
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    target = ManifestRecord("222", "05/29/2026 13:00:00")
+    first = MagicMock()
+    first.run.return_value = 0
+    first.restart_requested = True
+    first.restart_manifest = target
+    second = MagicMock()
+    second.run.return_value = 0
+    second.restart_requested = False
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd, "_prepare_install_and_config", side_effect=[active, target]) as mock_prepare,
+        patch.object(start_cmd, "ServerLifecycle", side_effect=[first, second]) as mock_lifecycle,
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(settings)
+
+    # THEN the lifecycle relaunches from the pending Manifest
+    assert code == 0
+    assert mock_lifecycle.call_count == 2
+    assert mock_lifecycle.call_args_list[0].kwargs["active_manifest"] == active
+    assert mock_lifecycle.call_args_list[1].kwargs["active_manifest"] == target
+    mock_prepare.assert_any_call(settings, target=target)
+
+
+def test_start_returns_one_when_update_relaunch_fails() -> None:
+    # GIVEN an update lifecycle whose relaunch preparation fails
+    settings = replace(AppSettings(), version="latest")
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    target = ManifestRecord("222", "05/29/2026 13:00:00")
+    first = MagicMock()
+    first.run.return_value = 0
+    first.restart_requested = True
+    first.restart_manifest = target
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(
+            start_cmd,
+            "_prepare_install_and_config",
+            side_effect=[active, InstallError("update install failed")],
+        ),
+        patch.object(start_cmd, "ServerLifecycle", return_value=first) as mock_lifecycle,
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(settings)
+
+    # THEN it exits non-zero without a second lifecycle
+    assert code == 1
+    mock_lifecycle.assert_called_once()
+
+
+def test_start_warns_on_mods_when_auto_update_is_active(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN an active latest Auto Update and a populated Mod overlay
+    from pathlib import Path
+
+    settings = replace(AppSettings(), version="latest")
+    manifest = ManifestRecord("111", "05/29/2026 12:00:00")
+    lifecycle = MagicMock()
+    lifecycle.run.return_value = 0
+    lifecycle.restart_requested = False
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=(Path("mod.dll"),)),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd, "_prepare_install_and_config", return_value=manifest),
+        patch.object(start_cmd, "ServerLifecycle", return_value=lifecycle),
+        caplog.at_level("WARNING", logger="enshctl.commands.start"),
+    ):
+        # WHEN the start command runs
+        start_cmd.run(settings)
+
+    # THEN the mod compatibility warning is logged
+    assert any("may break mods" in record.message for record in caplog.records)
+
+
+def test_start_skips_mod_warning_when_auto_update_is_inactive(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a pinned Version spec and a populated Mod overlay
+    from pathlib import Path
+
+    settings = replace(AppSettings(), version="123")
+    manifest = ManifestRecord("123", "05/29/2026 12:00:00")
+    lifecycle = MagicMock()
+    lifecycle.run.return_value = 0
+    lifecycle.restart_requested = False
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd.mods, "mod_files", return_value=(Path("mod.dll"),)),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd, "_prepare_install_and_config", return_value=manifest),
+        patch.object(start_cmd, "ServerLifecycle", return_value=lifecycle),
+        caplog.at_level("WARNING", logger="enshctl.commands.start"),
+    ):
+        # WHEN the start command runs
+        start_cmd.run(settings)
+
+    # THEN no mod compatibility warning is logged
+    assert not any("may break mods" in record.message for record in caplog.records)

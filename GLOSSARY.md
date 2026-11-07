@@ -22,6 +22,10 @@ _Avoid_: Manifest file
 `.manifest` artifact consumed for auth-free downloads alongside `depot.keys`.
 _Avoid_: Manifest
 
+**Active Manifest**:
+Manifest ID currently backing the Game tree and the running server.
+_Avoid_: Current version, Running manifest
+
 ### Backups
 
 **Backup**:
@@ -37,7 +41,7 @@ Storage location of a Backup: `live`, `cold`, or `emergency`.
 _Avoid_: Type, Trigger
 
 **Trigger**:
-Event causing a Backup: scheduler tick, SIGTERM shutdown, unexpected crash, or manual invocation. Orthogonal to Category.
+Event causing a Backup: scheduler tick, update restart, SIGTERM shutdown, unexpected crash, or manual invocation. Orthogonal to Category.
 _Avoid_: Category
 
 ### Game tree
@@ -141,3 +145,17 @@ _Avoid_: Pause attempt, Exclusion
 **Wake traffic**:
 Inbound UDP traffic to the query port that resumes a paused server.
 _Avoid_: Wake packet, Query packet
+
+**Auto update**:
+Automatic check for a newer Manifest and a supervised restart into it when the empty-server gate is
+clear.
+_Avoid_: Auto-updater, Update daemon
+
+**Pending update**:
+A newer Manifest detected but not yet applied because presence, download, or log-only mode prevents
+it.
+_Avoid_: Queued update, Update queue
+
+**Update check**:
+One scheduled Manifest listing performed by Auto Update.
+_Avoid_: Poll, Scan

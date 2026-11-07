@@ -7,7 +7,7 @@ The orchestrator backs up the save directory selected by the Generated config (d
 | Category    | Trigger                                        | Dir          |
 | ----------- | ---------------------------------------------- | ------------ |
 | `live`      | Scheduler (first run immediate, then per cron) | `live/`      |
-| `cold`      | Graceful shutdown (SIGTERM)                    | `cold/`      |
+| `cold`      | Graceful shutdown or Auto Update restart       | `cold/`      |
 | `emergency` | Unexpected server exit                         | `emergency/` |
 
 Files are named `enshrouded-YYYYMMDD-HHMMSS[-cold|-emergency].<ext>`.
@@ -45,11 +45,11 @@ When ALL `BACKUP_KEEP_*` are `0`, pruning is skipped entirely — nothing is del
 
 ### Enable/disable
 
-| Env var            | Default | Description                                |
-| ------------------ | ------- | ------------------------------------------ |
-| `BACKUP_LIVE`      | `1`     | Enable scheduled live backups              |
-| `BACKUP_COLD`      | `1`     | Enable cold backup on graceful shutdown    |
-| `BACKUP_EMERGENCY` | `1`     | Enable emergency backup on unexpected exit |
+| Env var            | Default | Description                                      |
+| ------------------ | ------- | ------------------------------------------------ |
+| `BACKUP_LIVE`      | `1`     | Enable scheduled live backups                    |
+| `BACKUP_COLD`      | `1`     | Enable cold backup on shutdown or update restart |
+| `BACKUP_EMERGENCY` | `1`     | Enable emergency backup on unexpected exit       |
 
 Boolean values: `1`/`true`/`on`/`yes` = enabled, `0`/`false`/`off`/`no` = disabled (case-insensitive).
 
@@ -74,6 +74,11 @@ covers 60s + 120s with margin.
 | ---------------------- | ------- | --------------------------------------------------------------- |
 | `SHUTDOWN_TIMEOUT`     | `60`    | Seconds to wait for the game server to exit after SIGINT        |
 | `SHUTDOWN_BACKUP_WAIT` | `120`   | Seconds to wait for the backup lock before skipping cold backup |
+
+### Auto Update restart
+
+An Auto Update restart uses the same ordered stop and cold-backup path, then relaunches in the
+same container from the pending Manifest. See the README Auto Update section.
 
 ### Format & compression
 

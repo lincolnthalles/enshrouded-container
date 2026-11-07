@@ -1,6 +1,7 @@
 ## Purpose
 
-Scheduled, shutdown-triggered, and crash-triggered backups of the saves directory with configurable compression.
+Scheduled, shutdown-triggered, update-triggered, and crash-triggered backups of the saves directory
+with configurable compression.
 
 ## Requirements
 
@@ -143,6 +144,25 @@ up Wine, clear the PID file, and exit 0.
 - **WHEN** a second SIGTERM or SIGINT arrives while shutdown is already in progress
 - **THEN** the handler SHALL return immediately without restarting the sequence
 
+### Requirement: Update-restart cold backup
+
+When Auto Update restarts the server (see `auto-update`), the container SHALL create a cold Backup
+when cold backups are enabled and save data exists, after the server exits and before Wine cleanup,
+waiting up to `SHUTDOWN_BACKUP_WAIT` for an in-progress Backup (see `backup-subprocess`). When cold
+backups are disabled, the restart SHALL continue without a Backup.
+
+#### Scenario: Cold backup on update restart
+
+- **WHEN** Auto Update restarts the server with cold backups enabled and save data present
+- **THEN** a cold Backup SHALL be created before Wine cleanup
+- **AND** the restart SHALL continue
+
+#### Scenario: Update restart without cold backups
+
+- **WHEN** cold backups are disabled and Auto Update restarts the server
+- **THEN** no cold Backup SHALL be created
+- **AND** the restart SHALL continue
+
 ### Requirement: Obsolete BACKUP_RETENTION setting ignored
 
 When `BACKUP_RETENTION` is set in the environment, the value SHALL be ignored and a warning SHALL name the time-based retention alternatives.
@@ -211,7 +231,7 @@ When the game server exits unexpectedly (not shutdown-initiated) and emergency b
 
 ### Requirement: Exit after unexpected failure
 
-When an unexpected error occurs after the server has launched, the entrypoint SHALL stop the server, apply the emergency backup policy, clean up Wine, clear the PID file, and exit 1.
+When an unexpected error occurs after the server has launched, the entrypoint SHALL stop the server, apply the emergency backup policy, clean up Wine, clear the PID file, and exit 1. An error isolated by a subsystem's failure contract SHALL NOT trigger this path.
 
 #### Scenario: Unexpected failure cleans up
 

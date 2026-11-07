@@ -2,18 +2,20 @@
 
 import logging
 import subprocess
+import threading
 import time
 from contextlib import suppress
 from os import chown, environ
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from enshctl import config, install, mods
+from enshctl import config, install, manifests, mods
 from enshctl.commands.parser import CommandParser
 from enshctl.download import flow as download_flow
-from enshctl.download.types import InstallError
+from enshctl.download.types import InstallError, ManifestRecord
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
+from enshctl.lifecycle.auto_update import is_auto_update_active
 from enshctl.lifecycle.wine import ensure_prefix
 from enshctl.paths import (
     BACKUP_BASE_DIR,
@@ -61,24 +63,37 @@ def _setup_x11_socket() -> None:
     X11_DIR.chmod(0o1777)
 
 
-def _prepare_install_and_config(settings: AppSettings) -> None:
-    download_flow.prepare_manifests(settings)
-    installed = install.ensure_install(settings)
+def _prepare_install_and_config(
+    settings: AppSettings,
+    *,
+    target: ManifestRecord | None = None,
+) -> ManifestRecord:
+    if target is None:
+        download_flow.prepare_manifests(settings)
+        installed = install.ensure_install(settings)
+    else:
+        installed = install.ensure_manifest(target.manifest_id, settings)
 
     plan = mods.GameTreePlan.from_settings(installed.name, settings)
     mods.build_game_tree(plan)
     saves_dir = config.write_generated_config(settings).saves_dir
-    if saves_dir == SAVE_DIR:
-        return
-    saves_dir.mkdir(parents=True, exist_ok=True)
-    ownership_failed = False
-    for path in (saves_dir, *saves_dir.rglob("*")):
-        try:
-            chown(path, settings.puid, settings.pgid, follow_symlinks=False)
-        except OSError as exc:
-            if not ownership_failed:
-                logger.warning("Could not set ownership on %s: %s", path, exc)
-                ownership_failed = True
+    if saves_dir != SAVE_DIR:
+        saves_dir.mkdir(parents=True, exist_ok=True)
+        ownership_failed = False
+        for path in (saves_dir, *saves_dir.rglob("*")):
+            try:
+                chown(path, settings.puid, settings.pgid, follow_symlinks=False)
+            except OSError as exc:
+                if not ownership_failed:
+                    logger.warning("Could not set ownership on %s: %s", path, exc)
+                    ownership_failed = True
+
+    cached = manifests.cached_latest_manifest()
+    if cached is not None and cached.manifest_id == installed.name:
+        return cached
+    if target is not None and target.manifest_id == installed.name:
+        return target
+    return ManifestRecord(manifest_id=installed.name, timestamp="")
 
 
 def _setup_timezone(settings: AppSettings) -> None:
@@ -113,9 +128,35 @@ def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
         _setup_directories(settings)
         _setup_x11_socket()
         ensure_prefix(settings)
-        _prepare_install_and_config(settings)
+        active_manifest = _prepare_install_and_config(settings)
     except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
         logger.exception("Start failed")
         return 1
 
-    return ServerLifecycle(settings).run()
+    if is_auto_update_active(settings) and mods.mod_files():
+        logger.warning("Auto Update: mod files are present; automatic updates may break mods")
+
+    shutdown_event = threading.Event()
+    while True:
+        lifecycle = ServerLifecycle(
+            settings,
+            active_manifest=active_manifest,
+            shutdown_event=shutdown_event,
+        )
+        exit_code = lifecycle.run()
+        target = lifecycle.restart_manifest
+        if not lifecycle.restart_requested or exit_code != 0:
+            return exit_code
+        if shutdown_event.is_set():
+            return exit_code
+        if target is None:
+            logger.error("Auto Update: restart requested without a pending Manifest")
+            return 1
+        logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
+        try:
+            active_manifest = _prepare_install_and_config(settings, target=target)
+        except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
+            logger.exception("Update restart failed")
+            return 1
+        if shutdown_event.is_set():
+            return 0

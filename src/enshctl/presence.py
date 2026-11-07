@@ -103,6 +103,40 @@ class PresenceWarning:
 type PresenceEvent = PlayerJoined | PlayerLeft | PresenceWarning
 
 
+def presence_health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) -> str | None:
+    """Return the first readiness, stream, or tracker health veto."""
+    if not snapshot.ready:
+        return "world not ready"
+    if not stream_healthy:
+        return "stdout stream ended"
+    if snapshot.degraded:
+        return "tracker degraded"
+    return None
+
+
+def active_presence_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
+    """Return the first pending-join or active-player veto."""
+    if snapshot.pending_join_until is not None and now < snapshot.pending_join_until:
+        return "pending player join"
+    if snapshot.players:
+        return "players online"
+    return None
+
+
+def session_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
+    """Return the Session block validity veto, if any."""
+    if snapshot.session_malformed:
+        return "session block malformed"
+    if snapshot.session_complete_at is None:
+        return "session block missing"
+    if now - snapshot.session_complete_at > SESSION_BLOCK_TIMEOUT:
+        return "session block stale"
+    machines = snapshot.session_machines
+    if machines is None or 0 not in machines or any(index > 0 for index in machines):
+        return "session machine veto"
+    return None
+
+
 def _message(line: str) -> str:
     match = _LOG_PREFIX.match(line)
     return match["message"] if match is not None else line

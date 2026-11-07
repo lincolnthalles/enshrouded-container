@@ -26,6 +26,14 @@ class PauseGate:
             self._active += 1
             return True
 
+    def acquire_ignoring_quiet(self, stop_event: threading.Event) -> bool:
+        """Admit work that must proceed while quiet, or return False when stopping."""
+        with self._condition:
+            if stop_event.is_set():
+                return False
+            self._active += 1
+            return True
+
     def release(self) -> None:
         with self._condition:
             if self._active == 0:

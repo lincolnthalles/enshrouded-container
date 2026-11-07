@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _manifest_sort_key(manifest: ManifestRecord) -> tuple[int, int, int, int, int, int]:
+def manifest_sort_key(manifest: ManifestRecord) -> tuple[int, int, int, int, int, int]:
     """Parse a DepotDownloader manifest timestamp for chronological comparison.
 
     DepotDownloader prints ``MM/DD/YYYY HH:MM:SS``; lexicographic comparison
@@ -30,7 +30,7 @@ def _manifest_sort_key(manifest: ManifestRecord) -> tuple[int, int, int, int, in
     return (year, month, day, hour, minute, second)
 
 
-def _write_latest_manifest(manifest_id: str, timestamp: str, control_file: Path = LATEST_MANIFEST_FILE) -> None:
+def record_latest_manifest(manifest_id: str, timestamp: str, control_file: Path = LATEST_MANIFEST_FILE) -> None:
     """Persist the resolved latest manifest to a control file for offline fallback."""
     control_file.parent.mkdir(parents=True, exist_ok=True)
     content = f"{manifest_id}-{timestamp}"
@@ -40,18 +40,27 @@ def _write_latest_manifest(manifest_id: str, timestamp: str, control_file: Path 
     logger.info("Recorded latest manifest to %s", control_file)
 
 
-def _read_latest_manifest(control_file: Path = LATEST_MANIFEST_FILE) -> str | None:
-    """Read the previously recorded latest manifest ID from the control file."""
+def cached_latest_manifest(control_file: Path = LATEST_MANIFEST_FILE) -> ManifestRecord | None:
+    """Read the cached latest manifest ID and timestamp, if the control file is valid."""
     if not control_file.exists():
         return None
     content = control_file.read_text().strip()
     if not content:
         return None
     parts = content.split("-", 1)
-    if len(parts) != 2 or not parts[0].isdigit():
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
         logger.warning("Malformed control file %s: %s", control_file, content)
         return None
-    return parts[0]
+    return ManifestRecord(manifest_id=parts[0], timestamp=parts[1])
+
+
+def latest_manifest(fetch: Callable[[], list[ManifestRecord]] | None = None) -> ManifestRecord | None:
+    """Return the newest listed Manifest without installing or caching it."""
+    fetcher = fetch if fetch is not None else DepotDownloader().fetch_manifests
+    manifests = fetcher()
+    if not manifests:
+        return None
+    return max(manifests, key=manifest_sort_key)
 
 
 def resolve_manifest(
@@ -63,31 +72,29 @@ def resolve_manifest(
     """Resolve a VERSION value to a specific manifest ID."""
     fetcher = fetch if fetch is not None else DepotDownloader().fetch_manifests
     if not version_spec or version_spec == "latest":
-        manifests: list[ManifestRecord]
         fetch_error: SubprocessError | None = None
         try:
-            manifests = fetcher()
+            latest = latest_manifest(fetcher)
         except SubprocessError as exc:
             logger.warning("Manifest listing failed (%s); trying cached manifest", exc)
-            manifests = []
+            latest = None
             fetch_error = exc
-        if not manifests:
-            cached = _read_latest_manifest(control_file)
+        if latest is None:
+            cached = cached_latest_manifest(control_file)
             if cached is not None:
                 logger.warning(
                     "Falling back to cached manifest %s from %s",
-                    cached,
+                    cached.manifest_id,
                     control_file,
                 )
-                return cached
+                return cached.manifest_id
             if fetch_error is not None:
                 msg = f"Manifest listing failed and no cached manifest available: {fetch_error}"
                 raise InstallError(msg) from fetch_error
             msg = "No manifests found from DepotDownloader and no cached manifest available"
             raise InstallError(msg)
-        latest = max(manifests, key=_manifest_sort_key)
         logger.info("Resolved 'latest' to manifest %s (%s)", latest.manifest_id, latest.timestamp)
-        _write_latest_manifest(latest.manifest_id, latest.timestamp, control_file)
+        record_latest_manifest(latest.manifest_id, latest.timestamp, control_file)
         return latest.manifest_id
 
     if version_spec.startswith("build:"):

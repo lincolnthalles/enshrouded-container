@@ -511,6 +511,28 @@ def test_parse_cron_invalid_expression() -> None:
     assert parse_cron("not a cron") is None
 
 
+def test_parse_cron_uses_the_caller_fallback_for_unsupported_minutes() -> None:
+    # GIVEN an unsupported minute field and an Auto Update fallback
+    from enshctl.scheduling import parse_cron
+
+    # WHEN parsing
+    # THEN the caller fallback applies
+    assert parse_cron("*/0 * * * *", fallback=3600.0) == 3600.0
+
+
+def test_parse_cron_accepts_an_explicit_clock() -> None:
+    # GIVEN a fixed local clock at 14:37:00
+    import time
+
+    from enshctl.scheduling import parse_cron
+
+    fixed = time.struct_time((2026, 5, 30, 14, 37, 0, 4, 150, 0))
+
+    # WHEN parsing a */5 schedule
+    # THEN the next boundary is three minutes away
+    assert parse_cron("*/5 * * * *", now=fixed) == 180.0
+
+
 def test_select_empty_direction_returns_none(tmp_path: Path) -> None:
     # GIVEN a base directory
     base = tmp_path / "backups"

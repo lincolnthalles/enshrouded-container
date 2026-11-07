@@ -31,6 +31,33 @@ def test_quiet_window_waits_for_admitted_work() -> None:
     gate.release()
 
 
+def test_acquire_ignoring_quiet_still_blocks_a_new_window() -> None:
+    # GIVEN a quiet window with work that must proceed while quiet
+    gate = PauseGate()
+    stop = threading.Event()
+    assert gate.try_quiet() is True
+    assert gate.acquire_ignoring_quiet(stop) is True
+
+    # WHEN another quiet window is requested
+    # THEN it is refused until that work releases
+    assert gate.try_quiet() is False
+    gate.release()
+    assert gate.try_quiet() is True
+    gate.resume()
+
+
+def test_acquire_ignoring_quiet_refuses_when_stopping() -> None:
+    # GIVEN a stop request while a quiet window is held
+    gate = PauseGate()
+    stop = threading.Event()
+    stop.set()
+    assert gate.try_quiet() is True
+
+    # WHEN work that ignores quiet is admitted
+    # THEN it is refused
+    assert gate.acquire_ignoring_quiet(stop) is False
+
+
 def test_wait_until_running_returns_after_resume() -> None:
     # GIVEN a held quiet window
     gate = PauseGate()

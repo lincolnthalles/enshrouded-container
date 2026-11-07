@@ -1,10 +1,12 @@
 """Lifecycle value types and the server process contract."""
 
+import threading
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from enshctl.backup_protocol import Trigger
+    from enshctl.download.types import ManifestRecord
 
 
 class ServerProcess(Protocol):
@@ -36,3 +38,24 @@ class ExitRequest:
 
     trigger: Trigger | None
     exit_code: int
+
+
+class RestartRequest:
+    """One update restart request carrying its pending Manifest."""
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self._lock = threading.Lock()
+        self._manifest: ManifestRecord | None = None
+
+    def request(self, manifest: ManifestRecord) -> None:
+        with self._lock:
+            self._manifest = manifest
+            self.event.set()
+
+    def consume(self) -> ManifestRecord | None:
+        with self._lock:
+            manifest = self._manifest
+            self._manifest = None
+            self.event.clear()
+        return manifest

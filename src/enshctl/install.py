@@ -32,3 +32,22 @@ def ensure_install(
         host=host,
         source=source,
     )
+
+
+def ensure_manifest(
+    manifest_id: str,
+    settings: AppSettings,
+    *,
+    manifests_dir: Path = MANIFESTS_DIR,
+    host: HostIO | None = None,
+    source: DownloadIO | None = None,
+) -> Path:
+    """Ensure one specific Manifest ID is installed without re-resolving the Version spec."""
+    return download_version(
+        manifest_id,
+        settings,
+        manifests_dir=manifests_dir,
+        version_spec="latest",
+        host=host,
+        source=source,
+    )

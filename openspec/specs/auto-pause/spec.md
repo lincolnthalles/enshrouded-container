@@ -364,8 +364,10 @@ marker. A shutdown latch SHALL prevent a new pause from starting or completing.
 
 A pause SHALL hold a quiet window that starts only when no non-essential background work is in
 flight and lasts until the tree resumes or the attempt aborts. Scheduled live Backups (see
-`backup-system`), resource polling (see `resource-monitoring`), and periodic Player Presence
-summaries (see `player-presence`) are non-essential and SHALL NOT start while the window is held.
+`backup-system`), resource polling (see `resource-monitoring`), periodic Player Presence summaries
+(see `player-presence`), and Auto Update checks and downloads (see `auto-update`) are non-essential
+and SHALL NOT start while the window is held. While the tree is paused, Auto Update checks and
+downloads MAY proceed so an update can be prepared.
 
 When a pause is eligible while that work is in flight, the attempt SHALL be refused with a
 throttled `Auto Pause: cannot pause: background work in progress` warning. A later attempt SHALL
@@ -388,10 +390,16 @@ An attempt that aborts before suspension SHALL end the window. A manual pause, i
 
 #### Scenario: New work does not start in the quiet window
 
-- **WHEN** a quiet window is held and a scheduled backup, resource poll, or periodic summary becomes
-  due
+- **WHEN** a quiet window is held while the tree is running and a scheduled backup, resource poll,
+  periodic summary, Auto Update check, or Auto Update download becomes due
 - **THEN** that work SHALL NOT start
 - **AND** the tree SHALL NOT be suspended with the work in flight
+
+#### Scenario: Paused tree allows update preparation
+
+- **WHEN** the tree is paused and an Auto Update check or download becomes due
+- **THEN** the work MAY proceed
+- **AND** the pause SHALL remain in effect
 
 #### Scenario: Manual pause is refused while background work runs
 

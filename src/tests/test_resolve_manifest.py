@@ -275,3 +275,55 @@ def test_resolve_manifest_build_fetch_failure_raises(tmp_path: Path) -> None:
         manifests.resolve_manifest("build:999", control_file=control, fetch=_fail)
     # THEN the listing failure is chained as the cause instead of silently treating the build as a manifest ID
     assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
+
+
+def test_latest_manifest_returns_newest_without_writing_cache() -> None:
+    # GIVEN two listed Manifests out of order
+    found = [
+        ManifestRecord("older", "12/15/2025 12:00:00"),
+        ManifestRecord("newer", "01/05/2026 12:00:00"),
+    ]
+
+    # WHEN selecting the latest candidate
+    with patch.object(manifests, "record_latest_manifest") as mock_record:
+        result = manifests.latest_manifest(fetch=lambda: found)
+
+    # THEN the newest Manifest is returned and the cache write is not invoked
+    assert result == ManifestRecord("newer", "01/05/2026 12:00:00")
+    mock_record.assert_not_called()
+
+
+def test_latest_manifest_empty_listing_returns_none() -> None:
+    # GIVEN an empty listing
+    # WHEN selecting the latest candidate
+    # THEN no candidate exists
+    assert manifests.latest_manifest(fetch=list) is None
+
+
+def test_cached_latest_manifest_round_trips(tmp_path: Path) -> None:
+    # GIVEN a recorded Manifest ID and timestamp
+    control = tmp_path / ".latest-manifest"
+    control.write_text("999-05/29/2026 12:00:00")
+
+    # WHEN reading the cache
+    result = manifests.cached_latest_manifest(control)
+
+    # THEN both values are returned
+    assert result == ManifestRecord("999", "05/29/2026 12:00:00")
+
+
+def test_cached_latest_manifest_rejects_malformed(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a malformed control file
+    control = tmp_path / ".latest-manifest"
+    control.write_text("not-a-manifest")
+
+    # WHEN reading the cache
+    with caplog.at_level(logging.WARNING, logger="enshctl.manifests"):
+        result = manifests.cached_latest_manifest(control)
+
+    # THEN the cache is ignored with a warning
+    assert result is None
+    assert "Malformed control file" in caplog.text
