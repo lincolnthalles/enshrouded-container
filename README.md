@@ -5,11 +5,9 @@
 [![CI](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml)
 [![Build](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml)
 
-Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, automated backups and ntsync support.
+Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, automated backups, auto-update, auto-pause, and ntsync support.
 
 > [!TIP]
-> The container is working just fine with game version 1.0.
->
 > Images are published on [ghcr.io](https://github.com/lincolnthalles/enshrouded-container/pkgs/container/enshrouded-container).
 
 ## Requirements
@@ -84,15 +82,13 @@ docker compose down
 > Set `ENSHROUDED_USER_GROUPS__0__PASSWORD` to protect it:
 > `docker run -e ENSHROUDED_USER_GROUPS__0__PASSWORD=...`
 
-- The first start downloads the game server files (~8 GB) before launching. Check progress with `docker compose logs -f`. Later starts reuse the downloaded version; with `VERSION=latest`, Auto Update checks periodically and can restart into a newer version without recreating the container.
-
-- Automated backups are enabled by default: scheduled hourly plus one on every graceful stop, stored in `./enshrouded-data/backups/` (categories and retention below).
+The first start downloads the game server files (~8 GB) before launching, so it may take a while. Later starts reuse the downloaded version. Check progress with `docker compose logs -f`.
 
 Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and insert your server `IP address:15637` or domain name. When prompted, enter the password of the group you belong to — set via `ENSHROUDED_USER_GROUPS__*` in `.env`.
 
 ## Container Features
 
-- **Version pinning**: Pin exact game server versions via Steam manifest IDs. Set `VERSION=latest` (or omit it entirely) for automatic in-process updates (see Auto Update below) or `VERSION=<manifest_id>` for deterministic deployments.
+- **Version pinning**: Pin exact game server versions via Steam manifest IDs with `VERSION=<manifest_id>` for deterministic deployments.
 - **Auto Update**: With `VERSION=latest`, checks for a newer Manifest on a schedule, warns while an update is pending, and restarts into it when no players are online. Log-only mode reports without acting.
 - **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the game server install, keeping the original files untouched.
 - **Config via env vars**: Any `ENSHROUDED_*` env var is converted to a nested JSON key in `enshrouded_server.json`. Works with any config field, including future game updates.
@@ -178,7 +174,7 @@ are connected. It resumes automatically on client traffic.
 | `AUTO_PAUSE_WAKE_FILTER`  | `any`   | `any` wakes on any UDP to the query port; `ignore-a2s` ignores A2S queries. |
 
 <details>
-    <summary>CLI and innards</summary>
+    <summary>CLI and feature internals</summary>
 
 Control files live under `/data/config/autopause/`. The persistent `disabled` marker survives
 restarts; `paused`, `status.json`, and `request` are runtime state.
@@ -272,9 +268,18 @@ mods/                       # mounted to /data/mods
 
 Remove mods by cleaning the `mods` directory and restarting the container.
 
-> Mods are overlaid at runtime on top of the active game server manifest, meaning you can safely override server binaries or add plugins.
->
-> The required `WINEDLLOVERRIDES` environment variable is handled automatically for DLL files.
+> [!IMPORTANT]
+> When using mods, it's recommended to pin the game server version to a specific manifest.
+> Mods may break the server after a game server update, requiring their own updates.
+
+<details>
+<summary>Feature internals</summary>
+
+Mods are overlaid at runtime on top of the active game server manifest, meaning you can safely override server binaries or add plugins.
+
+The required `WINEDLLOVERRIDES` environment variable is handled automatically for DLL files.
+
+</details>
 
 ## Network Ports
 
@@ -289,8 +294,7 @@ Remove mods by cleaning the `mods` directory and restarting the container.
 Steam Depot _Manifests_ describe a specific snapshot or version of a game's content.
 
 > [!IMPORTANT]
-> Avoid rollbacks.
-> Database changes may occur between versions, and major rollbacks may break your world save.
+> Avoid version rollbacks. It may break your world save.
 
 Anonymous accounts can only download the latest manifest.
 
