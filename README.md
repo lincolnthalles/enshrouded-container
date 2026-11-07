@@ -140,7 +140,13 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 ### Auto Pause
 
 Auto Pause is opt-in and suspends the game and its Wine services with `SIGSTOP` when no players
-are connected. It resumes on client traffic, `enshctl autopause resume`, or `autopause disable`.
+are connected. It resumes automatically on client traffic.
+
+> [!NOTE]
+> Players will likely get a `The server is full or unavailable` error when trying to join a paused server.
+>
+> The server will wake up on this event and reconnect to Steam.
+> Inform the players to wait a minute and try joining again when facing that error.
 
 | Variable                  | Default | Description                                                                 |
 | ------------------------- | ------- | --------------------------------------------------------------------------- |
@@ -148,16 +154,20 @@ are connected. It resumes on client traffic, `enshctl autopause resume`, or `aut
 | `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.      |
 | `AUTO_PAUSE_WAKE_FILTER`  | `any`   | `any` wakes on any UDP to the query port; `ignore-a2s` ignores A2S queries. |
 
+<details>
+    <summary>CLI and innards</summary>
+
 Control files live under `/data/config/autopause/`. The persistent `disabled` marker survives
-restarts; `paused`, `status.json`, and `request` are runtime state. Use the CLI from inside the
-container or with `docker compose exec`:
+restarts; `paused`, `status.json`, and `request` are runtime state.
+
+Use the CLI from inside the container or with `docker compose exec`:
 
 ```bash
 enshctl autopause status
 enshctl autopause pause [--force]
 enshctl autopause resume
 enshctl autopause reset [--yes]
-enshctl autopause disable
+enshctl autopause disable 
 enshctl autopause enable
 ```
 
@@ -170,6 +180,8 @@ While Auto Pause is preparing to pause or has the server paused, scheduled live 
 polling, and periodic roster summaries are suspended. A pause attempt is refused while non-essential
 background work is running and is reattempted when it finishes; ticks skipped during the pause are
 not replayed after wake.
+
+</details>
 
 ### Enshrouded Server config (any `ENSHROUDED_*` prefix)
 
