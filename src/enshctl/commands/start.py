@@ -1,18 +1,16 @@
 """Start subcommand — startup wiring for the server lifecycle."""
 
 import logging
-import subprocess
 import threading
 import time
 from contextlib import suppress
-from os import chown, environ
+from dataclasses import dataclass
+from os import environ
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from enshctl import config, install, manifests, mods
+from enshctl import mods, staging
 from enshctl.commands.parser import CommandParser
-from enshctl.download import flow as download_flow
-from enshctl.download.types import InstallError, ManifestRecord
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
 from enshctl.lifecycle.auto_update import is_auto_update_active
@@ -28,11 +26,45 @@ from enshctl.paths import (
     X11_DIR,
 )
 from enshctl.settings import AppSettings, load_settings
+from enshctl.staging import STARTUP_ERRORS, PreparedServer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from enshctl.download.types import ManifestRecord
+
 logger = logging.getLogger(__name__)
+
+
+class StageCallable(Protocol):
+    """Callable that stages one Manifest selection."""
+
+    def __call__(
+        self,
+        settings: AppSettings,
+        *,
+        target: ManifestRecord | None = None,
+    ) -> PreparedServer: ...
+
+
+class BuildLifecycle(Protocol):
+    """Callable that constructs one Server lifecycle."""
+
+    def __call__(
+        self,
+        settings: AppSettings,
+        *,
+        active_manifest: ManifestRecord,
+        shutdown_event: threading.Event,
+    ) -> ServerLifecycle: ...
+
+
+@dataclass(frozen=True)
+class StartupSeams:
+    """Staging and lifecycle construction seams for one start invocation."""
+
+    stage: StageCallable = staging.stage
+    build_lifecycle: BuildLifecycle = ServerLifecycle
 
 
 def _setup_directories(settings: AppSettings) -> None:
@@ -63,39 +95,6 @@ def _setup_x11_socket() -> None:
     X11_DIR.chmod(0o1777)
 
 
-def _prepare_install_and_config(
-    settings: AppSettings,
-    *,
-    target: ManifestRecord | None = None,
-) -> ManifestRecord:
-    if target is None:
-        download_flow.prepare_manifests(settings)
-        installed = install.ensure_install(settings)
-    else:
-        installed = install.ensure_manifest(target.manifest_id, settings)
-
-    plan = mods.GameTreePlan.from_settings(installed.name, settings)
-    mods.build_game_tree(plan)
-    saves_dir = config.write_generated_config(settings).saves_dir
-    if saves_dir != SAVE_DIR:
-        saves_dir.mkdir(parents=True, exist_ok=True)
-        ownership_failed = False
-        for path in (saves_dir, *saves_dir.rglob("*")):
-            try:
-                chown(path, settings.puid, settings.pgid, follow_symlinks=False)
-            except OSError as exc:
-                if not ownership_failed:
-                    logger.warning("Could not set ownership on %s: %s", path, exc)
-                    ownership_failed = True
-
-    cached = manifests.cached_latest_manifest()
-    if cached is not None and cached.manifest_id == installed.name:
-        return cached
-    if target is not None and target.manifest_id == installed.name:
-        return target
-    return ManifestRecord(manifest_id=installed.name, timestamp="")
-
-
 def _setup_timezone(settings: AppSettings) -> None:
     tz = settings.tz
     zone_path = Path(f"/usr/share/zoneinfo/{tz}")
@@ -113,10 +112,16 @@ def _setup_timezone(settings: AppSettings) -> None:
         environ["TZ"] = "UTC"
 
 
-def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
+def run(
+    settings: AppSettings | None = None,
+    argv: Sequence[str] = (),
+    *,
+    seams: StartupSeams | None = None,
+) -> int:
     """Run the start subcommand — setup wiring plus the server lifecycle."""
     _ = CommandParser("Start subcommand").parse(argv)
     settings = settings or load_settings()
+    resolved = seams or StartupSeams()
 
     if "BACKUP_RETENTION" in environ:
         logger.warning("BACKUP_RETENTION is ignored. Use BACKUP_KEEP_LAST, BACKUP_KEEP_DAILY, etc. instead.")
@@ -128,8 +133,8 @@ def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
         _setup_directories(settings)
         _setup_x11_socket()
         ensure_prefix(settings)
-        active_manifest = _prepare_install_and_config(settings)
-    except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
+        prepared = resolved.stage(settings)
+    except STARTUP_ERRORS:
         logger.exception("Start failed")
         return 1
 
@@ -138,9 +143,9 @@ def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
 
     shutdown_event = threading.Event()
     while True:
-        lifecycle = ServerLifecycle(
+        lifecycle = resolved.build_lifecycle(
             settings,
-            active_manifest=active_manifest,
+            active_manifest=prepared.active_manifest,
             shutdown_event=shutdown_event,
         )
         exit_code = lifecycle.run()
@@ -154,8 +159,8 @@ def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
             return 1
         logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
         try:
-            active_manifest = _prepare_install_and_config(settings, target=target)
-        except InstallError, OSError, subprocess.SubprocessError, ValueError, mods.GameTreeError:
+            prepared = resolved.stage(settings, target=target)
+        except STARTUP_ERRORS:
             logger.exception("Update restart failed")
             return 1
         if shutdown_event.is_set():

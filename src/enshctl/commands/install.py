@@ -3,9 +3,8 @@
 import logging
 from typing import TYPE_CHECKING
 
-from enshctl import install
+from enshctl import staging
 from enshctl.commands.parser import CommandParser
-from enshctl.download import flow as download_flow
 from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings, load_settings
 
@@ -21,8 +20,7 @@ def run(settings: AppSettings | None = None, argv: Sequence[str] = ()) -> int:
     settings = settings or load_settings()
     logger.info("Installing game version: %s (force=%s)", settings.version, settings.force_install)
     try:
-        download_flow.prepare_manifests(settings)
-        target = install.ensure_install(settings)
+        target = staging.ensure_installed(settings)
     except InstallError:
         logger.exception("Install failed")
         return 1

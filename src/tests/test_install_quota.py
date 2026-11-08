@@ -6,11 +6,10 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from enshctl import install
 from enshctl.disk_space import SpaceGuard
 from enshctl.download.flow import download_version
 from enshctl.download.io import DownloadIO, HostIO
-from enshctl.download.types import InstallError, ManifestRecord
+from enshctl.download.types import InstallError
 from enshctl.paths import DEPOT_ID, STATUS_FILE
 from enshctl.settings import AppSettings
 
@@ -130,74 +129,6 @@ class TestDownloadVersionQuota:
                 host=cast("HostIO", _host(7 * 1024**3)),
                 source=cast("DownloadIO", _download()),
             )
-
-
-def test_ensure_install_uses_default_resolve(tmp_path: Path) -> None:
-    # GIVEN a build Version spec whose resolved Manifest ID differs from the spec
-    settings = _settings(version="build:999")
-    host = _host()
-    download = _download()
-    manifests_dir = tmp_path / "manifests"
-    found = [ManifestRecord(manifest_id="123999", timestamp="05/29/2026 12:00:00")]
-
-    with patch("enshctl.manifests.DepotDownloader") as mock_adapter:
-        mock_adapter.return_value.fetch_manifests.return_value = found
-        # WHEN ensuring the install without an injected resolver
-        result = install.ensure_install(
-            settings,
-            manifests_dir=manifests_dir,
-            host=cast("HostIO", host),
-            source=cast("DownloadIO", download),
-        )
-
-    # THEN the default resolver maps the build spec to the listed Manifest ID
-    assert result == manifests_dir / "123999"
-    download.download_depots.assert_called_once()
-
-
-def test_ensure_install_uses_custom_manifests_dir_and_seams(tmp_path: Path) -> None:
-    # GIVEN a custom manifests directory and injected host/download adapters
-    settings = _settings(version="999")
-    host = _host()
-    download = _download()
-    manifests_dir = tmp_path / "manifests"
-
-    # WHEN ensuring the install
-    result = install.ensure_install(
-        settings,
-        manifests_dir=manifests_dir,
-        resolve=lambda _spec: "999",
-        host=cast("HostIO", host),
-        source=cast("DownloadIO", download),
-    )
-
-    # THEN the exact version directory is downloaded through the injected seams
-    assert result == manifests_dir / "999"
-    download.download_depots.assert_called_once()
-    host.chown.assert_called_once()
-
-
-def test_ensure_manifest_skips_version_resolution(tmp_path: Path) -> None:
-    # GIVEN a pinned Version spec and an explicit pending Manifest ID
-    settings = _settings(version="build:999")
-    host = _host()
-    download = _download()
-    manifests_dir = tmp_path / "manifests"
-
-    # WHEN ensuring the explicit Manifest
-    with patch("enshctl.install.resolve_manifest") as mock_resolve:
-        result = install.ensure_manifest(
-            "999",
-            settings,
-            manifests_dir=manifests_dir,
-            host=cast("HostIO", host),
-            source=cast("DownloadIO", download),
-        )
-
-    # THEN the explicit ID is downloaded without re-resolving the Version spec
-    assert result == manifests_dir / "999"
-    mock_resolve.assert_not_called()
-    download.download_depots.assert_called_once()
 
 
 class TestDownloadVersionLifecycle:
