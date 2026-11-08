@@ -31,6 +31,7 @@ from enshctl.staging import STARTUP_ERRORS, PreparedServer
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from enshctl.config import SaveDirectories
     from enshctl.download.types import ManifestRecord
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class BuildLifecycle(Protocol):
         *,
         active_manifest: ManifestRecord,
         shutdown_event: threading.Event,
+        save_directories: SaveDirectories,
     ) -> ServerLifecycle: ...
 
 
@@ -147,6 +149,7 @@ def run(
             settings,
             active_manifest=prepared.active_manifest,
             shutdown_event=shutdown_event,
+            save_directories=prepared.save_directories,
         )
         exit_code = lifecycle.run()
         target = lifecycle.restart_manifest

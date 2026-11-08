@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 from enshctl.backup.core import BackupPlan, create_backup as create_backup_impl, resolve_format
 from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
-from enshctl.config import generated_save_directories
+from enshctl.config import generated_save_directories, resolve_save_directory
 from enshctl.disk_space import SpaceGuard
 from enshctl.retention import RetentionPolicy
 
@@ -132,9 +132,17 @@ def run_request(request: BackupRequest, settings: AppSettings, *, seams: BackupS
         return BackupOutcome.LOCK_HELD
 
     try:
+        if request.saves_dir is not None:
+            saves_dir = resolve_save_directory(
+                str(request.saves_dir),
+                backup_dir=Path(settings.backup_dir),
+                origin="Backup request Save directory",
+            )
+        else:
+            saves_dir = seams.resolve_saves_dir(settings)
         plan = BackupPlan.from_settings(
             settings,
-            saves_dir=seams.resolve_saves_dir(settings),
+            saves_dir=saves_dir,
             fmt=fmt,
             level=request.level,
         )

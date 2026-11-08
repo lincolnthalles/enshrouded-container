@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from enshctl import config, resources
+from enshctl import resources
 from enshctl.backup.core import backup_needed as backup_is_needed
 from enshctl.download import flow as download_flow
 from enshctl.lifecycle import backup, gamelog, server, wine
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from enshctl.backup_protocol import BackupRequest
+    from enshctl.config import SaveDirectories
     from enshctl.download.types import ManifestRecord
     from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.server import WineTree
@@ -140,17 +141,22 @@ class SystemLifecycleIO:
     """Production side-effect adapter — backup spawning, Wine cleanup, and the PID file."""
 
     settings: AppSettings
+    save_directories: SaveDirectories
     pid_file: PidFile = field(default_factory=PidFile)
 
     def backup_needed(self) -> bool:
-        saves_dir = config.generated_save_directories(settings=self.settings).saves_dir
-        return backup_is_needed(saves_dir)
+        return backup_is_needed(self.save_directories.saves_dir)
 
     def run_backup(self, request: BackupRequest) -> None:
-        backup.run_backup(request)
+        backup.run_backup(request, saves_dir=self.save_directories.saves_dir)
 
     def start_scheduler(self, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
-        return backup.start_scheduler(self.settings.backup_cron, stop_event, pause_gate=pause_gate)
+        return backup.start_scheduler(
+            self.settings.backup_cron,
+            stop_event,
+            pause_gate=pause_gate,
+            saves_dir=self.save_directories.saves_dir,
+        )
 
     def start_updater(
         self,

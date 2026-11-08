@@ -2,6 +2,7 @@
 
 import argparse
 from argparse import Namespace
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -68,6 +69,7 @@ def test_backup_request_argv_round_trip(category: Category, flag: list[str]) -> 
         wait=7,
         format=None,
         level=None,
+        saves_dir=None,
     )
     # THEN the child reconstructs the same request
     assert BackupRequest.from_argv(args) == request
@@ -79,10 +81,37 @@ def test_backup_request_argv_carries_compression_options() -> None:
 
     # WHEN it crosses the child-process seam
     assert request.to_argv() == ["--cold", "--format", "gzip", "--level", "5"]
-    args = Namespace(cold=True, emergency=False, wait=0, format="gzip", level=5)
+    args = Namespace(cold=True, emergency=False, wait=0, format="gzip", level=5, saves_dir=None)
 
     # THEN the child reconstructs the same request
     assert BackupRequest.from_argv(args) == request
+
+
+def test_backup_request_argv_carries_resolved_save_dir() -> None:
+    # GIVEN a request carrying the parent's resolved Save directory
+    saves = Path("/mnt/nfs/saves")
+    request = BackupRequest(category=Category.LIVE, saves_dir=saves)
+
+    # WHEN it crosses the child-process seam
+    assert request.to_argv() == ["--saves-dir", str(saves)]
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    args = parser.parse_args(["--saves-dir", str(saves)])
+
+    # THEN the child parser reconstructs the same request
+    assert BackupRequest.from_argv(args) == request
+
+
+def test_saves_dir_flag_is_hidden_from_help() -> None:
+    # GIVEN the backup child parser
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+
+    # WHEN rendering help
+    help_text = parser.format_help()
+
+    # THEN the internal parent-to-child flag is not advertised
+    assert "--saves-dir" not in help_text
 
 
 def test_backup_request_rejects_unknown_category() -> None:

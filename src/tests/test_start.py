@@ -16,8 +16,14 @@ if TYPE_CHECKING:
     import pytest
 
 
-def _prepared(manifest: ManifestRecord) -> PreparedServer:
-    return PreparedServer(active_manifest=manifest, save_directories=SaveDirectories(SAVE_DIR))
+def _prepared(
+    manifest: ManifestRecord,
+    save_directories: SaveDirectories | None = None,
+) -> PreparedServer:
+    return PreparedServer(
+        active_manifest=manifest,
+        save_directories=save_directories or SaveDirectories(SAVE_DIR),
+    )
 
 
 def _seams(stage: MagicMock, build_lifecycle: MagicMock) -> start_cmd.StartupSeams:
@@ -91,6 +97,7 @@ def test_run_returns_lifecycle_code() -> None:
     assert code == 7
     build_lifecycle.assert_called_once()
     assert build_lifecycle.call_args.kwargs["active_manifest"] == manifest
+    assert build_lifecycle.call_args.kwargs["save_directories"] == SaveDirectories(SAVE_DIR)
 
 
 def test_start_relaunches_with_pending_manifest() -> None:
@@ -98,6 +105,8 @@ def test_start_relaunches_with_pending_manifest() -> None:
     settings = replace(AppSettings(), version="latest")
     active = ManifestRecord("111", "05/29/2026 12:00:00")
     target = ManifestRecord("222", "05/29/2026 13:00:00")
+    active_saves = SaveDirectories(SAVE_DIR)
+    target_saves = SaveDirectories(Path("/mnt/next/saves"))
     first = MagicMock()
     first.run.return_value = 0
     first.restart_requested = True
@@ -105,7 +114,7 @@ def test_start_relaunches_with_pending_manifest() -> None:
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
-    stage = MagicMock(side_effect=[_prepared(active), _prepared(target)])
+    stage = MagicMock(side_effect=[_prepared(active, active_saves), _prepared(target, target_saves)])
     build_lifecycle = MagicMock(side_effect=[first, second])
 
     with (
@@ -123,6 +132,9 @@ def test_start_relaunches_with_pending_manifest() -> None:
     assert build_lifecycle.call_count == 2
     assert build_lifecycle.call_args_list[0].kwargs["active_manifest"] == active
     assert build_lifecycle.call_args_list[1].kwargs["active_manifest"] == target
+    assert build_lifecycle.call_args_list[0].kwargs["save_directories"] == active_saves
+    assert build_lifecycle.call_args_list[1].kwargs["save_directories"] == target_saves
+    assert active_saves != target_saves
     stage.assert_any_call(settings, target=target)
 
 

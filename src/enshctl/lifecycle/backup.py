@@ -4,6 +4,7 @@ import logging
 import re
 import subprocess
 import threading
+from dataclasses import replace
 from os import environ
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,7 @@ from enshctl.settings import backup_child_env
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from enshctl.lifecycle.pause_gate import PauseGate
 
@@ -24,9 +26,16 @@ logger = logging.getLogger(__name__)
 _CHILD_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \[\w+\] ")
 
 
-def run_backup(request: BackupRequest | None = None, *, env: Mapping[str, str] | None = None) -> None:
+def run_backup(
+    request: BackupRequest | None = None,
+    *,
+    saves_dir: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> None:
     """Run a backup subprocess for the given request (live by default)."""
     request = request or BackupRequest.for_trigger(Trigger.SCHEDULED)
+    if saves_dir is not None:
+        request = replace(request, saves_dir=saves_dir)
     source = environ if env is None else env
     child_env = {**base_env(source), **backup_child_env(source)}
     try:
@@ -60,18 +69,33 @@ def run_backup(request: BackupRequest | None = None, *, env: Mapping[str, str] |
             logger.log(BACKUP, _strip_child_prefix(line))
 
 
-def start_scheduler(cron_expr: str, stop_event: threading.Event, *, pause_gate: PauseGate) -> threading.Thread:
+def start_scheduler(
+    cron_expr: str,
+    stop_event: threading.Event,
+    *,
+    pause_gate: PauseGate,
+    saves_dir: Path | None = None,
+) -> threading.Thread:
     """Start the daemon thread that runs scheduled live backups."""
-    thread = threading.Thread(target=_scheduler_loop, args=(cron_expr, stop_event, pause_gate), daemon=True)
+    thread = threading.Thread(
+        target=_scheduler_loop,
+        args=(cron_expr, stop_event, pause_gate, saves_dir),
+        daemon=True,
+    )
     thread.start()
     return thread
 
 
-def _scheduler_loop(cron_expr: str, stop_event: threading.Event, pause_gate: PauseGate) -> None:
+def _scheduler_loop(
+    cron_expr: str,
+    stop_event: threading.Event,
+    pause_gate: PauseGate,
+    saves_dir: Path | None,
+) -> None:
     """Run scheduled backups as subprocesses. First backup runs immediately."""
     if stop_event.is_set():
         return
-    _run_scheduled_backup(stop_event, pause_gate)
+    _run_scheduled_backup(stop_event, pause_gate, saves_dir)
     while not stop_event.is_set():
         interval = parse_cron(cron_expr)
         if interval is None:
@@ -80,16 +104,20 @@ def _scheduler_loop(cron_expr: str, stop_event: threading.Event, pause_gate: Pau
             break
         if stop_event.is_set():
             break
-        _run_scheduled_backup(stop_event, pause_gate)
+        _run_scheduled_backup(stop_event, pause_gate, saves_dir)
 
 
-def _run_scheduled_backup(stop_event: threading.Event, pause_gate: PauseGate) -> None:
+def _run_scheduled_backup(
+    stop_event: threading.Event,
+    pause_gate: PauseGate,
+    saves_dir: Path | None,
+) -> None:
     if not pause_gate.acquire(stop_event):
         if not stop_event.is_set():
             logger.debug("Scheduled backup skipped: quiet window held")
         return
     try:
-        run_backup(BackupRequest.for_trigger(Trigger.SCHEDULED))
+        run_backup(BackupRequest.for_trigger(Trigger.SCHEDULED), saves_dir=saves_dir)
     finally:
         pause_gate.release()
 

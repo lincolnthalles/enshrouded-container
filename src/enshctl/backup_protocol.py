@@ -1,8 +1,9 @@
 """Backup parent/child protocol — outcome enum and typed request shared across the seam."""
 
-import argparse  # noqa: TC003 — add_arguments builds a real parser at runtime
+import argparse
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
+from pathlib import Path
 
 from enshctl.backup.category import Category
 
@@ -38,6 +39,7 @@ class BackupRequest:
     detach: bool = False
     fmt: str | None = None
     level: int | None = None
+    saves_dir: Path | None = None
 
     def __post_init__(self) -> None:
         """Coerce a raw Category string into the enum."""
@@ -68,6 +70,8 @@ class BackupRequest:
             argv.extend(["--format", self.fmt])
         if self.level is not None:
             argv.extend(["--level", str(self.level)])
+        if self.saves_dir is not None:
+            argv.extend(["--saves-dir", str(self.saves_dir)])
         return argv
 
     @classmethod
@@ -77,12 +81,20 @@ class BackupRequest:
             category = Category.COLD
         elif args.emergency:
             category = Category.EMERGENCY
-        return cls(category=category, wait_seconds=args.wait, fmt=args.format, level=args.level)
+        return cls(
+            category=category,
+            wait_seconds=args.wait,
+            fmt=args.format,
+            level=args.level,
+            saves_dir=args.saves_dir,
+        )
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--format", default=None, type=str.lower, choices=["zstd", "gzip", "zip"])
     parser.add_argument("--level", type=int, default=None)
+    # Parent-to-child propagation only; this is not an operator-facing option.
+    parser.add_argument("--saves-dir", default=None, type=Path, help=argparse.SUPPRESS)
     category = parser.add_mutually_exclusive_group()
     category.add_argument("--cold", action="store_true", default=False)
     category.add_argument("--emergency", action="store_true", default=False)

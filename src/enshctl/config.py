@@ -215,25 +215,25 @@ def load_base_config() -> dict[str, Any]:
     return {}
 
 
-def _resolve_save_dir(raw: object, *, backup_dir: Path) -> Path:
-    """Resolve one saveDirectory value to a safe, absolute path."""
+def resolve_save_directory(raw: object, *, backup_dir: Path, origin: str = "Generated saveDirectory") -> Path:
+    """Resolve one saveDirectory value to a safe, absolute path, labeling warnings with `origin`."""
     if not isinstance(raw, str):
-        logger.warning("Generated saveDirectory %r is not a string; using %s", raw, SAVE_DIR)
+        logger.warning("%s %r is not a string; using %s", origin, raw, SAVE_DIR)
         return SAVE_DIR
     if not raw.strip():
         return SAVE_DIR
     if "\x00" in raw:
-        logger.warning("Generated saveDirectory contains a NUL byte; using %s", SAVE_DIR)
+        logger.warning("%s contains a NUL byte; using %s", origin, SAVE_DIR)
         return SAVE_DIR
 
     try:
         configured = Path(raw.strip())
         if not configured.is_absolute():
-            logger.warning("Generated saveDirectory %r is not absolute; using %s", raw, SAVE_DIR)
+            logger.warning("%s %r is not absolute; using %s", origin, raw, SAVE_DIR)
             return SAVE_DIR
         saves_dir = configured.resolve(strict=False)
     except OSError, RuntimeError, ValueError:
-        logger.warning("Generated saveDirectory %r is not a valid path; using %s", raw, SAVE_DIR)
+        logger.warning("%s %r is not a valid path; using %s", origin, raw, SAVE_DIR)
         return SAVE_DIR
 
     protected = (backup_dir, BACKUP_BASE_DIR, CONFIG_DIR, LOG_DIR, MANIFESTS_DIR, MOD_OVERLAY_DIR, WINE_PREFIX)
@@ -247,7 +247,7 @@ def _resolve_save_dir(raw: object, *, backup_dir: Path) -> Path:
             or saves_dir.is_relative_to(protected_path)
             or protected_path.is_relative_to(saves_dir)
         ):
-            logger.warning("Generated saveDirectory %s overlaps protected path %s; using %s", saves_dir, path, SAVE_DIR)
+            logger.warning("%s %s overlaps protected path %s; using %s", origin, saves_dir, path, SAVE_DIR)
             return SAVE_DIR
     return saves_dir
 
@@ -274,7 +274,7 @@ def generated_save_directories(
         logger.warning("Generated config %s is not an object; using %s for saves", config_path, SAVE_DIR)
         return SaveDirectories(SAVE_DIR)
 
-    resolved = _resolve_save_dir(generated.get("saveDirectory"), backup_dir=Path(settings.backup_dir))
+    resolved = resolve_save_directory(generated.get("saveDirectory"), backup_dir=Path(settings.backup_dir))
     return SaveDirectories(resolved)
 
 
@@ -363,7 +363,7 @@ def write_generated_config(settings: AppSettings) -> SaveDirectories:
     """Resolve the save directory and write the Generated config once."""
     generated = generate_config()
     configured = str(generated["saveDirectory"])
-    directories = SaveDirectories(_resolve_save_dir(configured, backup_dir=Path(settings.backup_dir)))
+    directories = SaveDirectories(resolve_save_directory(configured, backup_dir=Path(settings.backup_dir)))
     if Path(configured) != directories.saves_dir:
         logger.warning("Using save directory %s instead of %s", directories.saves_dir, configured)
         generated["saveDirectory"] = str(directories.saves_dir)

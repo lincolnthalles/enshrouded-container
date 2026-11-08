@@ -13,6 +13,7 @@ from enshctl.backup.run import BackupSeams, lower_priority, run_request
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.config import SaveDirectories
 from enshctl.disk_space import SpaceGuard
+from enshctl.paths import SAVE_DIR
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ def _seams(
     lock: FakeLock | None = None,
     clock: FakeClock | None = None,
     saves_dir: Path = Path("/data/saves"),
+    resolve_saves_dir: Callable[[AppSettings], Path] | None = None,
     create: FakeCreator | None = None,
     lower_priority: Callable[[], None] | None = None,
 ) -> BackupSeams:
@@ -72,7 +74,7 @@ def _seams(
         lock=lock or FakeLock(),
         clock=clock or FakeClock([0.0]),
         space_guard=SpaceGuard(),
-        resolve_saves_dir=lambda _settings: saves_dir,
+        resolve_saves_dir=resolve_saves_dir or (lambda _settings: saves_dir),
         create_backup=create or FakeCreator(),
         lower_priority=lower_priority or (lambda: None),
     )
@@ -114,6 +116,50 @@ def test_run_request_locks_plans_and_creates(tmp_path: Path) -> None:
     assert plan.fmt is BackupFormat.GZIP
     assert plan.level == 5
     assert space_guard is seams.space_guard
+
+
+def test_run_request_prefers_request_saves_dir(tmp_path: Path) -> None:
+    # GIVEN a request carrying a resolved Save directory and a fallback resolver
+    settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+    saves = tmp_path / "resolved" / "saves"
+    resolved: list[AppSettings] = []
+
+    def resolve_fallback(settings: AppSettings) -> Path:
+        resolved.append(settings)
+        return tmp_path / "fallback" / "saves"
+
+    create = FakeCreator()
+    seams = _seams(create=create, resolve_saves_dir=resolve_fallback)
+
+    # WHEN running the request
+    result = run_request(BackupRequest(saves_dir=saves), settings, seams=seams)
+
+    # THEN the request value reaches the plan and the fallback is skipped
+    assert result == BackupOutcome.SUCCESS
+    _category, plan, _space = create.calls[0]
+    assert plan.saves_dir == saves
+    assert resolved == []
+
+
+def test_run_request_rejects_unsafe_request_saves_dir(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a request whose Save directory is the filesystem root
+    settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
+    create = FakeCreator()
+    seams = _seams(create=create)
+
+    # WHEN running the request
+    with caplog.at_level("WARNING", logger="enshctl.config"):
+        result = run_request(BackupRequest(saves_dir=Path("/")), settings, seams=seams)
+
+    # THEN the guarded default Save directory reaches the plan
+    assert result == BackupOutcome.SUCCESS
+    _category, plan, _space = create.calls[0]
+    assert plan.saves_dir == SAVE_DIR
+    assert any("Backup request Save directory" in record.message for record in caplog.records)
+    assert any("overlaps protected path" in record.message for record in caplog.records)
 
 
 def test_run_request_reports_lock_held_without_creating(

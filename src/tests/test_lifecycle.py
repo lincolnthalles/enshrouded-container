@@ -12,9 +12,11 @@ from enshctl.config import SaveDirectories
 from enshctl.download.types import ManifestRecord
 from enshctl.lifecycle import runtime
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
+from enshctl.lifecycle.io import SystemLifecycleIO
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.runtime import ServerLifecycle, exit_server
 from enshctl.lifecycle.types import ExitRequest, RestartRequest, ServerProcess
+from enshctl.paths import SAVE_DIR
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -338,6 +340,7 @@ def test_lifecycle_shared_shutdown_aborts_before_launch() -> None:
             _settings(backup_live=False, backup_cold=False, backup_emergency=False),
             process_control=control,
             lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
             shutdown_event=shutdown,
         ).run()
 
@@ -362,6 +365,7 @@ def test_lifecycle_signal_before_launch_preserves_shutdown_backup() -> None:
         ),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
     )
 
     # WHEN preparation triggers the shutdown before any server launch
@@ -393,7 +397,9 @@ def test_lifecycle_starts_auto_pause_and_resumes_on_exit() -> None:
         patch.object(runtime.signal, "signal"),
         patch.object(runtime.ServerLifecycle, "_build_auto_pause", return_value=pause),
     ):
-        code = runtime.ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        code = runtime.ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN Auto Pause starts after the stream and stops/resumes on exit
     assert code == 0
@@ -433,17 +439,76 @@ def test_lifecycle_shares_one_pause_gate(tmp_path: Path) -> None:
         patch.object(runtime, "AutoPauseController", _CapturedAutoPause),
         patch.object(runtime, "PlayerReporter", _CapturedReporter),
         patch.object(runtime.config, "generated_query_endpoint", return_value=None),
-        patch.object(runtime.config, "generated_save_directories", return_value=SaveDirectories(tmp_path)),
     ):
-        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        code = ServerLifecycle(
+            settings,
+            process_control=control,
+            lifecycle_io=io,
+            save_directories=SaveDirectories(tmp_path),
+        ).run()
 
     # THEN the controller, reporter, scheduler, and resource poller share one gate
     gate = captured["pause_gate"]
     assert code == 0
+    assert captured["saves_dir"] == tmp_path
     assert isinstance(gate, PauseGate)
     assert captured["reporter_gate"] is gate
     assert control.resource_gate is gate
     assert io.scheduler_gate is gate
+
+
+def test_system_lifecycle_io_backup_needed_uses_injected_save_dir(tmp_path: Path) -> None:
+    # GIVEN a Save directory with a world save and an empty Save directory
+    settings = _settings()
+    saves = tmp_path / "saves"
+    saves.mkdir()
+    (saves / "world.ksd").write_bytes(b"save")
+    io = SystemLifecycleIO(settings=settings, save_directories=SaveDirectories(saves))
+
+    # WHEN checking whether a backup is needed
+    has_saves = io.backup_needed()
+    (saves / "world.ksd").unlink()
+    is_empty = io.backup_needed()
+
+    # THEN the injected Save directory is used without re-reading the Generated config
+    assert has_saves is True
+    assert is_empty is False
+
+
+def test_system_lifecycle_io_forwards_save_dir_to_backup(tmp_path: Path) -> None:
+    # GIVEN a lifecycle IO bound to an explicit Save directory
+    settings = _settings()
+    saves = tmp_path / "saves"
+    io = SystemLifecycleIO(settings=settings, save_directories=SaveDirectories(saves))
+    request = BackupRequest()
+
+    # WHEN running a backup
+    with patch("enshctl.lifecycle.io.backup.run_backup") as mock_run:
+        io.run_backup(request)
+
+    # THEN the resolved Save directory crosses the subprocess seam
+    mock_run.assert_called_once_with(request, saves_dir=saves)
+
+
+def test_system_lifecycle_io_forwards_save_dir_to_scheduler(tmp_path: Path) -> None:
+    # GIVEN a lifecycle IO bound to an explicit Save directory
+    settings = _settings()
+    saves = tmp_path / "saves"
+    io = SystemLifecycleIO(settings=settings, save_directories=SaveDirectories(saves))
+    stop = threading.Event()
+    gate = PauseGate()
+
+    # WHEN starting the scheduler
+    with patch("enshctl.lifecycle.io.backup.start_scheduler") as mock_start:
+        io.start_scheduler(stop, pause_gate=gate)
+
+    # THEN the resolved Save directory crosses to scheduled backups
+    mock_start.assert_called_once_with(
+        settings.backup_cron,
+        stop,
+        pause_gate=gate,
+        saves_dir=saves,
+    )
 
 
 def test_lifecycle_startup_clears_transient_auto_pause_state(tmp_path: Path) -> None:
@@ -465,6 +530,7 @@ def test_lifecycle_startup_clears_transient_auto_pause_state(tmp_path: Path) -> 
             _settings(backup_live=False, backup_cold=False, backup_emergency=False),
             process_control=process_control,
             lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
             control_files=control_files,
         ).run()
 
@@ -532,6 +598,7 @@ def test_lifecycle_update_restart_uses_pending_manifest() -> None:
         _settings(backup_live=False, backup_cold=False, backup_emergency=False),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
         active_manifest=active,
     )
     codes: list[int] = []
@@ -564,6 +631,7 @@ def test_lifecycle_update_restart_stop_failure_exits_without_relaunch() -> None:
         _settings(backup_live=False, backup_cold=False, backup_emergency=False),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
         active_manifest=ManifestRecord("111", "05/29/2026 12:00:00"),
     )
     codes: list[int] = []
@@ -765,7 +833,9 @@ def test_run_returns_crash_code() -> None:
 
     # WHEN the lifecycle runs
     with patch.object(runtime.signal, "signal"):
-        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        code = ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN the server code is returned after the emergency backup and cleanup
     assert code == 9
@@ -784,7 +854,9 @@ def test_run_starts_scheduler_when_live_enabled() -> None:
 
     # WHEN the lifecycle runs
     with patch.object(runtime.signal, "signal"):
-        ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN the scheduler starts
     assert "scheduler" in events
@@ -800,7 +872,9 @@ def test_run_skips_scheduler_when_live_disabled() -> None:
 
     # WHEN the lifecycle runs
     with patch.object(runtime.signal, "signal"):
-        ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN no scheduler starts
     assert "scheduler" not in events
@@ -823,7 +897,9 @@ def test_run_wires_player_hook_and_logs_join(caplog: pytest.LogCaptureFixture) -
 
     # WHEN the lifecycle runs
     with patch.object(runtime.signal, "signal"), caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
-        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        code = ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN the stream receives the presence hook and the join is reported
     assert code == 0
@@ -848,7 +924,9 @@ def test_run_suppresses_player_lines_when_output_disabled(caplog: pytest.LogCapt
 
     # WHEN the lifecycle runs
     with patch.object(runtime.signal, "signal"), caplog.at_level("INFO", logger="enshctl.lifecycle.players"):
-        code = ServerLifecycle(settings, process_control=control, lifecycle_io=io).run()
+        code = ServerLifecycle(
+            settings, process_control=control, lifecycle_io=io, save_directories=SaveDirectories(SAVE_DIR)
+        ).run()
 
     # THEN the hook still runs but no roster line is emitted
     assert code == 0
@@ -866,6 +944,7 @@ def test_run_shutdown_before_start_skips_launch() -> None:
         _settings(backup_cold=False, backup_emergency=False),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
     )
     lifecycle.request_shutdown()
 
@@ -902,6 +981,7 @@ def test_signal_handler_records_without_side_effects() -> None:
         _settings(backup_cold=False, backup_emergency=False),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
     )
 
     # WHEN SIGTERM arrives while the server is starting
@@ -925,6 +1005,7 @@ def test_repeated_shutdown_request_is_ignored() -> None:
         _settings(backup_cold=False, backup_emergency=False),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
     )
 
     # WHEN a second request arrives
@@ -953,6 +1034,7 @@ def test_run_cleans_up_when_pid_write_fails() -> None:
             _settings(backup_cold=False, backup_emergency=False),
             process_control=control,
             lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
         ).run()
 
     # THEN the server is stopped and Wine cleanup still runs without clearing another owner's marker
@@ -976,6 +1058,7 @@ def test_run_cleans_up_when_streaming_fails() -> None:
             _settings(backup_cold=False, backup_emergency=False),
             process_control=control,
             lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
         ).run()
 
     # THEN the server is stopped and cleanup still runs
@@ -997,6 +1080,7 @@ def test_run_launch_failure_skips_backup() -> None:
             _settings(backup_cold=False, backup_emergency=True),
             process_control=control,
             lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
         ).run()
 
     # THEN it exits 1 with Wine cleanup but no PID clear or emergency backup
@@ -1015,6 +1099,7 @@ def test_shutdown_signal_during_exit_preserves_request() -> None:
         _settings(backup_cold=False, backup_emergency=True),
         process_control=control,
         lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
     )
     process.on_wait = lifecycle.request_shutdown
 

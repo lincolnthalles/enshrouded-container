@@ -23,6 +23,7 @@ from enshctl.presence import PresenceTracker
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from enshctl.config import SaveDirectories
     from enshctl.download.types import ManifestRecord
     from enshctl.settings import AppSettings
 
@@ -125,6 +126,7 @@ class ServerLifecycle:
         self,
         settings: AppSettings,
         *,
+        save_directories: SaveDirectories,
         process_control: ProcessControl | None = None,
         lifecycle_io: LifecycleIO | None = None,
         control_files: ControlFiles | None = None,
@@ -132,8 +134,12 @@ class ServerLifecycle:
         shutdown_event: threading.Event | None = None,
     ) -> None:
         self._settings = settings
+        self._save_directories = save_directories
         self._process_control: ProcessControl = process_control or SystemProcessControl(settings)
-        self._lifecycle_io: LifecycleIO = lifecycle_io or SystemLifecycleIO(settings)
+        self._lifecycle_io: LifecycleIO = lifecycle_io or SystemLifecycleIO(
+            settings=settings,
+            save_directories=save_directories,
+        )
         self._control_files = control_files or ControlFiles(
             AUTOPAUSE_DIR,
             puid=settings.puid,
@@ -241,7 +247,7 @@ class ServerLifecycle:
 
     def _build_auto_pause(self, stream_thread: threading.Thread, tracker: PresenceTracker) -> AutoPauseController:
         endpoint = config.generated_query_endpoint()
-        saves_dir = config.generated_save_directories(settings=self._settings).saves_dir
+        saves_dir = self._save_directories.saves_dir
         a2s = A2SProbe(UdpA2STransport(endpoint)) if endpoint is not None else None
         wake_source = build_wake_source(endpoint, self._settings.auto_pause_wake_filter)
         return AutoPauseController(
