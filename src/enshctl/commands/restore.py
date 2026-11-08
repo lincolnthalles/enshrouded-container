@@ -2,12 +2,12 @@
 
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import scan_all, select
-from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
+from enshctl.backup.locking import LOCK_FILE, BackupLock, SystemBackupLock
 from enshctl.commands.parser import CommandParser
 from enshctl.commands.restore_tui import select_backup as select_backup_impl
 from enshctl.commands.table import Cell, render_table
@@ -48,10 +48,11 @@ def confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
 
 @dataclass(frozen=True)
 class RestoreSeams:
-    """UI adapters for one restore invocation."""
+    """UI and lock adapters for one restore invocation."""
 
     confirm_restore: Callable[[str, int, Path], bool] = confirm_restore
     select_backup: Callable[[Sequence[BackupInfo]], BackupInfo | None] = select_backup_impl
+    lock: BackupLock = field(default_factory=SystemBackupLock)
 
 
 def run(
@@ -112,8 +113,8 @@ def run(
 
     # Perform restore
     lock_path = base_dir / LOCK_FILE
-    fd = acquire_lock(str(lock_path), blocking=False)
-    if fd is None:
+    lock_fd = resolved.lock.acquire(lock_path)
+    if lock_fd is None:
         logger.error("Cannot acquire backup lock. Another backup operation is in progress.")
         return 1
 
@@ -127,7 +128,7 @@ def run(
     except RestoreError:
         return 1
     finally:
-        release_lock(fd)
+        resolved.lock.release(lock_fd)
     return 0
 
 

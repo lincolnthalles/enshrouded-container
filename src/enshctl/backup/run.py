@@ -2,14 +2,13 @@
 
 import logging
 import subprocess
-import time
 from dataclasses import dataclass, field
 from os import getpid, nice
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from enshctl.backup.core import BackupPlan, create_backup as create_backup_impl, resolve_format
-from enshctl.backup.locking import LOCK_FILE, acquire_lock, release_lock
+from enshctl.backup.locking import LOCK_FILE, BackupLock, SystemBackupLock
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.config import generated_save_directories, resolve_save_directory
 from enshctl.disk_space import SpaceGuard
@@ -51,42 +50,6 @@ def _warn_priority_once(message: str) -> None:
     _priority_state["warned"] = True
 
 
-class BackupLock(Protocol):
-    """Non-blocking backup lock seam."""
-
-    def acquire(self, path: Path) -> int | None: ...
-
-    def release(self, fd: int) -> None: ...
-
-
-class SystemBackupLock:
-    """Production lock adapter over the file-locking module."""
-
-    def acquire(self, path: Path) -> int | None:
-        return acquire_lock(path, blocking=False)
-
-    def release(self, fd: int) -> None:
-        release_lock(fd)
-
-
-class BackupClock(Protocol):
-    """Monotonic clock and sleep seam for lock waiting."""
-
-    def monotonic(self) -> float: ...
-
-    def sleep(self, seconds: float) -> None: ...
-
-
-class SystemBackupClock:
-    """Production clock adapter."""
-
-    def monotonic(self) -> float:
-        return time.monotonic()
-
-    def sleep(self, seconds: float) -> None:
-        time.sleep(seconds)
-
-
 class BackupCreator(Protocol):
     """Backup creation seam."""
 
@@ -102,7 +65,6 @@ class BackupSeams:
     """System and test seams for one backup child run."""
 
     lock: BackupLock = field(default_factory=SystemBackupLock)
-    clock: BackupClock = field(default_factory=SystemBackupClock)
     space_guard: SpaceGuard = field(default_factory=SpaceGuard)
     resolve_saves_dir: Callable[[AppSettings], Path] = _saves_dir
     create_backup: BackupCreator = create_backup_impl
@@ -116,16 +78,9 @@ def run_request(request: BackupRequest, settings: AppSettings, *, seams: BackupS
     fmt = resolve_format(request.fmt) if request.fmt is not None else None
 
     lock_path = Path(settings.backup_dir) / LOCK_FILE
-    lock_fd = seams.lock.acquire(lock_path)
-    waited = False
-    if lock_fd is None and request.wait_seconds > 0:
-        waited = True
-        deadline = seams.clock.monotonic() + request.wait_seconds
-        while lock_fd is None and seams.clock.monotonic() < deadline:
-            seams.clock.sleep(1)
-            lock_fd = seams.lock.acquire(lock_path)
+    lock_fd = seams.lock.acquire(lock_path, request.wait_seconds)
     if lock_fd is None:
-        if waited:
+        if request.wait_seconds > 0:
             logger.warning("Backup lock still held after %ds wait, skipping backup", request.wait_seconds)
         else:
             logger.info("Lock held by another process, skipping backup")

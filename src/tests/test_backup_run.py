@@ -25,27 +25,15 @@ if TYPE_CHECKING:
 class FakeLock:
     def __init__(self, results: list[int | None] | None = None) -> None:
         self._results = iter(results if results is not None else [3])
-        self.acquired: list[Path] = []
+        self.acquired: list[tuple[Path, int]] = []
         self.released: list[int] = []
 
-    def acquire(self, path: Path) -> int | None:
-        self.acquired.append(path)
+    def acquire(self, path: Path, wait_seconds: int = 0) -> int | None:
+        self.acquired.append((path, wait_seconds))
         return next(self._results)
 
     def release(self, fd: int) -> None:
         self.released.append(fd)
-
-
-class FakeClock:
-    def __init__(self, times: list[float]) -> None:
-        self._times = iter(times)
-        self.sleeps: list[float] = []
-
-    def monotonic(self) -> float:
-        return next(self._times)
-
-    def sleep(self, seconds: float) -> None:
-        self.sleeps.append(seconds)
 
 
 class FakeCreator:
@@ -64,7 +52,6 @@ class FakeCreator:
 def _seams(
     *,
     lock: FakeLock | None = None,
-    clock: FakeClock | None = None,
     saves_dir: Path = Path("/data/saves"),
     resolve_saves_dir: Callable[[AppSettings], Path] | None = None,
     create: FakeCreator | None = None,
@@ -72,7 +59,6 @@ def _seams(
 ) -> BackupSeams:
     return BackupSeams(
         lock=lock or FakeLock(),
-        clock=clock or FakeClock([0.0]),
         space_guard=SpaceGuard(),
         resolve_saves_dir=resolve_saves_dir or (lambda _settings: saves_dir),
         create_backup=create or FakeCreator(),
@@ -107,7 +93,7 @@ def test_run_request_locks_plans_and_creates(tmp_path: Path) -> None:
     # THEN it lowers priority, locks, builds the plan, and releases the lock
     assert result == BackupOutcome.SUCCESS
     assert priority == [True]
-    assert lock.acquired == [tmp_path / "backups" / ".lock"]
+    assert lock.acquired == [(tmp_path / "backups" / ".lock", 0)]
     assert lock.released == [3]
     assert len(create.calls) == 1
     category, plan, space_guard = create.calls[0]
@@ -178,44 +164,42 @@ def test_run_request_reports_lock_held_without_creating(
     # THEN it reports lock-held without creating a Backup
     assert result == BackupOutcome.LOCK_HELD
     assert create.calls == []
-    assert "Lock held by another process" in caplog.text
+    skip = next(record for record in caplog.records if "Lock held by another process" in record.message)
+    assert skip.levelno == logging.INFO
 
 
 def test_run_request_wait_expiry_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     # GIVEN a lock held past the wait budget
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-    clock = FakeClock([0.0, 0.0, 2.0])
-    lock = FakeLock([None, None])
-    seams = _seams(lock=lock, clock=clock)
+    lock = FakeLock([None])
+    seams = _seams(lock=lock)
 
     with caplog.at_level(logging.WARNING, logger="enshctl.backup.run"):
         # WHEN the wait budget expires
         result = run_request(BackupRequest(wait_seconds=1), settings, seams=seams)
 
-    # THEN it re-checks the lock, reports lock-held, and warns with the waited seconds
+    # THEN the wait budget reached the lock policy and the skip warns with it
     assert result == BackupOutcome.LOCK_HELD
-    assert len(lock.acquired) == 2
-    assert clock.sleeps == [1]
+    assert lock.acquired == [(tmp_path / "backups" / ".lock", 1)]
+    assert lock.released == []
     assert "after 1s wait" in caplog.text
 
 
-def test_run_request_acquires_lock_after_waiting(tmp_path: Path) -> None:
-    # GIVEN a lock that becomes available after one wait interval
+def test_run_request_forwards_wait_budget(tmp_path: Path) -> None:
+    # GIVEN a lock adapter and a request carrying a wait budget
     settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
-    clock = FakeClock([0.0, 0.0])
-    lock = FakeLock([None, 3])
+    lock = FakeLock([3])
     create = FakeCreator()
-    seams = _seams(lock=lock, clock=clock, create=create)
+    seams = _seams(lock=lock, create=create)
 
-    # WHEN the request waits and retries the lock
+    # WHEN the request acquires through the lock policy
     result = run_request(BackupRequest(wait_seconds=1), settings, seams=seams)
 
-    # THEN it proceeds with creation and releases the acquired lock
+    # THEN the wait budget reaches the lock policy and creation proceeds
     assert result == BackupOutcome.SUCCESS
-    assert len(lock.acquired) == 2
-    assert clock.sleeps == [1]
-    assert len(create.calls) == 1
+    assert lock.acquired == [(tmp_path / "backups" / ".lock", 1)]
     assert lock.released == [3]
+    assert len(create.calls) == 1
 
 
 def test_run_request_prunes_after_success(tmp_path: Path) -> None:

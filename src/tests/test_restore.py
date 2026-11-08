@@ -28,6 +28,20 @@ def _backup_info(backup: Path) -> BackupInfo:
     return BackupInfo(path=backup, name=name, size=backup.stat().st_size)
 
 
+class FakeLock:
+    def __init__(self, fd: int | None = 3) -> None:
+        self._fd = fd
+        self.acquired: list[tuple[Path, int]] = []
+        self.released: list[int] = []
+
+    def acquire(self, path: Path, wait_seconds: int = 0) -> int | None:
+        self.acquired.append((path, wait_seconds))
+        return self._fd
+
+    def release(self, fd: int) -> None:
+        self.released.append(fd)
+
+
 def test_confirm_restore_rich_yes() -> None:
     mock_confirm = MagicMock()
     mock_confirm.Confirm.ask.return_value = True
@@ -63,24 +77,72 @@ def test_restore_command_uses_configured_saves(tmp_path: Path) -> None:
     backup = _backup_file(tmp_path)
     saves = tmp_path / "custom" / "saves"
     marker = tmp_path / "enshctl.pid"
+    lock = FakeLock()
     with (
         patch.object(cmd, "select", return_value=backup),
         patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(saves)),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
-        patch.object(cmd, "acquire_lock", return_value=3),
-        patch.object(cmd, "release_lock"),
         patch.object(cmd, "restore_backup") as mock_restore,
     ):
         # WHEN running the restore command
-        result = cmd.run(AppSettings(), ["--file", backup.name, "--yes"])
+        result = cmd.run(AppSettings(), ["--file", backup.name, "--yes"], seams=RestoreSeams(lock=lock))
 
     # THEN the restore targets the configured saves directory and a sibling temp directory
+    # AND the acquired lock is released
     assert result == 0
+    assert lock.released == [3]
     assert mock_restore.call_args.args[0] == backup
     kwargs = mock_restore.call_args.kwargs
     assert kwargs["saves_dir"] == saves
     assert kwargs["tmp_dir"] == saves.parent / "saves-restore-tmp"
     assert kwargs["space"] == SpaceGuard()
+
+
+def test_restore_command_reports_lock_held(tmp_path: Path) -> None:
+    import enshctl.commands.restore as cmd
+
+    # GIVEN a selected Backup while another backup operation holds the lock
+    backup = _backup_file(tmp_path)
+    saves = tmp_path / "saves"
+    marker = tmp_path / "enshctl.pid"
+    lock = FakeLock(fd=None)
+    with (
+        patch.object(cmd, "select", return_value=backup),
+        patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(saves)),
+        patch.object(cmd, "PidFile", lambda: PidFile(marker)),
+        patch.object(cmd, "restore_backup") as mock_restore,
+    ):
+        # WHEN running the restore command
+        result = cmd.run(AppSettings(), ["--file", backup.name, "--yes"], seams=RestoreSeams(lock=lock))
+
+    # THEN it reports the held lock without restoring or releasing another owner's descriptor
+    assert result == 1
+    assert len(lock.acquired) == 1
+    assert lock.acquired[0][1] == 0
+    assert lock.released == []
+    mock_restore.assert_not_called()
+
+
+def test_restore_command_releases_lock_when_restore_fails(tmp_path: Path) -> None:
+    import enshctl.commands.restore as cmd
+
+    # GIVEN a selected Backup and a restore that fails after the lock is acquired
+    backup = _backup_file(tmp_path)
+    saves = tmp_path / "saves"
+    marker = tmp_path / "enshctl.pid"
+    lock = FakeLock()
+    with (
+        patch.object(cmd, "select", return_value=backup),
+        patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(saves)),
+        patch.object(cmd, "PidFile", lambda: PidFile(marker)),
+        patch.object(cmd, "restore_backup", side_effect=RestoreError),
+    ):
+        # WHEN running the restore command
+        result = cmd.run(AppSettings(), ["--file", backup.name, "--yes"], seams=RestoreSeams(lock=lock))
+
+    # THEN the failure is reported and the acquired lock is released
+    assert result == 1
+    assert lock.released == [3]
 
 
 def test_restore_command_refuses_running_server(tmp_path: Path) -> None:
@@ -111,13 +173,12 @@ def test_restore_command_confirms_before_restore(tmp_path: Path) -> None:
     saves = tmp_path / "custom" / "saves"
     marker = tmp_path / "enshctl.pid"
     confirm = MagicMock(return_value=True)
-    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock())
+    lock = FakeLock()
+    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock(), lock=lock)
     with (
         patch.object(cmd, "select", return_value=backup),
         patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(saves)),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
-        patch.object(cmd, "acquire_lock", return_value=3),
-        patch.object(cmd, "release_lock"),
         patch.object(cmd, "restore_backup") as mock_restore,
     ):
         # WHEN running without --yes
@@ -136,12 +197,12 @@ def test_restore_command_declines_and_cancels(tmp_path: Path) -> None:
     backup = _backup_file(tmp_path)
     marker = tmp_path / "enshctl.pid"
     confirm = MagicMock(return_value=False)
-    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock())
+    lock = FakeLock()
+    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock(), lock=lock)
     with (
         patch.object(cmd, "select", return_value=backup),
         patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(tmp_path / "saves")),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
-        patch.object(cmd, "acquire_lock") as mock_lock,
         patch.object(cmd, "restore_backup") as mock_restore,
     ):
         # WHEN the user declines
@@ -149,7 +210,7 @@ def test_restore_command_declines_and_cancels(tmp_path: Path) -> None:
 
     # THEN the command exits zero without locking or restoring
     assert result == 0
-    mock_lock.assert_not_called()
+    assert lock.acquired == []
     mock_restore.assert_not_called()
 
 
@@ -160,13 +221,12 @@ def test_restore_command_yes_skips_confirmation(tmp_path: Path) -> None:
     backup = _backup_file(tmp_path)
     marker = tmp_path / "enshctl.pid"
     confirm = MagicMock(side_effect=AssertionError("confirmation must be skipped"))
-    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock())
+    lock = FakeLock()
+    seams = RestoreSeams(confirm_restore=confirm, select_backup=MagicMock(), lock=lock)
     with (
         patch.object(cmd, "select", return_value=backup),
         patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(tmp_path / "saves")),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
-        patch.object(cmd, "acquire_lock", return_value=3),
-        patch.object(cmd, "release_lock"),
         patch.object(cmd, "restore_backup") as mock_restore,
     ):
         # WHEN running with --yes
@@ -191,13 +251,12 @@ def test_restore_interactive_picker_selection(tmp_path: Path) -> None:
     seams = RestoreSeams(
         confirm_restore=MagicMock(return_value=True),
         select_backup=select,
+        lock=FakeLock(),
     )
     with (
         patch.object(cmd.sys, "stdout", SimpleNamespace(isatty=lambda: True)),
         patch.object(cmd, "generated_save_directories", return_value=SaveDirectories(tmp_path / "saves")),
         patch.object(cmd, "PidFile", lambda: PidFile(marker)),
-        patch.object(cmd, "acquire_lock", return_value=3),
-        patch.object(cmd, "release_lock"),
         patch.object(cmd, "restore_backup") as mock_restore,
     ):
         # WHEN running restore without selection flags
