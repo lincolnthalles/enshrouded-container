@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature, newest_save_signature
-from enshctl.presence import PresenceWarning, active_presence_veto, presence_health_veto, session_veto
+from enshctl.presence import PresenceWarning, presence_verdict, session_veto
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -400,17 +400,12 @@ class AutoPauseController:
             return "auto pause disabled"
         if self._control_files.is_disabled():
             return "disabled marker"
-        snapshot = self._tracker.snapshot()
-        now = self._clock()
-        health = presence_health_veto(snapshot, stream_healthy=self._stream_healthy())
-        if health is not None:
-            return health
-        if force:
-            return None
-        active = active_presence_veto(snapshot, now=now)
-        if active is not None:
-            return active
-        return session_veto(snapshot, now=now)
+        return presence_verdict(
+            self._tracker.snapshot(),
+            stream_healthy=self._stream_healthy(),
+            now=self._clock(),
+            force=force,
+        ).reason
 
     def _has_player_evidence(self, snapshot: PresenceSnapshot, now: float) -> bool:
         if self._pending_join(snapshot, now) or snapshot.players:
@@ -522,12 +517,17 @@ class AutoPauseController:
             return
         self._last_status_at = now
         snapshot = self._tracker.snapshot()
+        verdict = presence_verdict(
+            snapshot,
+            stream_healthy=self._stream_healthy(),
+            now=now,
+        )
         self._control_files.write_status(
             AutoPauseStatus(
                 state=self._state,
                 players=tuple(player.display_name for player in snapshot.players),
                 pending_join=self._pending_join(snapshot, now),
-                session_veto=session_veto(snapshot, now=now) is not None,
+                session_veto=verdict.session_veto,
                 degraded=snapshot.degraded,
                 paused_since=self._paused_since,
                 last_error=self._last_error,

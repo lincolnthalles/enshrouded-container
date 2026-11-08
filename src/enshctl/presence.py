@@ -4,6 +4,7 @@ import re
 import threading
 from collections import deque
 from dataclasses import dataclass
+from enum import StrEnum
 from time import monotonic
 from typing import TYPE_CHECKING
 
@@ -103,6 +104,27 @@ class PresenceWarning:
 type PresenceEvent = PlayerJoined | PlayerLeft | PresenceWarning
 
 
+class VetoCategory(StrEnum):
+    """Why the presence policy blocked."""
+
+    HEALTH = "health"
+    ACTIVE = "active"
+    SESSION = "session"
+
+
+@dataclass(frozen=True)
+class PresenceVerdict:
+    """Effective presence veto plus the independent Session diagnostic."""
+
+    reason: str | None = None
+    category: VetoCategory | None = None
+    session_veto: bool = False
+
+    @property
+    def is_clear(self) -> bool:
+        return self.reason is None
+
+
 def presence_health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) -> str | None:
     """Return the first readiness, stream, or tracker health veto."""
     if not snapshot.ready:
@@ -135,6 +157,39 @@ def session_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
     if machines is None or 0 not in machines or any(index > 0 for index in machines):
         return "session machine veto"
     return None
+
+
+def presence_verdict(
+    snapshot: PresenceSnapshot,
+    *,
+    stream_healthy: bool,
+    now: float,
+    force: bool = False,
+    is_paused: bool = False,
+) -> PresenceVerdict:
+    """Compose the pause and empty-server vetoes with the caller's bypass mode.
+
+    Precedence is health, force, active presence, paused Session waiver, and
+    Session. `force` bypasses active presence and the Session veto; `is_paused`
+    waives only the Session veto. The Session diagnostic is computed
+    independently for `status.json`.
+    """
+    session_reason = session_veto(snapshot, now=now)
+    has_session_veto = session_reason is not None
+
+    health = presence_health_veto(snapshot, stream_healthy=stream_healthy)
+    if health is not None:
+        return PresenceVerdict(health, VetoCategory.HEALTH, session_veto=has_session_veto)
+    if force:
+        return PresenceVerdict(session_veto=has_session_veto)
+    active = active_presence_veto(snapshot, now=now)
+    if active is not None:
+        return PresenceVerdict(active, VetoCategory.ACTIVE, session_veto=has_session_veto)
+    if is_paused:
+        return PresenceVerdict(session_veto=has_session_veto)
+    if session_reason is not None:
+        return PresenceVerdict(session_reason, VetoCategory.SESSION, session_veto=True)
+    return PresenceVerdict()
 
 
 def _message(line: str) -> str:

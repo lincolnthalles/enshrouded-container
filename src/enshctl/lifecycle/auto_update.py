@@ -6,7 +6,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from enshctl.manifests import manifest_sort_key
-from enshctl.presence import active_presence_veto, presence_health_veto, session_veto
+from enshctl.presence import presence_verdict
 from enshctl.scheduling import parse_cron
 
 if TYPE_CHECKING:
@@ -254,14 +254,12 @@ class AutoUpdateController:
         logger.info("Auto Update: manifest %s downloaded", manifest.manifest_id)
 
     def _gate_is_clear(self, now: float) -> bool:
-        snapshot = self._tracker.snapshot()
-        if presence_health_veto(snapshot, stream_healthy=self._stream_healthy()) is not None:
-            return False
-        if active_presence_veto(snapshot, now=now) is not None:
-            return False
-        if self._is_paused():
-            return True
-        return session_veto(snapshot, now=now) is None
+        return presence_verdict(
+            self._tracker.snapshot(),
+            stream_healthy=self._stream_healthy(),
+            now=now,
+            is_paused=self._is_paused(),
+        ).is_clear
 
     def _request_restart(self) -> None:
         if self._stop_event.is_set() or self._pending is None:

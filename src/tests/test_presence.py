@@ -15,7 +15,10 @@ from enshctl.presence import (
     PlayerLeft,
     PresenceSnapshot,
     PresenceTracker,
+    PresenceVerdict,
     PresenceWarning,
+    VetoCategory,
+    presence_verdict,
 )
 
 _ADD = "[I 00:00:01,000] [session] Remote player added. Player handle: {handle}"
@@ -718,3 +721,136 @@ def test_reset_clears_roster_and_session_evidence() -> None:
     assert snapshot.session_malformed is False
     assert snapshot.ready is True
     assert snapshot.last_activity_at == 6
+
+
+def _policy_snapshot(
+    *,
+    players: tuple[Player, ...] = (),
+    pending_join_until: float | None = None,
+    ready: bool = True,
+    session_machines: frozenset[int] | None = frozenset({0}),
+    session_complete_at: float | None = 0.0,
+    session_malformed: bool = False,
+    degraded: bool = False,
+) -> PresenceSnapshot:
+    return PresenceSnapshot(
+        players,
+        pending_join_until=pending_join_until,
+        ready=ready,
+        session_machines=session_machines,
+        session_complete_at=session_complete_at,
+        session_malformed=session_malformed,
+        degraded=degraded,
+    )
+
+
+def test_presence_verdict_clear() -> None:
+    # GIVEN a ready, empty, healthy server with a valid Session block
+    snapshot = _policy_snapshot()
+
+    # WHEN evaluating the policy
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
+
+    # THEN it is clear with no Session diagnostic
+    assert verdict == PresenceVerdict()
+    assert verdict.is_clear is True
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "stream_healthy", "reason"),
+    [
+        (_policy_snapshot(ready=False), True, "world not ready"),
+        (_policy_snapshot(), False, "stdout stream ended"),
+        (_policy_snapshot(degraded=True), True, "tracker degraded"),
+    ],
+)
+def test_presence_verdict_health_precedes_force(
+    snapshot: PresenceSnapshot,
+    stream_healthy: bool,
+    reason: str,
+) -> None:
+    # GIVEN a health veto and a force request
+    # WHEN evaluating the policy
+    verdict = presence_verdict(snapshot, stream_healthy=stream_healthy, now=1.0, force=True)
+
+    # THEN health wins and is categorized
+    assert verdict == PresenceVerdict(reason, VetoCategory.HEALTH, session_veto=False)
+
+
+def test_presence_verdict_health_keeps_session_diagnostic() -> None:
+    # GIVEN a health veto and an independent Session problem
+    snapshot = _policy_snapshot(ready=False, session_malformed=True)
+
+    # WHEN evaluating the policy
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
+
+    # THEN health is the effective veto and the Session diagnostic remains true
+    assert verdict == PresenceVerdict("world not ready", VetoCategory.HEALTH, session_veto=True)
+
+
+def test_presence_verdict_health_precedes_paused_waiver() -> None:
+    # GIVEN an unhealthy server and an invalid Session block on a paused tree
+    snapshot = _policy_snapshot(ready=False, session_malformed=True)
+
+    # WHEN evaluating the policy while paused
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+
+    # THEN health still blocks and the Session diagnostic remains true
+    assert verdict == PresenceVerdict("world not ready", VetoCategory.HEALTH, session_veto=True)
+
+
+def test_presence_verdict_force_bypasses_active_and_session() -> None:
+    # GIVEN active presence and an invalid Session block under force
+    snapshot = _policy_snapshot(players=(Player("0(0)"),), session_malformed=True)
+
+    # WHEN evaluating the policy with force
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, force=True)
+
+    # THEN the gate is clear while the Session diagnostic remains true
+    assert verdict == PresenceVerdict(session_veto=True)
+    assert verdict.is_clear is True
+
+
+def test_presence_verdict_pending_join_precedes_paused_waiver() -> None:
+    # GIVEN a pending join and an invalid Session block on a paused tree
+    snapshot = _policy_snapshot(pending_join_until=2.0, session_malformed=True)
+
+    # WHEN evaluating the policy while paused
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+
+    # THEN the pending join still blocks
+    assert verdict == PresenceVerdict("pending player join", VetoCategory.ACTIVE, session_veto=True)
+
+
+def test_presence_verdict_active_players_precede_paused_waiver() -> None:
+    # GIVEN active players and an invalid Session block on a paused tree
+    snapshot = _policy_snapshot(players=(Player("0(0)"),), session_malformed=True)
+
+    # WHEN evaluating the policy while paused
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+
+    # THEN active players still block
+    assert verdict == PresenceVerdict("players online", VetoCategory.ACTIVE, session_veto=True)
+
+
+def test_presence_verdict_paused_waives_session() -> None:
+    # GIVEN an empty, healthy server with an invalid Session block on a paused tree
+    snapshot = _policy_snapshot(session_malformed=True)
+
+    # WHEN evaluating the policy while paused
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+
+    # THEN the gate is clear while the Session diagnostic remains true
+    assert verdict == PresenceVerdict(session_veto=True)
+    assert verdict.is_clear is True
+
+
+def test_presence_verdict_session_blocks() -> None:
+    # GIVEN a healthy, empty server with an invalid Session block
+    snapshot = _policy_snapshot(session_malformed=True)
+
+    # WHEN evaluating the policy
+    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
+
+    # THEN the Session veto blocks with its category
+    assert verdict == PresenceVerdict("session block malformed", VetoCategory.SESSION, session_veto=True)
