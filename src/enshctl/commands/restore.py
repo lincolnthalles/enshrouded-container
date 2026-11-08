@@ -2,19 +2,16 @@
 
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from enshctl.backup.catalog import scan_all, select
-from enshctl.backup.locking import LOCK_FILE, BackupLock, SystemBackupLock
 from enshctl.commands.parser import CommandParser
 from enshctl.commands.restore_tui import select_backup as select_backup_impl
 from enshctl.commands.table import Cell, render_table
-from enshctl.config import generated_save_directories
-from enshctl.disk_space import SpaceGuard
-from enshctl.pidfile import PidFile
-from enshctl.restore import RestoreError, restore_backup
+from enshctl.restore import RestoreError
+from enshctl.restore_flow import RestoreIO, RestoreOutcome, restore_transaction
 from enshctl.settings import AppSettings, load_settings
 from enshctl.utils import human_size
 
@@ -26,8 +23,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _check_server_running(pid_file: PidFile | None = None) -> bool:
-    return (pid_file or PidFile()).is_active()
+class SelectByArgs(Protocol):
+    """CLI backup selection seam."""
+
+    def __call__(
+        self,
+        base_dir: Path,
+        *,
+        file: str | None = None,
+        when: str | None = None,
+    ) -> Path | None: ...
 
 
 def confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
@@ -48,11 +53,11 @@ def confirm_restore(filename: str, size: int, saves_dir: Path) -> bool:
 
 @dataclass(frozen=True)
 class RestoreSeams:
-    """UI and lock adapters for one restore invocation."""
+    """UI and selection adapters for one restore invocation."""
 
     confirm_restore: Callable[[str, int, Path], bool] = confirm_restore
     select_backup: Callable[[Sequence[BackupInfo]], BackupInfo | None] = select_backup_impl
-    lock: BackupLock = field(default_factory=SystemBackupLock)
+    select: SelectByArgs = select
 
 
 def run(
@@ -60,6 +65,7 @@ def run(
     argv: Sequence[str] = (),
     *,
     seams: RestoreSeams | None = None,
+    restore_io: RestoreIO | None = None,
 ) -> int:
     parser = CommandParser("Restore a Backup to the configured saves directory")
     parser.add_argument("--file", default=None, help="Backup filename to restore")
@@ -72,6 +78,7 @@ def run(
     base_dir = Path(settings.backup_dir)
     is_tty = sys.stdout.isatty()
     resolved = seams or RestoreSeams()
+    effects = restore_io or RestoreIO()
 
     # List mode
     if args.list_mode or (not args.file and not args.when and not is_tty):
@@ -86,9 +93,9 @@ def run(
     backup_path: Path | None = None
     try:
         if args.file:
-            backup_path = select(base_dir, file=args.file)
+            backup_path = resolved.select(base_dir, file=args.file)
         elif args.when:
-            backup_path = select(base_dir, when=args.when)
+            backup_path = resolved.select(base_dir, when=args.when)
         elif is_tty:
             selected = resolved.select_backup(scan_all(base_dir))
             backup_path = selected.path if selected is not None else None
@@ -99,37 +106,25 @@ def run(
         logger.error("No matching backup found")
         return 1
 
-    # Pre-restore check
-    if _check_server_running():
+    # Pre-restore guard, before confirmation per the restore contract.
+    if effects.pid_file.is_active():
         logger.error("Cannot restore while server is running. Stop the server first.")
         return 1
 
-    # Confirm
-    save_dirs = generated_save_directories(settings=settings)
-    saves_dir = save_dirs.saves_dir
-    if not args.yes and not resolved.confirm_restore(backup_path.name, backup_path.stat().st_size, saves_dir):
+    save_directories = effects.resolve_save_directories(settings)
+    if not args.yes and not resolved.confirm_restore(
+        backup_path.name,
+        backup_path.stat().st_size,
+        save_directories.saves_dir,
+    ):
         logger.info("Restore cancelled")
         return 0
 
-    # Perform restore
-    lock_path = base_dir / LOCK_FILE
-    lock_fd = resolved.lock.acquire(lock_path)
-    if lock_fd is None:
+    outcome = restore_transaction(backup_path, base_dir, save_directories, restore_io=effects)
+    if outcome is RestoreOutcome.LOCK_HELD:
         logger.error("Cannot acquire backup lock. Another backup operation is in progress.")
         return 1
-
-    try:
-        restore_backup(
-            backup_path,
-            saves_dir=saves_dir,
-            tmp_dir=save_dirs.restore_tmp_dir,
-            space=SpaceGuard(),
-        )
-    except RestoreError:
-        return 1
-    finally:
-        resolved.lock.release(lock_fd)
-    return 0
+    return 0 if outcome is RestoreOutcome.SUCCESS else 1
 
 
 def _list_backups(backups: list[BackupInfo]) -> None:

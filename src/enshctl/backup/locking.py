@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 LOCK_FILE = ".lock"
 
 
+def backup_lock_path(backup_dir: Path) -> Path:
+    return backup_dir / LOCK_FILE
+
+
 def acquire_lock(lock_path: str | Path, blocking: bool = True) -> int | None:
     lock_path = Path(lock_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)

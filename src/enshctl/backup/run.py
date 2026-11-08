@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from enshctl.backup.core import BackupPlan, create_backup as create_backup_impl, resolve_format
-from enshctl.backup.locking import LOCK_FILE, BackupLock, SystemBackupLock
+from enshctl.backup.locking import BackupLock, SystemBackupLock, backup_lock_path
 from enshctl.backup_protocol import BackupOutcome, BackupRequest
 from enshctl.config import generated_save_directories, resolve_save_directory
 from enshctl.disk_space import SpaceGuard
@@ -77,7 +77,7 @@ def run_request(request: BackupRequest, settings: AppSettings, *, seams: BackupS
     category = request.category
     fmt = resolve_format(request.fmt) if request.fmt is not None else None
 
-    lock_path = Path(settings.backup_dir) / LOCK_FILE
+    lock_path = backup_lock_path(Path(settings.backup_dir))
     lock_fd = seams.lock.acquire(lock_path, request.wait_seconds)
     if lock_fd is None:
         if request.wait_seconds > 0:
