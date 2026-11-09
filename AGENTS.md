@@ -49,7 +49,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 
 ## Code Style
 
-- Abbreviations only for short-lived variables in <=5-line scopes (single-letter preferred). Exported names stay descriptive.
+- Abbreviations only for short-lived variables in <=5-line scopes (single-letter preferred) and well-known acronyms, such as `ID`, `IO`, `HTTP`. Exported names stay descriptive.
 - Qualifiers carry meaning: big-endian for non-booleans (`latency_ms_max`), little-endian for booleans (`is_enabled`). Prefer `api: Fetcher` over `fetcher: Fetcher`.
 - Readability: state invariants positively. Functional for small iterator logic, imperative on hot paths. Early returns or ternaries over reassignment, `else` blocks, or nested `if`s; collapse nested `if`s with `and`. Pass critical options explicitly at call sites.
 - Treat `index`, `count`, and `size` as distinct types.
