@@ -1,0 +1,3 @@
+# OpenSpec skills are handled by its CLI
+skills/openspec*
+.openspec-target

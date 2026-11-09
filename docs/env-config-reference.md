@@ -263,5 +263,5 @@ docker run --rm --env-file .env enshctl debug-config
 Compose:
 
 ```bash
-docker compose -f docker-compose.yml run --rm enshrouded debug-config
+docker compose -f deploy/docker-compose.yml run --rm enshrouded debug-config
 ```

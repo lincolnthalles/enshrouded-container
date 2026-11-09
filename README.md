@@ -55,8 +55,8 @@ docker logs -f enshrouded
 Download the compose file and the example env file, or clone the repo:
 
 ```bash
-curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/.env.example
+curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/deploy/docker-compose.yml
+curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/deploy/.env.example
 cp .env.example .env
 
 # Start the server
@@ -69,8 +69,10 @@ docker compose logs -f
 docker compose down
 ```
 
-- [docker-compose.yml](https://github.com/lincolnthalles/enshrouded-container/blob/main/docker-compose.yml)
-- [.env.example](https://github.com/lincolnthalles/enshrouded-container/blob/main/.env.example)
+When cloning the repo instead, both files live in [`deploy/`](deploy/) — `cd` there first, then follow the same steps.
+
+- [docker-compose.yml](https://github.com/lincolnthalles/enshrouded-container/blob/main/deploy/docker-compose.yml)
+- [.env.example](https://github.com/lincolnthalles/enshrouded-container/blob/main/deploy/.env.example)
 
 </details>
 
@@ -241,6 +243,8 @@ Configuration reference:
 > Do not assume the file will remain unchanged.
 
 ## Container Volumes
+
+Host paths below are relative to the compose file in `deploy/`.
 
 | Host path (compose default)    | Container Path     | Purpose                                             |
 | ------------------------------ | ------------------ | --------------------------------------------------- |

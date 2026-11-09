@@ -12,6 +12,7 @@ enshctl — Docker container and CLI for managing an Enshrouded dedicated game s
 - `pyproject.toml` — normative for pytest, ruff, pyrefly config. Do NOT duplicate its values here.
 - `justfile` — normative for workflow commands.
 - `docs/depotdownloader-quirks.md` — DepotDownloader fork behavior.
+- `docs/SECURITY.md` — Security policy when reporting vulnerabilities.
 
 When sources disagree: specs for intent, code/config for current behavior, this file for conventions.
 
@@ -37,7 +38,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 
 - Specs own observable _what_ + _why_; code owns _how_. Mechanics in `openspec/config.yaml: rules.specs`.
 - One owning capability per behavior. When code changes behavior, update the owning spec in the same change; limit cleanup to touched capabilities.
-- Terms follow `GLOSSARY.md` (per domain-modeling skill; domain-only, never general programming concepts). Architecture terms (`module`, `interface`, `seam`, `adapter`, `depth`, `leverage`, `locality`) follow codebase-design skill and never enter `GLOSSARY.md`; durable _why_ goes to `docs/adr/` only when hard to reverse, surprising, and traded off. This triple gate overrules any skill suggestion to record more.
+- Terms follow `docs/GLOSSARY.md` (per `domain-modeling` skill; domain-only, never general programming concepts). Architecture terms (`module`, `interface`, `seam`, `adapter`, `depth`, `leverage`, `locality`) follow codebase-design skill and never enter `docs/GLOSSARY.md`; durable _why_ goes to `docs/adr/` only when hard to reverse, surprising, and traded off. This triple gate overrules any skill suggestion to record more.
 - Spec change is done only when `openspec validate --specs` passes and every touched requirement passes the refactor test in `openspec/config.yaml` (`rules.specs`).
 - Architecture reviews stay report-only until a candidate is chosen; implementation follows ownership and the Workflow gate above.
 
@@ -53,15 +54,17 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 - Qualifiers carry meaning: big-endian for non-booleans (`latency_ms_max`), little-endian for booleans (`is_enabled`). Prefer `api: Fetcher` over `fetcher: Fetcher`.
 - Readability: state invariants positively. Functional for small iterator logic, imperative on hot paths. Early returns or ternaries over reassignment, `else` blocks, or nested `if`s; collapse nested `if`s with `and`. Pass critical options explicitly at call sites.
 - Treat `index`, `count`, and `size` as distinct types.
-- Do NOT create single-use helpers under ~10 LoC to shorten a function.
+- Do NOT add exported single-use helpers under ~10 LoC to shorten a function. Private (`_`-prefixed) helpers inside the module implementation are allowed when they do not widen the interface and are never tested directly.
 
 ## Architecture & Modules
 
 - One clear responsibility per module. Entry points handle wiring and startup flow only.
 - Do NOT create or expand catch-all `utils`/`helpers` modules; place logic in its domain module.
 - Separate pure domain logic from I/O and platform integration. Make dependencies explicit through signatures.
-- Split on diverging responsibilities. Extract a helper only if reused or independently meaningful through a public contract.
-- Design for depth: much behavior behind a small interface (deletion test). Seam placement is distinct from what sits behind it; tier-spanning slices keep pure domain separate from I/O.
+- Accept dependencies, do not create them: pass I/O, config, and env-derived values through the interface; never instantiate subprocess, filesystem, or network clients inside domain logic.
+- Return results, do not mutate to communicate; scope mutation narrowly (see Concurrency & State).
+- Split on diverging responsibilities. Extract an exported helper only if reused or independently meaningful through a public contract.
+- Design for depth: much behavior behind a small interface. Ask: fewer methods? Simpler params? More hidden complexity? Deletion test: if deleted and complexity vanishes it was pass-through; if it reappears across N callers it earns its keep. Seam placement is distinct from what sits behind it; tier-spanning slices keep pure domain separate from I/O.
 - One adapter is hypothetical, two is real; a test adapter counts as the second, so explicit dependencies at the system seam are real seams. Never expose internal seams through the external interface.
 
 ## Interfaces & Error Handling

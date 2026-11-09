@@ -32,7 +32,7 @@ validate *ARGS='':
 
 # Clean project artifacts
 clean:
-    rm -rf __pycache__ .pytest_cache .ruff_cache .venv .pytest_cache dist enshrouded-data
+    rm -rf __pycache__ .pytest_cache .ruff_cache .venv .pytest_cache dist enshrouded-data deploy/enshrouded-data
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     find . -type f -name '*.pyc' -delete 2>/dev/null || true
     echo "Cleaning Docker…"
@@ -52,16 +52,16 @@ fmt-check:
 
 [group('test container')]
 dev:
-    docker compose -f docker-compose.dev.yml up -d --build --force-recreate
+    docker compose -f deploy/docker-compose.dev.yml up -d --build --force-recreate 
     docker logs dev-enshrouded-server -f
 
 [group('test container')]
 dev-debug-config:
-    docker compose -f docker-compose.dev.yml run --build --rm enshrouded debug-config
+    docker compose -f deploy/docker-compose.dev.yml run --build --rm enshrouded debug-config
 
 [group('test container')]
 dev-version-info:
-    docker compose -f docker-compose.dev.yml run --build --rm enshrouded version-info
+    docker compose -f deploy/docker-compose.dev.yml run --build --rm enshrouded version-info
 
 [private]
 git-tag TAG:

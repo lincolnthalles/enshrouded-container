@@ -52,6 +52,15 @@
         "arguments": ["lsp"]
       }
     },
+    "markdownlint": {
+      "settings": {
+        "MD013": false,
+        "MD028": false,
+        "MD033": false,
+        "MD041": false,
+        "MD043": false
+      }
+    },
     "pyrefly": {
       "binary": {
         "path": ".venv/bin/pyrefly",

@@ -1,13 +1,14 @@
-# Development compose file — builds from repo and mounts ./data (already in .gitignore).
-# Usage: just dev
+# Development compose file — builds the repo root and mounts ./enshrouded-data (gitignored).
+# Usage: just dev (from the repo root)
 
 services:
   enshrouded:
-    build: .
+    build:
+      context: ..
     develop:
       watch:
         - action: sync
-          path: ./src
+          path: ../src
           target: /tmp/src
 
     image: dev-enshrouded-server-container
