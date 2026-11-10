@@ -44,7 +44,6 @@ class AutoPauseStatus:
     degraded: bool = False
     paused_since: float | None = None
     last_error: str | None = None
-    wake_filter: str = "any"
     a2s: str = "unknown"
     last_request: str | None = None
     last_result: str | None = None
@@ -68,7 +67,6 @@ class AutoPauseStatus:
                 degraded=bool(data.get("degraded", False)),
                 paused_since=_optional_float(data.get("paused_since")),
                 last_error=None if data.get("last_error") is None else str(data["last_error"]),
-                wake_filter=str(data.get("wake_filter", "any")),
                 a2s=str(data.get("a2s", "unknown")),
                 last_request=None if data.get("last_request") is None else str(data["last_request"]),
                 last_result=None if data.get("last_result") is None else str(data["last_result"]),

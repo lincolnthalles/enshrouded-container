@@ -23,7 +23,6 @@ def _status(**overrides: object) -> AutoPauseStatus:
         degraded=False,
         paused_since=None,
         last_error=None,
-        wake_filter="any",
         a2s="ok",
         last_request="token",
         last_result="pending",

@@ -176,11 +176,10 @@ are connected. It resumes automatically on client traffic.
 > The server will wake up on this event and reconnect to Steam.
 > Inform the players to wait a minute and try joining again when facing that error.
 
-| Variable                  | Default | Description                                                                 |
-| ------------------------- | ------- | --------------------------------------------------------------------------- |
-| `AUTO_PAUSE_ENABLED`      | `false` | Opt in to automatic pause. Manual control needs the controller enabled.     |
-| `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.      |
-| `AUTO_PAUSE_WAKE_FILTER`  | `any`   | `any` wakes on any UDP to the query port; `ignore-a2s` ignores A2S queries. |
+| Variable                  | Default | Description                                                             |
+| ------------------------- | ------- | ----------------------------------------------------------------------- |
+| `AUTO_PAUSE_ENABLED`      | `false` | Opt in to automatic pause. Manual control needs the controller enabled. |
+| `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.  |
 
 <details>
     <summary>CLI and feature internals</summary>
@@ -188,7 +187,7 @@ are connected. It resumes automatically on client traffic.
 Control files live under `/data/config/autopause/`. The persistent `disabled` marker survives
 restarts; `paused`, `status.json`, and `request` are runtime state.
 
-Use the CLI from inside the container or with `docker compose exec`:
+Use the CLI from inside the container or with `docker compose -f docker-compose.yml exec enshrouded enshctl autopause {action}`:
 
 ```bash
 enshctl autopause status

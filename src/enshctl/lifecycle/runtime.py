@@ -254,7 +254,7 @@ class ServerLifecycle:
         endpoint = config.generated_query_endpoint()
         saves_dir = self._save_directories.saves_dir
         a2s = A2SProbe(UdpA2STransport(endpoint)) if endpoint is not None else None
-        wake_source = build_wake_source(endpoint, self._settings.auto_pause_wake_filter)
+        wake_source = build_wake_source(endpoint)
         return AutoPauseController(
             settings=self._settings,
             tracker=tracker,

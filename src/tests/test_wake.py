@@ -245,26 +245,13 @@ class _FakeWake(WakeSource):
         self.closed = True
 
 
-def test_fallback_wake_refuses_queue_for_ignore_a2s() -> None:
+def test_fallback_wake_uses_queue_when_packet_unavailable() -> None:
     # GIVEN packet capture unavailable and queue fallback available
     packet = _FakeWake(armed=False)
     queue = _FakeWake(armed=True)
-    source = FallbackWake(packet, queue, wake_filter="ignore-a2s")
+    source = FallbackWake(packet, queue)
 
-    # WHEN arming with ignore-a2s
-    assert source.arm() is False
-
-    # THEN the queue fallback is not used
-    assert queue.arm_called is False
-
-
-def test_fallback_wake_uses_queue_for_any() -> None:
-    # GIVEN packet capture unavailable and queue fallback available
-    packet = _FakeWake(armed=False)
-    queue = _FakeWake(armed=True)
-    source = FallbackWake(packet, queue, wake_filter="any")
-
-    # WHEN arming with the default filter
+    # WHEN arming
     assert source.arm() is True
 
     # THEN the queue fallback is active

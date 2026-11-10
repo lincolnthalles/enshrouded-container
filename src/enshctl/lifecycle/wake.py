@@ -84,12 +84,10 @@ class PacketWake:
         self,
         endpoint: QueryEndpoint,
         *,
-        wake_filter: str = "any",
         interface_root: Path,
         socket_factory: Callable[[str], _PacketSocket] | None = None,
     ) -> None:
         self._endpoint = endpoint
-        self._wake_filter = wake_filter
         self._interface_root = interface_root
         self._socket_factory = socket_factory or self._open_socket
         self._sockets: list[_PacketSocket] = []
@@ -143,8 +141,6 @@ class PacketWake:
                 if event is None:
                     continue
                 if (event.source, event.source_port) in self._ignored_source_endpoints:
-                    continue
-                if self._wake_filter == "ignore-a2s" and event.classification == "a2s":
                     continue
                 return event
         return None
@@ -242,19 +238,15 @@ class QueueWake:
 class FallbackWake:
     """Prefer packet capture and fall back to queue polling."""
 
-    def __init__(self, packet: WakeSource, queue: WakeSource, *, wake_filter: str) -> None:
+    def __init__(self, packet: WakeSource, queue: WakeSource) -> None:
         self._packet = packet
         self._queue = queue
-        self._wake_filter = wake_filter
         self._active: WakeSource | None = None
 
     def arm(self) -> bool:
         if self._packet.arm():
             self._active = self._packet
             return True
-        if self._wake_filter == "ignore-a2s":
-            logger.warning("Queue fallback cannot honor ignore-a2s; refusing to pause")
-            return False
         if self._queue.arm():
             self._active = self._queue
             return True
@@ -275,14 +267,13 @@ class FallbackWake:
         self._active = None
 
 
-def build_wake_source(endpoint: QueryEndpoint | None, wake_filter: str) -> WakeSource:
+def build_wake_source(endpoint: QueryEndpoint | None) -> WakeSource:
     """Build the production wake source for one resolved endpoint."""
     if endpoint is None:
         return _NoWake()
     return FallbackWake(
-        PacketWake(endpoint, wake_filter=wake_filter, interface_root=Path("/sys/class/net")),
+        PacketWake(endpoint, interface_root=Path("/sys/class/net")),
         QueueWake(endpoint, proc_net_root=Path("/proc/net")),
-        wake_filter=wake_filter,
     )
 
 

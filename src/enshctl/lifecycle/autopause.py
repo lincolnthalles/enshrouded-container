@@ -513,7 +513,6 @@ class AutoPauseController:
                 degraded=snapshot.degraded,
                 paused_since=self._paused_since,
                 last_error=self._last_error,
-                wake_filter=self._settings.auto_pause_wake_filter,
                 a2s=self._a2s_state,
                 last_request=self._last_request,
                 last_result=self._last_result,

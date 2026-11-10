@@ -148,7 +148,6 @@ def _settings() -> AppSettings:
         AppSettings(),
         auto_pause_enabled=True,
         auto_pause_idle_timeout=2,
-        auto_pause_wake_filter="any",
     )
 
 

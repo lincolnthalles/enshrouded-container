@@ -417,29 +417,15 @@ An attempt that aborts before suspension SHALL end the window. A manual pause, i
 
 ### Requirement: Wake source
 
-While paused, Auto Pause SHALL resume on accepted wake traffic or a resume request. Default wake
-SHALL accept any IPv4 or IPv6 UDP packet to the query port; `ignore-a2s` SHALL accept other traffic
-while ignoring A2S request magic. `AF_PACKET` SHALL be preferred; queue polling SHALL be the
-fallback. The queue fallback SHALL refuse `ignore-a2s` because it cannot classify payloads. If no
-wake source is available, a pause SHALL be prevented.
+While paused, Auto Pause SHALL resume on any IPv4 or IPv6 UDP packet to the query port or a resume
+request. `AF_PACKET` SHALL be preferred; queue polling SHALL be the fallback. If no wake source is
+available, a pause SHALL be prevented.
 
 #### Scenario: Direct-IP query wakes the server
 
 - **WHEN** the server is paused and a client sends its pre-join A2S query to the query port
 - **THEN** the tree SHALL resume
 - **AND** the queued query SHALL remain available to the game
-
-#### Scenario: Ignore-A2S filters the query
-
-- **WHEN** `AUTO_PAUSE_WAKE_FILTER=ignore-a2s` and only an A2S query arrives
-- **THEN** the server SHALL remain paused
-- **AND** other UDP traffic SHALL still resume it
-
-#### Scenario: Queue fallback refuses ignore-A2S
-
-- **WHEN** only the queue fallback is available and the filter is `ignore-a2s`
-- **THEN** no pause SHALL occur
-- **AND** a warning SHALL explain that the filter cannot be honored
 
 #### Scenario: No wake source prevents pause
 
@@ -529,8 +515,8 @@ controller.
 ### Requirement: Runtime status
 
 `status.json` SHALL report state, players, pending join, session veto, degraded tracker, paused
-since, last error, wake filter, A2S state, last request token, last result, `updated_at`, and
-controller PID. Writes SHALL be atomic and owned by `PUID`/`PGID`. Startup SHALL resume a leftover
+since, last error, A2S state, last request token, last result, `updated_at`, and controller PID.
+Writes SHALL be atomic and owned by `PUID`/`PGID`. Startup SHALL resume a leftover
 stopped tree and clear `paused`, `request`, and `status.json` while preserving `disabled`.
 
 #### Scenario: Startup clears transient state
@@ -615,15 +601,8 @@ run without writing the persistent `disabled` marker. The run-scoped latch SHALL
 
 ### Requirement: Auto Pause settings
 
-`AUTO_PAUSE_ENABLED` SHALL parse booleans and default to false. `AUTO_PAUSE_WAKE_FILTER` SHALL
-default to `any`; `ignore-a2s` SHALL be opt-in; any other value SHALL fall back to `any` with a
-warning. An invalid boolean SHALL use the default.
-
-#### Scenario: Invalid wake filter falls back
-
-- **WHEN** `AUTO_PAUSE_WAKE_FILTER` is not `any` or `ignore-a2s`
-- **THEN** wake SHALL use `any`
-- **AND** a warning SHALL name the discarded value
+`AUTO_PAUSE_ENABLED` SHALL parse booleans and default to false. An invalid boolean SHALL use the
+default.
 
 #### Scenario: Invalid idle timeout falls back
 

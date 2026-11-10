@@ -75,7 +75,6 @@ def test_app_settings_defaults_are_documented_values() -> None:
         player_poll_interval=60,
         auto_pause_enabled=False,
         auto_pause_idle_timeout=300,
-        auto_pause_wake_filter="any",
         shutdown_timeout=60,
         shutdown_backup_wait=120,
         orchestrator_log_file="",
@@ -128,7 +127,6 @@ def test_load_settings_parses_every_declared_key() -> None:
         "PLAYER_POLL_INTERVAL": "7",
         "AUTO_PAUSE_ENABLED": "true",
         "AUTO_PAUSE_IDLE_TIMEOUT": "45",
-        "AUTO_PAUSE_WAKE_FILTER": " Ignore-A2S ",
         "SHUTDOWN_TIMEOUT": "-1",
         "SHUTDOWN_BACKUP_WAIT": "10",
         "ORCHESTRATOR_LOG_FILE": " true ",
@@ -183,7 +181,6 @@ def test_load_settings_parses_every_declared_key() -> None:
         player_poll_interval=7,
         auto_pause_enabled=True,
         auto_pause_idle_timeout=45,
-        auto_pause_wake_filter="ignore-a2s",
         shutdown_timeout=0,
         shutdown_backup_wait=10,
         orchestrator_log_file="true",
@@ -217,7 +214,6 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
         "PLAYER_POLL_INTERVAL": "-30",
         "AUTO_PAUSE_ENABLED": "maybe",
         "AUTO_PAUSE_IDLE_TIMEOUT": "-30",
-        "AUTO_PAUSE_WAKE_FILTER": "sometimes",
         "AUTO_UPDATE_ENABLED": "maybe",
         "AUTO_UPDATE_LOG_ONLY": "maybe",
         "AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY": "maybe",
@@ -247,19 +243,6 @@ def test_load_settings_falls_back_for_non_integer_poll_interval() -> None:
 
     # THEN the documented default applies
     assert settings.player_poll_interval == 60
-
-
-def test_load_settings_falls_back_for_invalid_wake_filter(caplog: pytest.LogCaptureFixture) -> None:
-    # GIVEN an unknown wake filter
-    source = {"AUTO_PAUSE_WAKE_FILTER": "sometimes"}
-
-    # WHEN loading settings
-    with caplog.at_level("WARNING", logger="enshctl.settings"):
-        settings = load_settings(source)
-
-    # THEN any is used and the discarded value is named
-    assert settings.auto_pause_wake_filter == "any"
-    assert "sometimes" in caplog.text
 
 
 def test_settings_are_frozen() -> None:

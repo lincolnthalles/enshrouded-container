@@ -55,7 +55,7 @@ def test_probe_completes_challenge_handshake() -> None:
     assert result == 0
     assert transport.payloads[1].endswith(challenge)
 
-    # AND both probe source endpoints are exposed for wake filtering
+    # AND both probe source endpoints are exposed for wake-source exclusion
     assert probe.last_local_endpoints == frozenset({("127.0.0.1", 50001), ("127.0.0.1", 50002)})
 
 
