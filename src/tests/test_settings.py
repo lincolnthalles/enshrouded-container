@@ -209,6 +209,7 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
         "PUID": "not-a-number",
         "PGID": "",
         "FORCE_INSTALL": "maybe",
+        "MANIFEST_PRUNE_ENABLED": "sometimes",
         "BACKUP_LEVEL": "",
         "BACKUP_LIVE": "maybe",
         "BACKUP_COLD": "",

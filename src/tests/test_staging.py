@@ -192,7 +192,7 @@ def test_system_install_manifest_skips_version_resolution(tmp_path: Path) -> Non
     # THEN the explicit ID downloads without re-resolving the Version spec
     assert result == installed
     mock_resolve.assert_not_called()
-    mock_download.assert_called_once_with("999", settings, version_spec="latest")
+    mock_download.assert_called_once_with("999", settings, version_spec="build:999")
 
 
 def test_system_staging_apply_ownership_creates_custom_save_dir(tmp_path: Path) -> None:

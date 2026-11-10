@@ -7,13 +7,14 @@ every rollback target but eventually fills the manifests volume and blocks the n
 For a long-running latest-tracking deployment, the usual rollback target is only the previously
 active release. The container now keeps only the Active Manifest install and the Previous Active
 Manifest install, and deletes older complete installs after a start or update restart prepares the
-Active Manifest install and Game tree. Before a Download, when the initial free-space evaluation shows
-the Install disk-space check would fail, reclamation removes installs outside the reclamation keep set
-and the check is re-evaluated. The keep set is the requested Manifest install, the recorded Active
-Manifest install, the Manifest install backing the current Game tree when present, and the recorded
-Previous Active Manifest install when complete, or the fallback install in its place when no complete
-recorded previous exists. The Activation record itself is never removed. Pinned Version specs keep
-every install.
+Active Manifest install and Game tree. Before a Download, the container removes any staged `.prune`
+contents and waits for an in-flight background deletion before the initial free-space evaluation, so
+the evaluation sees reclaimed bytes. When that evaluation shows the Install disk-space check would
+fail, reclamation removes installs outside the reclamation keep set and the check is re-evaluated.
+The keep set is the requested Manifest install, the recorded Active Manifest install, every Manifest
+install backing the current Game tree when present, and the recorded Previous Active Manifest install
+when complete, or the fallback install in its place when no complete recorded previous exists. The
+Activation record itself is never removed. Pinned Version specs keep every install.
 
 Pruning is enabled by default and disabled with `MANIFEST_PRUNE_ENABLED=false`, because unattended
 self-updating deployments gain the most from bounded storage. The Activation record is updated when

@@ -7,6 +7,7 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from enshctl import manifest_retention
 from enshctl.disk_space import SpaceGuard
 from enshctl.download.flow import download_version
 from enshctl.download.io import DownloadIO, HostIO
@@ -240,6 +241,39 @@ class TestDownloadVersionReclamation:
             )
         assert (manifests_dir / "100").is_dir()
         assert (manifests_dir / "200").is_dir()
+
+
+class TestDownloadVersionCleanup:
+    """Tests for staging cleanup ordering before disk-space evaluation."""
+
+    def test_cleanup_precedes_initial_space_evaluation(self, tmp_path: Path) -> None:
+        # GIVEN staged prune data and ample free space
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir()
+        prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+        prune_dir.mkdir()
+        stale = prune_dir / "100"
+        stale.mkdir()
+        (stale / "game.bin").write_bytes(b"stale")
+        observed: list[bool] = []
+        host = _host(12 * 1024**3)
+        host.space = SpaceGuard(
+            disk_free=lambda _p: (observed.append(stale.exists()), 12 * 1024**3)[1],
+        )
+
+        # WHEN downloading a Manifest with sufficient space
+        result = download_version(
+            "999",
+            _settings(version="latest", force_install=True),
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", _download()),
+        )
+
+        # THEN cleanup completed before the initial free-space evaluation
+        assert result == manifests_dir / "999"
+        assert observed == [False]
+        assert not stale.exists()
 
 
 class TestDownloadVersionLifecycle:

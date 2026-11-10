@@ -64,7 +64,7 @@ class SystemStagingIO:
         return download_flow.download_version(manifest_id, settings, version_spec=settings.version)
 
     def install_manifest(self, manifest_id: str, settings: AppSettings) -> Path:
-        return download_flow.download_version(manifest_id, settings, version_spec="latest")
+        return download_flow.download_version(manifest_id, settings, version_spec=settings.version)
 
     def build_game_tree(self, manifest_id: str, settings: AppSettings) -> None:
         plan = mods.GameTreePlan.from_settings(manifest_id, settings)

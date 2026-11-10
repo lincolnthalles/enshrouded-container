@@ -3,16 +3,13 @@
 import os
 import threading
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from enshctl import manifest_retention
 from enshctl.manifests import is_latest_tracking
 from enshctl.paths import STATUS_FILE
 from enshctl.settings import AppSettings
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _settings(**overrides: object) -> AppSettings:
@@ -117,6 +114,39 @@ def test_symlinked_activation_record_is_not_replaced(tmp_path: Path) -> None:
     # THEN the symlink and its target remain
     assert (manifests_dir / manifest_retention.ACTIVATION_RECORD_NAME).is_symlink()
     assert target.read_text() == "keep"
+
+
+def test_activation_record_write_failure_skips_pruning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN complete installs and a failing activation-record write
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    _install(manifests_dir, "100")
+    _install(manifests_dir, "300")
+
+    def fail_write(_path: Path, _data: bytes) -> None:
+        msg = "read-only volume"
+        raise OSError(msg)
+
+    monkeypatch.setattr(manifest_retention.files, "write_bytes_atomic", fail_write)
+
+    # WHEN retaining after preparation of Manifest 300
+    with caplog.at_level("WARNING", logger="enshctl.manifest_retention"):
+        thread = manifest_retention.retain_after_start(
+            _settings(version="latest"),
+            "300",
+            threading.Event(),
+            manifests_dir=manifests_dir,
+        )
+
+    # THEN pruning is skipped and the record failure is warned
+    assert thread is None
+    assert (manifests_dir / "100").is_dir()
+    assert (manifests_dir / "300").is_dir()
+    assert any("Could not update activation record" in record.message for record in caplog.records)
 
 
 def test_retain_keeps_active_and_recorded_previous_installs(tmp_path: Path) -> None:
@@ -275,6 +305,91 @@ def test_cleanup_removes_staged_data_without_following_symlinks(tmp_path: Path) 
     assert (outside / "keep").read_text() == "keep"
 
 
+def test_cleanup_removes_unreadable_staged_directory(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permission bits")
+
+    # GIVEN a staged directory without read or execute permission
+    manifests_dir = tmp_path / "manifests"
+    prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+    prune_dir.mkdir(parents=True)
+    staged = prune_dir / "100"
+    staged.mkdir()
+    (staged / "game.bin").write_bytes(b"game")
+    staged.chmod(0o000)
+
+    # WHEN cleaning the staging directory
+    manifest_retention.cleanup_prune_dir(manifests_dir)
+
+    # THEN the unreadable subtree is removed
+    assert prune_dir.is_dir()
+    assert not staged.exists()
+
+
+def test_cleanup_does_not_chmod_symlink_target(tmp_path: Path) -> None:
+    # GIVEN a read-only staged directory containing a symlink to a read-only outside directory
+    manifests_dir = tmp_path / "manifests"
+    prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+    prune_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("keep")
+    outside.chmod(0o500)
+    original_mode = outside.stat().st_mode & 0o7777
+    staged = prune_dir / "100"
+    staged.mkdir()
+    (staged / "link").symlink_to(outside, target_is_directory=True)
+    staged.chmod(0o555)
+
+    # WHEN cleaning the staging directory
+    manifest_retention.cleanup_prune_dir(manifests_dir)
+
+    # THEN the link is removed without changing its target
+    assert not staged.exists()
+    assert outside.stat().st_mode & 0o7777 == original_mode
+    assert (outside / "keep").read_text() == "keep"
+    outside.chmod(0o700)
+
+
+def test_cleanup_waits_for_background_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GIVEN a background deletion blocked inside rmtree
+    manifests_dir = tmp_path / "manifests"
+    prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+    prune_dir.mkdir(parents=True)
+    staged = prune_dir / "100"
+    staged.mkdir()
+    (staged / "game.bin").write_bytes(b"game")
+    started = threading.Event()
+    release = threading.Event()
+    real_rmtree = manifest_retention.shutil.rmtree
+
+    def blocking_rmtree(path: Path) -> None:
+        started.set()
+        assert release.wait(timeout=5)
+        real_rmtree(path)
+
+    monkeypatch.setattr(manifest_retention.shutil, "rmtree", blocking_rmtree)
+    thread = manifest_retention.delete_prune_contents_in_background(manifests_dir, threading.Event())
+    assert thread is not None
+    assert started.wait(timeout=5)
+
+    # WHEN cleanup runs while the background deletion is still in progress
+    cleanup_thread = threading.Thread(target=manifest_retention.cleanup_prune_dir, args=(manifests_dir,))
+    cleanup_thread.start()
+    cleanup_thread.join(timeout=0.2)
+
+    # THEN cleanup waits for the in-flight deletion before returning
+    assert cleanup_thread.is_alive()
+    release.set()
+    _join(thread)
+    cleanup_thread.join(timeout=5)
+    assert not cleanup_thread.is_alive()
+    assert not staged.exists()
+
+
 def test_stale_prune_collision_is_reclaimed(tmp_path: Path) -> None:
     # GIVEN a live install with a stale staged copy under the same Manifest ID
     manifests_dir = tmp_path / "manifests"
@@ -328,6 +443,44 @@ def test_read_only_install_tree_is_deleted(tmp_path: Path) -> None:
 
     # THEN the read-only install is deleted
     assert not old.exists()
+
+
+def test_failed_stage_rename_preserves_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GIVEN a read-only candidate whose staging rename fails
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    old = _install(manifests_dir, "100", mtime_ns=1_000)
+    _install(manifests_dir, "200", mtime_ns=2_000)
+    _install(manifests_dir, "300")
+    _activate(manifests_dir, "300")
+    old.chmod(0o500)
+    real_rename = Path.rename
+
+    def fail_rename(self: Path, target: Path) -> Path:
+        if self == old:
+            msg = "rename failed"
+            raise OSError(msg)
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+
+    # WHEN retaining after preparation of Manifest 300
+    thread = manifest_retention.retain_after_start(
+        _settings(version="latest"),
+        "300",
+        threading.Event(),
+        manifests_dir=manifests_dir,
+    )
+
+    # THEN the install stays untouched and keeps its read-only mode
+    assert thread is None
+    assert old.is_dir()
+    assert old.stat().st_mode & 0o777 == 0o500
+    assert not (manifests_dir / manifest_retention.PRUNE_DIR_NAME / "100").exists()
+    old.chmod(0o700)
 
 
 def test_reclamation_keeps_requested_active_previous_and_game_tree(tmp_path: Path) -> None:

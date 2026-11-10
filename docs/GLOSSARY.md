@@ -62,7 +62,7 @@ _Avoid_: Disk cleanup, Space reclaim
 
 **Reclamation keep set**:
 The installs preserved during a Download: the requested Manifest install, the recorded Active
-Manifest install, the Manifest install backing the current Game tree when present, and the recorded
+Manifest install, every Manifest install backing the current Game tree when present, and the recorded
 Previous Active Manifest install when complete, or the fallback install when no complete recorded
 previous exists.
 _Avoid_: Protected set, Retention set

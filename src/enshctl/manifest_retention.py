@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import threading
 from contextlib import suppress
@@ -14,9 +15,6 @@ from enshctl.manifests import is_latest_tracking
 from enshctl.paths import GAME_TREE_DIR, MANIFESTS_DIR, STATUS_FILE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from typing import Any
-
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -24,12 +22,12 @@ logger = logging.getLogger(__name__)
 ACTIVATION_RECORD_NAME = ".manifest-history"
 PRUNE_DIR_NAME = ".prune"
 
-# _PRUNE_LOCK guards fast `.prune` mutations only: directory creation, listing
-# snapshots, and renames. File-content deletion runs outside the lock so a
-# large background `rmtree` never blocks staging, cleanup, or relaunch.
-# Staging never deletes under the lock: collisions are removed outside before
-# renaming. Deleters tolerate missing entries because snapshots can overlap.
+# _PRUNE_LOCK guards fast `.prune` state changes: directory creation, listing
+# snapshots, and renames. _DELETE_LOCK serializes content deletion. Staging
+# never waits on _DELETE_LOCK except to remove a stale collision, and cleanup
+# waits on it so the free-space evaluation sees the reclaimed bytes.
 _PRUNE_LOCK = threading.RLock()
+_DELETE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -196,20 +194,31 @@ def _prune_directory(manifests_dir: Path, *, create: bool) -> Path | None:
     return prune_dir
 
 
+def _add_owner_write(path: Path) -> None:
+    with suppress(OSError):
+        mode = path.stat(follow_symlinks=False).st_mode
+        path.chmod((mode & 0o7777) | 0o700)
+
+
+def _make_dirs_writable(root: Path) -> None:
+    _add_owner_write(root)
+    for current, directories, _files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        for name in directories:
+            child = current_path / name
+            if child.is_symlink():
+                continue
+            _add_owner_write(child)
+
+
 def _remove_path(path: Path) -> None:
+    if not path.parent.is_symlink():
+        _add_owner_write(path.parent)
     if path.is_symlink() or not path.is_dir():
         path.unlink(missing_ok=True)
         return
-    shutil.rmtree(path, onexc=_retry_writable)
-
-
-def _retry_writable(function: Callable[..., Any], path: str, _error: BaseException) -> None:
-    target = Path(path)
-    with suppress(OSError):
-        target.chmod(0o700)
-    with suppress(OSError):
-        target.parent.chmod(0o700)
-    function(path)
+    _make_dirs_writable(path)
+    shutil.rmtree(path)
 
 
 def _list_staged_entries(prune_dir: Path) -> tuple[Path, ...]:
@@ -246,9 +255,29 @@ def _snapshot_prune_entries(manifests_dir: Path) -> tuple[Path, ...]:
         return ()
 
 
+def _rename_for_deletion(source: Path, destination: Path) -> None:
+    original_mode: int | None = None
+    try:
+        original_mode = source.stat(follow_symlinks=False).st_mode & 0o7777
+        source.chmod(original_mode | 0o700)
+        source.rename(destination)
+    except OSError:
+        if original_mode is not None:
+            try:
+                source.chmod(original_mode)
+            except OSError as exc:
+                logger.warning("Could not restore permissions on %s after failed staging: %s", source, exc)
+        raise
+
+
+def _delete_prune_contents(manifests_dir: Path, stop_event: threading.Event | None = None) -> None:
+    with _DELETE_LOCK:
+        _delete_entries(_snapshot_prune_entries(manifests_dir), stop_event)
+
+
 def cleanup_prune_dir(manifests_dir: Path = MANIFESTS_DIR) -> None:
     """Remove every entry under `.prune`, leaving the staging directory itself in place."""
-    _delete_entries(_snapshot_prune_entries(manifests_dir))
+    _delete_prune_contents(manifests_dir)
 
 
 def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ...]) -> tuple[Path, ...]:
@@ -259,7 +288,8 @@ def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ..
         pairs = tuple((install, prune_dir / install.manifest_id) for install in candidates)
         collisions = tuple(dest for _, dest in pairs if dest.exists() or dest.is_symlink())
     if collisions:
-        _delete_entries(collisions)
+        with _DELETE_LOCK:
+            _delete_entries(collisions)
     with _PRUNE_LOCK:
         prune_dir = _prune_directory(manifests_dir, create=True)
         if prune_dir is None:
@@ -274,9 +304,7 @@ def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ..
                         destination,
                     )
                     continue
-                with suppress(OSError):
-                    install.path.chmod(0o700)
-                install.path.rename(destination)
+                _rename_for_deletion(install.path, destination)
             except OSError as exc:
                 logger.warning("Could not stage Manifest install %s for deletion: %s", install.path, exc)
                 continue
@@ -285,7 +313,7 @@ def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ..
 
 
 def _background_delete(manifests_dir: Path, stop_event: threading.Event | None) -> None:
-    _delete_entries(_snapshot_prune_entries(manifests_dir), stop_event)
+    _delete_prune_contents(manifests_dir, stop_event)
 
 
 def delete_prune_contents_in_background(
@@ -367,7 +395,7 @@ def reclaim_for_download(
     )
     candidates = tuple(install for install in installs if install.manifest_id not in keep)
     staged = _stage_candidates(manifests_dir, candidates)
-    _delete_entries(_snapshot_prune_entries(manifests_dir))
+    _delete_prune_contents(manifests_dir)
     return staged
 
 
