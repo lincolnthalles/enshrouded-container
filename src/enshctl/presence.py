@@ -112,21 +112,101 @@ class VetoCategory(StrEnum):
     SESSION = "session"
 
 
+class PresenceIntent(StrEnum):
+    """Operation asking the Presence gate for a verdict."""
+
+    PAUSE = "pause"
+    FORCED_PAUSE = "forced-pause"
+    SAVE_WAIT = "save-wait"
+    FORCED_SAVE_WAIT = "forced-save-wait"
+    UPDATE = "update"
+    UPDATE_WHILE_PAUSED = "update-while-paused"
+
+
 @dataclass(frozen=True)
 class PresenceVerdict:
-    """Effective presence veto plus the independent Session diagnostic."""
+    """Effective presence veto plus independent diagnostics."""
 
     reason: str | None = None
     category: VetoCategory | None = None
-    session_veto: bool = False
+    session_reason: str | None = None
+    has_activity: bool = False
 
     @property
-    def is_clear(self) -> bool:
+    def is_allowed(self) -> bool:
         return self.reason is None
 
+    @property
+    def session_veto(self) -> bool:
+        return self.session_reason is not None
 
-def presence_health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) -> str | None:
-    """Return the first readiness, stream, or tracker health veto."""
+
+class PresenceGate:
+    """Shared Player presence policy for Auto Pause, save waits, and Auto Update."""
+
+    def __init__(
+        self,
+        snapshot: Callable[[], PresenceSnapshot],
+        *,
+        stream_healthy: Callable[[], bool],
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        self._snapshot = snapshot
+        self._stream_healthy = stream_healthy
+        self._clock = clock
+
+    def evaluate(self, intent: PresenceIntent) -> PresenceVerdict:
+        """Return the verdict for one operation, applying only its waivers."""
+        return self._evaluate(intent, now=self._clock())
+
+    def diagnose(self) -> PresenceVerdict:
+        """Return the effective vetoes and diagnostics without an operation waiver."""
+        return self._evaluate(None, now=self._clock())
+
+    def _evaluate(self, intent: PresenceIntent | None, *, now: float) -> PresenceVerdict:
+        snapshot = self._snapshot()
+        has_activity = _has_activity(snapshot, now=now)
+        session_reason = _session_veto(snapshot, now=now)
+        health = _health_veto(snapshot, stream_healthy=self._stream_healthy())
+        if health is not None:
+            return PresenceVerdict(
+                health,
+                VetoCategory.HEALTH,
+                session_reason=session_reason,
+                has_activity=has_activity,
+            )
+        if intent in (PresenceIntent.FORCED_PAUSE, PresenceIntent.FORCED_SAVE_WAIT):
+            return PresenceVerdict(session_reason=session_reason, has_activity=has_activity)
+        operator_reason = _operator_activity_veto(snapshot, now=now)
+        if operator_reason is not None:
+            return PresenceVerdict(
+                operator_reason,
+                VetoCategory.ACTIVE,
+                session_reason=session_reason,
+                has_activity=True,
+            )
+        if (
+            intent is not PresenceIntent.SAVE_WAIT
+            and intent is not PresenceIntent.UPDATE_WHILE_PAUSED
+            and session_reason is not None
+        ):
+            return PresenceVerdict(
+                session_reason,
+                VetoCategory.SESSION,
+                session_reason=session_reason,
+                has_activity=has_activity,
+            )
+        if _has_remote_machine(snapshot):
+            return PresenceVerdict(
+                "remote machine active",
+                VetoCategory.ACTIVE,
+                session_reason=session_reason,
+                has_activity=True,
+            )
+        return PresenceVerdict(session_reason=session_reason, has_activity=has_activity)
+
+
+def _health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) -> str | None:
     if not snapshot.ready:
         return "world not ready"
     if not stream_healthy:
@@ -136,8 +216,7 @@ def presence_health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) ->
     return None
 
 
-def active_presence_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
-    """Return the first pending-join or active-player veto."""
+def _operator_activity_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
     if snapshot.pending_join_until is not None and now < snapshot.pending_join_until:
         return "pending player join"
     if snapshot.players:
@@ -145,8 +224,15 @@ def active_presence_veto(snapshot: PresenceSnapshot, *, now: float) -> str | Non
     return None
 
 
-def session_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
-    """Return the Session block validity veto, if any."""
+def _has_remote_machine(snapshot: PresenceSnapshot) -> bool:
+    return snapshot.session_machines is not None and any(index > 0 for index in snapshot.session_machines)
+
+
+def _has_activity(snapshot: PresenceSnapshot, *, now: float) -> bool:
+    return _operator_activity_veto(snapshot, now=now) is not None or _has_remote_machine(snapshot)
+
+
+def _session_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
     if snapshot.session_malformed:
         return "session block malformed"
     if snapshot.session_complete_at is None:
@@ -157,39 +243,6 @@ def session_veto(snapshot: PresenceSnapshot, *, now: float) -> str | None:
     if machines is None or 0 not in machines or any(index > 0 for index in machines):
         return "session machine veto"
     return None
-
-
-def presence_verdict(
-    snapshot: PresenceSnapshot,
-    *,
-    stream_healthy: bool,
-    now: float,
-    force: bool = False,
-    is_paused: bool = False,
-) -> PresenceVerdict:
-    """Compose the pause and empty-server vetoes with the caller's bypass mode.
-
-    Precedence is health, force, active presence, paused Session waiver, and
-    Session. `force` bypasses active presence and the Session veto; `is_paused`
-    waives only the Session veto. The Session diagnostic is computed
-    independently for `status.json`.
-    """
-    session_reason = session_veto(snapshot, now=now)
-    has_session_veto = session_reason is not None
-
-    health = presence_health_veto(snapshot, stream_healthy=stream_healthy)
-    if health is not None:
-        return PresenceVerdict(health, VetoCategory.HEALTH, session_veto=has_session_veto)
-    if force:
-        return PresenceVerdict(session_veto=has_session_veto)
-    active = active_presence_veto(snapshot, now=now)
-    if active is not None:
-        return PresenceVerdict(active, VetoCategory.ACTIVE, session_veto=has_session_veto)
-    if is_paused:
-        return PresenceVerdict(session_veto=has_session_veto)
-    if session_reason is not None:
-        return PresenceVerdict(session_reason, VetoCategory.SESSION, session_veto=True)
-    return PresenceVerdict()
 
 
 def _message(line: str) -> str:

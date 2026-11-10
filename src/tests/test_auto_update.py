@@ -10,7 +10,7 @@ from enshctl.download.types import ManifestRecord
 from enshctl.lifecycle.auto_update import AutoUpdateController, is_auto_update_active
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.types import RestartRequest
-from enshctl.presence import PresenceTracker
+from enshctl.presence import PresenceGate, PresenceTracker
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -76,12 +76,15 @@ def _controller(
     return AutoUpdateController(
         settings=settings or _settings(),
         active_manifest=active or ManifestRecord("111", "05/29/2026 12:00:00"),
-        tracker=tracker,
+        presence_gate=PresenceGate(
+            tracker.snapshot,
+            stream_healthy=stream_healthy or (lambda: True),
+            clock=driver.clock,
+        ),
         pause_gate=pause_gate or PauseGate(),
         list_latest=list_latest,
         download=download,
         restart_request=restart_request or RestartRequest(),
-        stream_healthy=stream_healthy or (lambda: True),
         is_paused=is_paused or (lambda: False),
         clock=driver.clock,
         wait=wait or driver.wait,
@@ -450,6 +453,32 @@ def test_paused_tree_waives_the_session_block() -> None:
     assert not thread.is_alive()
     assert downloaded == [_candidate()]
     assert restart.event.is_set() is True
+
+
+def test_paused_tree_remote_machine_blocks_the_restart() -> None:
+    # GIVEN a paused tree whose latest Session block has a remote machine
+    driver = _Driver(stop_at=250)
+    tracker = _tracker()
+    _ready(tracker)
+    _session_with_remote(tracker, now=50)
+    downloaded: list[ManifestRecord] = []
+    restart = RestartRequest()
+    controller = _controller(
+        driver,
+        tracker,
+        list_latest=_candidate,
+        download=downloaded.append,
+        restart_request=restart,
+        is_paused=lambda: True,
+    )
+
+    # WHEN the controller checks
+    thread = _run(controller, threading.Event())
+
+    # THEN the remote machine still blocks the restart
+    assert not thread.is_alive()
+    assert downloaded == [_candidate()]
+    assert restart.event.is_set() is False
 
 
 def test_pending_join_blocks_the_restart() -> None:

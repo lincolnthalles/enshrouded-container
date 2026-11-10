@@ -129,6 +129,17 @@ _Avoid_: Status dump, Machine table
 One `m#N` row in a Session block; `m#0` is the local baseline and any `N>0` is a remote machine.
 _Avoid_: Player count, Peer
 
+**Presence gate**:
+The shared rule that applies Player presence evidence to Auto Pause, a save wait, and an Auto Update
+restart, with operation-specific waivers.
+_Avoid_: Admission, veto list
+
+**Empty-server gate**:
+The Presence gate check for an Auto Update download or restart. It excludes A2S evidence and waives
+Session freshness, completeness, and malformation while paused, but keeps remote machine entries as a
+veto.
+_Avoid_: Update veto, session gate
+
 **Idle timeout**:
 Continuous time with no player presence before Auto Pause suspends the server.
 _Avoid_: Player timeout, Empty time

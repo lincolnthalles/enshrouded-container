@@ -146,8 +146,9 @@ retry at the next scheduled check.
 ### Requirement: Empty-server gate
 
 An update restart SHALL require the empty-server vetoes of `auto-pause` to be clear, except that A2S
-SHALL NOT be required. While Auto Pause reports the tree paused, the Session block requirement SHALL
-be waived.
+SHALL NOT be required. While Auto Pause reports the tree paused, the Session block freshness,
+completeness, and malformation checks SHALL be waived; remote entries in the latest complete Session
+block SHALL still veto a restart.
 
 #### Scenario: Empty server passes the gate
 
@@ -162,7 +163,14 @@ be waived.
 #### Scenario: Paused tree is eligible
 
 - **WHEN** Auto Pause reports the tree paused and the roster is empty
-- **THEN** a stale Session block SHALL NOT block the update restart
+- **THEN** a stale local-only Session block SHALL NOT block the update restart
+
+#### Scenario: Remote machine blocks a paused restart
+
+- **WHEN** Auto Pause reports the tree paused and the latest complete Session block contains an `m#N`
+  entry with `N>0`
+- **THEN** a downloaded update SHALL NOT restart
+- **AND** it SHALL wait until the remote machine entry clears
 
 ### Requirement: Update download timing
 
@@ -234,7 +242,7 @@ clear the pending update.
 
 #### Scenario: Paused tree restarts
 
-- **WHEN** Auto Pause reports the tree paused and an update is ready
+- **WHEN** Auto Pause reports the tree paused, an update is ready, and the empty-server gate is clear
 - **THEN** the update restart SHALL occur
 
 ### Requirement: Log-only mode

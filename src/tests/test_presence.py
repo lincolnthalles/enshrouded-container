@@ -13,12 +13,13 @@ from enshctl.presence import (
     Player,
     PlayerJoined,
     PlayerLeft,
+    PresenceGate,
+    PresenceIntent,
     PresenceSnapshot,
     PresenceTracker,
     PresenceVerdict,
     PresenceWarning,
     VetoCategory,
-    presence_verdict,
 )
 
 _ADD = "[I 00:00:01,000] [session] Remote player added. Player handle: {handle}"
@@ -744,16 +745,25 @@ def _policy_snapshot(
     )
 
 
-def test_presence_verdict_clear() -> None:
+def _gate(
+    snapshot: PresenceSnapshot,
+    *,
+    stream_healthy: bool = True,
+    now: float = 1.0,
+) -> PresenceGate:
+    return PresenceGate(lambda: snapshot, stream_healthy=lambda: stream_healthy, clock=lambda: now)
+
+
+def test_presence_gate_allows_a_clear_pause() -> None:
     # GIVEN a ready, empty, healthy server with a valid Session block
-    snapshot = _policy_snapshot()
+    gate = _gate(_policy_snapshot())
 
-    # WHEN evaluating the policy
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
+    # WHEN asking the gate for a pause
+    verdict = gate.evaluate(PresenceIntent.PAUSE)
 
-    # THEN it is clear with no Session diagnostic
+    # THEN the pause is allowed with no diagnostics
     assert verdict == PresenceVerdict()
-    assert verdict.is_clear is True
+    assert verdict.is_allowed is True
 
 
 @pytest.mark.parametrize(
@@ -764,93 +774,218 @@ def test_presence_verdict_clear() -> None:
         (_policy_snapshot(degraded=True), True, "tracker degraded"),
     ],
 )
-def test_presence_verdict_health_precedes_force(
+def test_presence_gate_health_precedes_forced_pause(
     snapshot: PresenceSnapshot,
     stream_healthy: bool,
     reason: str,
 ) -> None:
-    # GIVEN a health veto and a force request
-    # WHEN evaluating the policy
-    verdict = presence_verdict(snapshot, stream_healthy=stream_healthy, now=1.0, force=True)
+    # GIVEN a health veto and a forced pause
+    gate = _gate(snapshot, stream_healthy=stream_healthy)
 
-    # THEN health wins and is categorized
-    assert verdict == PresenceVerdict(reason, VetoCategory.HEALTH, session_veto=False)
+    # WHEN asking for a forced pause
+    verdict = gate.evaluate(PresenceIntent.FORCED_PAUSE)
 
-
-def test_presence_verdict_health_keeps_session_diagnostic() -> None:
-    # GIVEN a health veto and an independent Session problem
-    snapshot = _policy_snapshot(ready=False, session_malformed=True)
-
-    # WHEN evaluating the policy
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
-
-    # THEN health is the effective veto and the Session diagnostic remains true
-    assert verdict == PresenceVerdict("world not ready", VetoCategory.HEALTH, session_veto=True)
+    # THEN health still wins and is categorized
+    assert verdict == PresenceVerdict(reason, VetoCategory.HEALTH)
 
 
-def test_presence_verdict_health_precedes_paused_waiver() -> None:
+def test_presence_gate_health_precedes_paused_waiver() -> None:
     # GIVEN an unhealthy server and an invalid Session block on a paused tree
     snapshot = _policy_snapshot(ready=False, session_malformed=True)
+    gate = _gate(snapshot)
 
-    # WHEN evaluating the policy while paused
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+    # WHEN asking for an update while paused
+    verdict = gate.evaluate(PresenceIntent.UPDATE_WHILE_PAUSED)
 
     # THEN health still blocks and the Session diagnostic remains true
-    assert verdict == PresenceVerdict("world not ready", VetoCategory.HEALTH, session_veto=True)
+    assert verdict == PresenceVerdict(
+        "world not ready",
+        VetoCategory.HEALTH,
+        session_reason="session block malformed",
+    )
 
 
-def test_presence_verdict_force_bypasses_active_and_session() -> None:
-    # GIVEN active presence and an invalid Session block under force
+def test_presence_gate_health_keeps_session_and_activity_diagnostics() -> None:
+    # GIVEN a health veto, a player, and an independent Session problem
+    snapshot = _policy_snapshot(ready=False, players=(Player("0(0)"),), session_malformed=True)
+    gate = _gate(snapshot)
+
+    # WHEN asking for a pause
+    verdict = gate.evaluate(PresenceIntent.PAUSE)
+
+    # THEN health is the effective veto and both diagnostics remain true
+    assert verdict == PresenceVerdict(
+        "world not ready",
+        VetoCategory.HEALTH,
+        session_reason="session block malformed",
+        has_activity=True,
+    )
+
+
+def test_presence_gate_forced_pause_bypasses_activity_and_session() -> None:
+    # GIVEN active presence and an invalid Session block under a forced pause
     snapshot = _policy_snapshot(players=(Player("0(0)"),), session_malformed=True)
+    gate = _gate(snapshot)
 
-    # WHEN evaluating the policy with force
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, force=True)
+    # WHEN asking for a forced pause
+    verdict = gate.evaluate(PresenceIntent.FORCED_PAUSE)
 
-    # THEN the gate is clear while the Session diagnostic remains true
-    assert verdict == PresenceVerdict(session_veto=True)
-    assert verdict.is_clear is True
+    # THEN the gate is clear while both diagnostics remain true
+    assert verdict == PresenceVerdict(session_reason="session block malformed", has_activity=True)
+    assert verdict.is_allowed is True
 
 
-def test_presence_verdict_pending_join_precedes_paused_waiver() -> None:
+def test_presence_gate_pending_join_precedes_paused_waiver() -> None:
     # GIVEN a pending join and an invalid Session block on a paused tree
     snapshot = _policy_snapshot(pending_join_until=2.0, session_malformed=True)
+    gate = _gate(snapshot)
 
-    # WHEN evaluating the policy while paused
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+    # WHEN asking for an update while paused
+    verdict = gate.evaluate(PresenceIntent.UPDATE_WHILE_PAUSED)
 
     # THEN the pending join still blocks
-    assert verdict == PresenceVerdict("pending player join", VetoCategory.ACTIVE, session_veto=True)
+    assert verdict == PresenceVerdict(
+        "pending player join",
+        VetoCategory.ACTIVE,
+        session_reason="session block malformed",
+        has_activity=True,
+    )
 
 
-def test_presence_verdict_active_players_precede_paused_waiver() -> None:
+def test_presence_gate_players_precede_paused_waiver() -> None:
     # GIVEN active players and an invalid Session block on a paused tree
     snapshot = _policy_snapshot(players=(Player("0(0)"),), session_malformed=True)
+    gate = _gate(snapshot)
 
-    # WHEN evaluating the policy while paused
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+    # WHEN asking for an update while paused
+    verdict = gate.evaluate(PresenceIntent.UPDATE_WHILE_PAUSED)
 
     # THEN active players still block
-    assert verdict == PresenceVerdict("players online", VetoCategory.ACTIVE, session_veto=True)
+    assert verdict == PresenceVerdict(
+        "players online",
+        VetoCategory.ACTIVE,
+        session_reason="session block malformed",
+        has_activity=True,
+    )
 
 
-def test_presence_verdict_paused_waives_session() -> None:
+def test_presence_gate_update_while_paused_waives_session() -> None:
     # GIVEN an empty, healthy server with an invalid Session block on a paused tree
-    snapshot = _policy_snapshot(session_malformed=True)
+    gate = _gate(_policy_snapshot(session_malformed=True))
 
-    # WHEN evaluating the policy while paused
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0, is_paused=True)
+    # WHEN asking for an update while paused
+    verdict = gate.evaluate(PresenceIntent.UPDATE_WHILE_PAUSED)
 
     # THEN the gate is clear while the Session diagnostic remains true
-    assert verdict == PresenceVerdict(session_veto=True)
-    assert verdict.is_clear is True
+    assert verdict == PresenceVerdict(session_reason="session block malformed")
+    assert verdict.is_allowed is True
 
 
-def test_presence_verdict_session_blocks() -> None:
+def test_presence_gate_update_while_paused_blocks_a_remote_machine() -> None:
+    # GIVEN a paused tree whose latest Session block has a remote machine
+    snapshot = _policy_snapshot(session_machines=frozenset({0, 1}))
+    gate = _gate(snapshot)
+
+    # WHEN asking for an update while paused
+    verdict = gate.evaluate(PresenceIntent.UPDATE_WHILE_PAUSED)
+
+    # THEN the remote machine blocks as active evidence
+    assert verdict == PresenceVerdict(
+        "remote machine active",
+        VetoCategory.ACTIVE,
+        session_reason="session machine veto",
+        has_activity=True,
+    )
+    assert verdict.is_allowed is False
+
+
+def test_presence_gate_pause_session_blocks() -> None:
     # GIVEN a healthy, empty server with an invalid Session block
-    snapshot = _policy_snapshot(session_malformed=True)
+    gate = _gate(_policy_snapshot(session_malformed=True))
 
-    # WHEN evaluating the policy
-    verdict = presence_verdict(snapshot, stream_healthy=True, now=1.0)
+    # WHEN asking for a pause
+    verdict = gate.evaluate(PresenceIntent.PAUSE)
 
     # THEN the Session veto blocks with its category
-    assert verdict == PresenceVerdict("session block malformed", VetoCategory.SESSION, session_veto=True)
+    assert verdict == PresenceVerdict(
+        "session block malformed",
+        VetoCategory.SESSION,
+        session_reason="session block malformed",
+    )
+
+
+def test_presence_gate_save_wait_ignores_session_validity() -> None:
+    # GIVEN a healthy, empty server with an invalid Session block
+    gate = _gate(_policy_snapshot(session_malformed=True))
+
+    # WHEN asking whether a save wait may continue
+    verdict = gate.evaluate(PresenceIntent.SAVE_WAIT)
+
+    # THEN the Session diagnostic is reported but does not abort the wait
+    assert verdict == PresenceVerdict(session_reason="session block malformed")
+    assert verdict.is_allowed is True
+
+
+def test_presence_gate_save_wait_blocks_a_remote_machine() -> None:
+    # GIVEN a healthy server whose latest Session block has a remote machine
+    snapshot = _policy_snapshot(session_machines=frozenset({0, 1}))
+    gate = _gate(snapshot)
+
+    # WHEN asking whether a save wait may continue
+    verdict = gate.evaluate(PresenceIntent.SAVE_WAIT)
+
+    # THEN the remote machine aborts the wait
+    assert verdict == PresenceVerdict(
+        "remote machine active",
+        VetoCategory.ACTIVE,
+        session_reason="session machine veto",
+        has_activity=True,
+    )
+
+
+def test_presence_gate_update_requires_session_validity() -> None:
+    # GIVEN a healthy, empty server with an invalid Session block
+    gate = _gate(_policy_snapshot(session_malformed=True))
+
+    # WHEN asking for an update while running
+    verdict = gate.evaluate(PresenceIntent.UPDATE)
+
+    # THEN the Session veto blocks the update
+    assert verdict == PresenceVerdict(
+        "session block malformed",
+        VetoCategory.SESSION,
+        session_reason="session block malformed",
+    )
+
+
+def test_presence_gate_diagnose_reports_activity_through_health_veto() -> None:
+    # GIVEN an unhealthy server with an active player
+    snapshot = _policy_snapshot(ready=False, players=(Player("0(0)"),))
+    gate = _gate(snapshot)
+
+    # WHEN diagnosing status
+    verdict = gate.diagnose()
+
+    # THEN health is the effective veto and activity remains visible
+    assert verdict == PresenceVerdict(
+        "world not ready",
+        VetoCategory.HEALTH,
+        has_activity=True,
+    )
+
+
+def test_presence_gate_forced_save_wait_keeps_health_only() -> None:
+    # GIVEN an unhealthy server with active presence and an invalid Session block
+    snapshot = _policy_snapshot(ready=False, players=(Player("0(0)"),), session_malformed=True)
+    gate = _gate(snapshot)
+
+    # WHEN asking for a forced save wait
+    verdict = gate.evaluate(PresenceIntent.FORCED_SAVE_WAIT)
+
+    # THEN health blocks while both diagnostics remain true
+    assert verdict == PresenceVerdict(
+        "world not ready",
+        VetoCategory.HEALTH,
+        session_reason="session block malformed",
+        has_activity=True,
+    )

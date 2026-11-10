@@ -18,7 +18,7 @@ from enshctl.lifecycle.players import PlayerReporter
 from enshctl.lifecycle.types import ExitRequest, PauseControl, RestartRequest, ServerProcess
 from enshctl.lifecycle.wake import build_wake_source
 from enshctl.paths import AUTOPAUSE_DIR
-from enshctl.presence import PresenceTracker
+from enshctl.presence import PresenceGate, PresenceTracker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -202,8 +202,9 @@ class ServerLifecycle:
             self._reporter = PlayerReporter(self._presence, self._settings, pause_gate=self._pause_gate)
             self._reporter_thread = self._reporter.start(self._stop_event)
             self._stream_thread = self._process_control.stream(process_handle, on_line=self._reporter.observe)
+            presence_gate = PresenceGate(self._presence.snapshot, stream_healthy=self._stream_thread.is_alive)
             if self._settings.auto_pause_enabled:
-                self._pause_control = self._build_auto_pause(self._stream_thread, self._presence)
+                self._pause_control = self._build_auto_pause(self._stream_thread, self._presence, presence_gate)
                 self._pause_control.start(self._stop_event)
             if self._settings.backup_live:
                 self._lifecycle_io.start_scheduler(self._stop_event, pause_gate=self._pause_gate)
@@ -211,11 +212,10 @@ class ServerLifecycle:
                 logger.info("Live backups disabled")
             if self._active_manifest is not None:
                 self._lifecycle_io.start_updater(
-                    self._presence,
+                    presence_gate,
                     active_manifest=self._active_manifest,
                     stop_event=self._stop_event,
                     restart_request=self._restart_request,
-                    stream_healthy=self._stream_thread.is_alive,
                     is_paused=self._control_files.is_paused,
                     pause_gate=self._pause_gate,
                 )
@@ -245,7 +245,12 @@ class ServerLifecycle:
             logger.exception("Auto Pause startup resume failed")
         self._control_files.clear_runtime()
 
-    def _build_auto_pause(self, stream_thread: threading.Thread, tracker: PresenceTracker) -> AutoPauseController:
+    def _build_auto_pause(
+        self,
+        stream_thread: threading.Thread,
+        tracker: PresenceTracker,
+        presence_gate: PresenceGate,
+    ) -> AutoPauseController:
         endpoint = config.generated_query_endpoint()
         saves_dir = self._save_directories.saves_dir
         a2s = A2SProbe(UdpA2STransport(endpoint)) if endpoint is not None else None
@@ -253,6 +258,7 @@ class ServerLifecycle:
         return AutoPauseController(
             settings=self._settings,
             tracker=tracker,
+            presence_gate=presence_gate,
             process_control=self._process_control,
             control_files=self._control_files,
             saves_dir=saves_dir,

@@ -12,7 +12,7 @@ from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.saves import SaveSignature
 from enshctl.lifecycle.wake import WakeEvent
-from enshctl.presence import MAX_SESSION_MACHINES, PresenceTracker
+from enshctl.presence import MAX_SESSION_MACHINES, PresenceGate, PresenceTracker
 from enshctl.settings import AppSettings
 
 if TYPE_CHECKING:
@@ -188,6 +188,7 @@ def _controller(
     return AutoPauseController(
         settings=settings or _settings(),
         tracker=tracker,
+        presence_gate=PresenceGate(tracker.snapshot, stream_healthy=stream_healthy, clock=driver.clock),
         process_control=process,
         control_files=control,
         saves_dir=tmp_path,
@@ -912,6 +913,46 @@ def test_forced_pause_bypasses_pending_join(tmp_path: Path) -> None:
 
     # THEN the pending join is bypassed and the tree pauses
     assert process.suspended == 1
+
+
+def test_forced_pause_health_check_precedes_suspension(tmp_path: Path) -> None:
+    # GIVEN a forced pause whose stdout stream ends during the final save check
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    control.write_request("pause-force", "force-token", now=1_000.0)
+    process = _Process()
+    wake = _Wake()
+    healthy = True
+    calls = 0
+
+    def _save_probe(_saves_dir: Path) -> SaveSignature | None:
+        nonlocal calls, healthy
+        calls += 1
+        if calls == 5:
+            healthy = False
+        return _NEW_SAVE if calls > 2 else _OLD_SAVE
+
+    # WHEN the controller reaches the final suspension check
+    _run(
+        _controller(
+            tmp_path=tmp_path,
+            driver=driver,
+            tracker=tracker,
+            process=process,
+            control=control,
+            wake=wake,
+            stream_healthy=lambda: healthy,
+            save_probe=_save_probe,
+        ),
+        driver,
+    )
+
+    # THEN the wake source was armed and the ended stream prevented suspension
+    assert wake.armed == 1
+    assert process.suspended == 0
 
 
 def test_controller_failure_resumes_tree(tmp_path: Path) -> None:

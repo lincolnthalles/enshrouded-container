@@ -6,7 +6,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from enshctl.manifests import manifest_sort_key
-from enshctl.presence import presence_verdict
+from enshctl.presence import PresenceGate, PresenceIntent
 from enshctl.scheduling import parse_cron
 
 if TYPE_CHECKING:
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from enshctl.download.types import ManifestRecord
     from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.types import RestartRequest
-    from enshctl.presence import PresenceTracker
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -37,24 +36,22 @@ class AutoUpdateController:
         *,
         settings: AppSettings,
         active_manifest: ManifestRecord,
-        tracker: PresenceTracker,
+        presence_gate: PresenceGate,
         pause_gate: PauseGate,
         list_latest: Callable[[], ManifestRecord | None],
         download: Callable[[ManifestRecord], None],
         restart_request: RestartRequest,
-        stream_healthy: Callable[[], bool],
         is_paused: Callable[[], bool],
         clock: Callable[[], float] = monotonic,
         wait: Callable[[threading.Event, float], bool] | None = None,
     ) -> None:
         self._settings = settings
         self._active_manifest = active_manifest
-        self._tracker = tracker
+        self._presence_gate = presence_gate
         self._pause_gate = pause_gate
         self._list_latest = list_latest
         self._download = download
         self._restart_request = restart_request
-        self._stream_healthy = stream_healthy
         self._is_paused = is_paused
         self._clock = clock
         self._wait = wait or (lambda event, timeout: event.wait(timeout))
@@ -97,7 +94,7 @@ class AutoUpdateController:
             self._finish_download(now)
             if self._pending is not None and not self._settings.auto_update_log_only:
                 if self._pending_downloaded:
-                    if self._gate_is_clear(now):
+                    if self._gate_is_clear():
                         self._request_restart()
                         return
                 elif self._should_download(now):
@@ -180,7 +177,7 @@ class AutoUpdateController:
             or now < self._download_retry_at
         ):
             return False
-        return not self._settings.auto_update_download_only_when_empty or self._gate_is_clear(now)
+        return not self._settings.auto_update_download_only_when_empty or self._gate_is_clear()
 
     def _start_download(self, now: float) -> None:
         if self._stop_event.is_set() or self._pending is None or self._download_thread is not None:
@@ -253,13 +250,9 @@ class AutoUpdateController:
         self._pending_downloaded = True
         logger.info("Auto Update: manifest %s downloaded", manifest.manifest_id)
 
-    def _gate_is_clear(self, now: float) -> bool:
-        return presence_verdict(
-            self._tracker.snapshot(),
-            stream_healthy=self._stream_healthy(),
-            now=now,
-            is_paused=self._is_paused(),
-        ).is_clear
+    def _gate_is_clear(self) -> bool:
+        intent = PresenceIntent.UPDATE_WHILE_PAUSED if self._is_paused() else PresenceIntent.UPDATE
+        return self._presence_gate.evaluate(intent).is_allowed
 
     def _request_restart(self) -> None:
         if self._stop_event.is_set() or self._pending is None:

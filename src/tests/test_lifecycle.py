@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-    from enshctl.presence import PresenceTracker
+    from enshctl.presence import PresenceGate
 
 
 class FakeProcess:
@@ -204,16 +204,15 @@ class FakeLifecycleIO:
 
     def start_updater(
         self,
-        tracker: PresenceTracker,
+        presence_gate: PresenceGate,
         *,
         active_manifest: ManifestRecord,
         stop_event: threading.Event,
         restart_request: RestartRequest,
-        stream_healthy: Callable[[], bool],
         is_paused: Callable[[], bool],
         pause_gate: PauseGate,
     ) -> None:
-        del tracker, stop_event, stream_healthy, is_paused, pause_gate
+        del presence_gate, stop_event, is_paused, pause_gate
         self.active_manifest = active_manifest
         self.restart_request = restart_request
         self.events.append("updater")

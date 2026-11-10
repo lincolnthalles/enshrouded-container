@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from enshctl.lifecycle.pause_gate import PauseGate
     from enshctl.lifecycle.server import WineTree
     from enshctl.lifecycle.types import RestartRequest, ServerProcess
-    from enshctl.presence import PresenceTracker
+    from enshctl.presence import PresenceGate
     from enshctl.settings import AppSettings
 
 
@@ -69,12 +69,11 @@ class LifecycleIO(Protocol):
 
     def start_updater(
         self,
-        tracker: PresenceTracker,
+        presence_gate: PresenceGate,
         *,
         active_manifest: ManifestRecord,
         stop_event: threading.Event,
         restart_request: RestartRequest,
-        stream_healthy: Callable[[], bool],
         is_paused: Callable[[], bool],
         pause_gate: PauseGate,
     ) -> threading.Thread | None: ...
@@ -160,12 +159,11 @@ class SystemLifecycleIO:
 
     def start_updater(
         self,
-        tracker: PresenceTracker,
+        presence_gate: PresenceGate,
         *,
         active_manifest: ManifestRecord,
         stop_event: threading.Event,
         restart_request: RestartRequest,
-        stream_healthy: Callable[[], bool],
         is_paused: Callable[[], bool],
         pause_gate: PauseGate,
     ) -> threading.Thread | None:
@@ -174,12 +172,11 @@ class SystemLifecycleIO:
         controller = AutoUpdateController(
             settings=self.settings,
             active_manifest=active_manifest,
-            tracker=tracker,
+            presence_gate=presence_gate,
             pause_gate=pause_gate,
             list_latest=latest_manifest,
             download=self._download_manifest,
             restart_request=restart_request,
-            stream_healthy=stream_healthy,
             is_paused=is_paused,
         )
         return controller.start(stop_event)

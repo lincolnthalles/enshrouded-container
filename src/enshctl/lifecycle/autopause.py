@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from enshctl.lifecycle.control import AutoPauseStatus, ControlFiles
 from enshctl.lifecycle.saves import SaveSignature, newest_save_signature
-from enshctl.presence import PresenceWarning, presence_verdict, session_veto
+from enshctl.presence import PresenceGate, PresenceIntent, PresenceWarning, VetoCategory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,6 +60,7 @@ class AutoPauseController:
         *,
         settings: AppSettings,
         tracker: PresenceTracker,
+        presence_gate: PresenceGate,
         process_control: _PauseProcess,
         control_files: ControlFiles,
         saves_dir: Path,
@@ -76,6 +77,7 @@ class AutoPauseController:
     ) -> None:
         self._settings = settings
         self._tracker = tracker
+        self._presence_gate = presence_gate
         self._process_control = process_control
         self._control_files = control_files
         self._saves_dir = saves_dir
@@ -184,7 +186,7 @@ class AutoPauseController:
             self._handle_disabled()
             self._expire_evidence(now)
             self._observe_pending_join()
-            self._observe_session(now)
+            self._observe_session()
             self._handle_request(now)
             tick_started = self._clock()
             self._tick(now)
@@ -223,11 +225,10 @@ class AutoPauseController:
         elif expired_at is None:
             self._pending_join_expired_at = None
 
-    def _observe_session(self, now: float) -> None:
+    def _observe_session(self) -> None:
         if self._state not in (ACTIVE, PAUSE_PENDING):
             return
-        snapshot = self._tracker.snapshot()
-        reason = session_veto(snapshot, now=now)
+        reason = self._presence_gate.diagnose().session_reason
         if reason is not None:
             self._log_veto(reason)
 
@@ -243,17 +244,17 @@ class AutoPauseController:
             self._tick_paused()
 
     def _tick_active(self, now: float) -> None:
-        if not self._stream_healthy():
-            self._log_veto("stdout stream ended")
+        verdict = self._presence_gate.evaluate(PresenceIntent.PAUSE)
+        if verdict.category is VetoCategory.HEALTH:
+            reason = verdict.reason
+            if reason is not None:
+                self._log_veto(reason)
             return
-        snapshot = self._tracker.snapshot()
-        if snapshot.degraded:
-            self._log_veto("tracker degraded")
-            return
-        if self._has_player_evidence(snapshot, now):
+        if verdict.has_activity:
             self._last_activity_at = now
         if self._settings.auto_pause_idle_timeout <= 0:
             return
+        snapshot = self._tracker.snapshot()
         idle_since = max(self._last_activity_at, snapshot.last_activity_at or self._last_activity_at)
         if now - idle_since >= self._settings.auto_pause_idle_timeout:
             self._attempt_pause(force=False)
@@ -356,9 +357,7 @@ class AutoPauseController:
         with self._lock:
             if self._stop_event.is_set() or self._latch.is_set() or self._control_files.is_disabled():
                 return False
-            if not self._stream_healthy() or self._tracker.snapshot().degraded:
-                return False
-            if not force and self._veto_reason(force=False) is not None:
+            if self._veto_reason(force=force) is not None:
                 return False
             if not force and self._tracker.snapshot().activity_generation != self._save_activity_generation:
                 self._log_veto("player activity during save wait")
@@ -400,17 +399,8 @@ class AutoPauseController:
             return "auto pause disabled"
         if self._control_files.is_disabled():
             return "disabled marker"
-        return presence_verdict(
-            self._tracker.snapshot(),
-            stream_healthy=self._stream_healthy(),
-            now=self._clock(),
-            force=force,
-        ).reason
-
-    def _has_player_evidence(self, snapshot: PresenceSnapshot, now: float) -> bool:
-        if self._pending_join(snapshot, now) or snapshot.players:
-            return True
-        return bool(snapshot.session_machines and any(index > 0 for index in snapshot.session_machines))
+        intent = PresenceIntent.FORCED_PAUSE if force else PresenceIntent.PAUSE
+        return self._presence_gate.evaluate(intent).reason
 
     def _pending_join(self, snapshot: PresenceSnapshot, now: float) -> bool:
         return snapshot.pending_join_until is not None and now < snapshot.pending_join_until
@@ -490,14 +480,10 @@ class AutoPauseController:
             return True
         if self._control_files.request_path.exists():
             return True
-        if not self._stream_healthy():
+        intent = PresenceIntent.FORCED_SAVE_WAIT if force else PresenceIntent.SAVE_WAIT
+        if not self._presence_gate.evaluate(intent).is_allowed:
             return True
-        snapshot = self._tracker.snapshot()
-        if snapshot.degraded:
-            return True
-        if not force and snapshot.activity_generation != self._save_activity_generation:
-            return True
-        return not force and self._has_player_evidence(snapshot, self._clock())
+        return not force and self._tracker.snapshot().activity_generation != self._save_activity_generation
 
     def _save_still_quiescent(self) -> bool:
         if self._quiescent_signature is None:
@@ -517,11 +503,7 @@ class AutoPauseController:
             return
         self._last_status_at = now
         snapshot = self._tracker.snapshot()
-        verdict = presence_verdict(
-            snapshot,
-            stream_healthy=self._stream_healthy(),
-            now=now,
-        )
+        verdict = self._presence_gate.diagnose()
         self._control_files.write_status(
             AutoPauseStatus(
                 state=self._state,
