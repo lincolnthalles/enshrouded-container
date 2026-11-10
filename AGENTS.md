@@ -47,6 +47,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 - Prefer correctness and robustness over convenience. Roll back safely and clean up; never leave partial installs, restores, or backups behind.
 - Verify runtime command calls inside the dev container before editing code.
 - Do NOT default to circumventing linters or type checkers. When following a rule is truly not practical, a scoped ignore belongs in `pyproject.toml` with a why-comment.
+- Do NOT weaken specs merely to agree with bad implementations or bad designs; the priority is achieving correct and predictable behavior from the user's perspective; push back and grill the user whenever you can't reconcile specs with high confidence that it won't degrade the software.
 
 ## Code Style
 
@@ -107,8 +108,7 @@ Toolchain: pyrefly `preset = "strict"`, full annotations on new code. Ruff `sele
 Behavioral only; current thresholds and paths live in settings/config, not here.
 
 - Background work uses threads with explicit stop events.
-- Backups run subprocess-isolated with `flock` exclusion; signals to the parent do not cancel them.
-- Backup isolation: child-process execution, `flock` exclusion. Lock-held exit is expected, distinct from error exit.
+- Backups run subprocess-isolated with `flock` exclusion; signals to the parent do not cancel them; lock-held exit is expected, distinct from error exit.
 - Game tree at `/data/gameserver/` is rebuilt from scratch each start via pure-Python symlinks (not `cp -as` — avoids EPERM in CI). No FUSE or `SYS_ADMIN`.
 - DepotDownloader `-manifestfile`/`-depotkeys` require the Mod fork — see `docs/depotdownloader-quirks.md`.
 - Free-space guards gate installs and backups; see settings for current thresholds.
