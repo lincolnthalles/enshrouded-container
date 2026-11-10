@@ -3,6 +3,7 @@
 import logging
 from typing import TYPE_CHECKING, cast
 
+from enshctl import manifest_retention
 from enshctl.download.depotdownloader import with_manifest_override
 from enshctl.download.io import DownloadIO, HostIO, SystemDownloadIO, SystemHostIO
 from enshctl.download.types import DownloadConfig, InstallError, ManifestFile
@@ -156,7 +157,7 @@ def download_version(
     host_io = cast("HostIO", host or SystemHostIO())
     download_io = cast("DownloadIO", source or SystemDownloadIO())
     selected_version = version_spec if version_spec is not None else settings.version
-    is_latest = not selected_version or selected_version == "latest"
+    is_latest = manifest_retention.is_latest_tracking(selected_version)
     target_dir = manifests_dir / manifest_id
     status_file = target_dir / STATUS_FILE
 
@@ -167,9 +168,21 @@ def download_version(
         logger.info("Version %s already installed (status file present) at %s", manifest_id, target_dir)
         return target_dir
 
+    manifest_retention.cleanup_prune_dir(manifests_dir)
+
     # Disk space check: account for partial downloads of the same manifest
     partial_size = host_io.space.tree_size(target_dir)
     verdict = host_io.space.check(manifests_dir, required_bytes=settings.min_free_space, existing_bytes=partial_size)
+    if not verdict.is_sufficient and is_latest and settings.manifest_prune_enabled:
+        staged = manifest_retention.reclaim_for_download(manifests_dir, requested_id=manifest_id)
+        if staged:
+            logger.info("Reclaimed %d Manifest install(s) before downloading %s", len(staged), manifest_id)
+        partial_size = host_io.space.tree_size(target_dir)
+        verdict = host_io.space.check(
+            manifests_dir,
+            required_bytes=settings.min_free_space,
+            existing_bytes=partial_size,
+        )
     if not verdict.is_sufficient:
         msg = (
             f"Insufficient disk space for install. Need {human_size(verdict.required_bytes)}, "

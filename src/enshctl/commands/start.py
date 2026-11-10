@@ -9,7 +9,7 @@ from os import environ
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from enshctl import mods, staging
+from enshctl import manifest_retention, mods, staging
 from enshctl.commands.parser import CommandParser
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
@@ -61,11 +61,31 @@ class BuildLifecycle(Protocol):
     ) -> ServerLifecycle: ...
 
 
+class CleanupPrune(Protocol):
+    """Callable that removes interrupted Manifest deletion data."""
+
+    def __call__(self) -> None: ...
+
+
+class ActivateManifest(Protocol):
+    """Callable that records the Active Manifest and starts Manifest pruning."""
+
+    def __call__(
+        self,
+        settings: AppSettings,
+        active_id: str,
+        *,
+        stop_event: threading.Event,
+    ) -> threading.Thread | None: ...
+
+
 @dataclass(frozen=True)
 class StartupSeams:
-    """Staging and lifecycle construction seams for one start invocation."""
+    """Staging, retention, and lifecycle construction seams for one start invocation."""
 
     stage: StageCallable = staging.stage
+    cleanup_prune: CleanupPrune = manifest_retention.cleanup_prune_dir
+    activate_manifest: ActivateManifest = manifest_retention.retain_after_start
     build_lifecycle: BuildLifecycle = ServerLifecycle
 
 
@@ -128,14 +148,17 @@ def run(
     if "BACKUP_RETENTION" in environ:
         logger.warning("BACKUP_RETENTION is ignored. Use BACKUP_KEEP_LAST, BACKUP_KEEP_DAILY, etc. instead.")
 
+    shutdown_event = threading.Event()
     try:
         # Validate the roots before any setup I/O; the install entry is checked on the final plan.
         mods.GameTreePlan.from_settings("", settings)
         _setup_timezone(settings)
         _setup_directories(settings)
+        resolved.cleanup_prune()
         _setup_x11_socket()
         ensure_prefix(settings)
         prepared = resolved.stage(settings)
+        _ = resolved.activate_manifest(settings, prepared.active_manifest.manifest_id, stop_event=shutdown_event)
     except STARTUP_ERRORS:
         logger.exception("Start failed")
         return 1
@@ -143,7 +166,6 @@ def run(
     if is_auto_update_active(settings) and mods.mod_files():
         logger.warning("Auto Update: mod files are present; automatic updates may break mods")
 
-    shutdown_event = threading.Event()
     while True:
         lifecycle = resolved.build_lifecycle(
             settings,
@@ -168,3 +190,4 @@ def run(
             return 1
         if shutdown_event.is_set():
             return 0
+        _ = resolved.activate_manifest(settings, prepared.active_manifest.manifest_id, stop_event=shutdown_event)

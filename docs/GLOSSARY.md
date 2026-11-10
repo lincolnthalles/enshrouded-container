@@ -8,7 +8,13 @@ Container and CLI that runs a version-pinned Enshrouded dedicated game server wi
 
 **Version spec**:
 Raw `VERSION` input selecting which game release to run: `latest`, `build:<id>`, or explicit digits.
+An empty or unset value means `latest`.
 _Avoid_: Version, Manifest ID
+
+**Latest-tracking deployment**:
+Deployment whose Version spec is `latest`, empty, or unset; governed by the Auto Update and Manifest
+pruning rules.
+_Avoid_: Rolling deployment, Auto version
 
 **Manifest ID**:
 Resolved numeric identifier of the Steam depot manifest selected by a Version spec.
@@ -25,6 +31,41 @@ _Avoid_: Manifest
 **Active Manifest**:
 Manifest ID currently backing the Game tree and the running server.
 _Avoid_: Current version, Running manifest
+
+**Previous Active Manifest**:
+The rollback target retained for latest-tracking deployments: the most recent Manifest Active before
+the current one, or the fallback install selected by the pruning rules.
+_Avoid_: Old version, Prior install
+
+**Activation record**:
+Persisted record of the current Active Manifest and the Manifest that was Active before it.
+_Avoid_: Version history, Install log
+
+**Complete Manifest install**:
+Numeric Manifest install directory carrying the `.installed` marker.
+_Avoid_: Finished install, Valid version
+
+**Incomplete Manifest install**:
+Numeric Manifest install directory without the `.installed` marker, reserved for resume.
+_Avoid_: Partial download, Broken install
+
+**Manifest pruning**:
+Automatic deletion of complete Manifest installs after the Active Manifest install and Game tree
+are prepared, keeping only the Active Manifest and Previous Active Manifest installs for
+latest-tracking deployments.
+_Avoid_: Install cleanup, Cache eviction
+
+**Manifest reclamation**:
+Synchronous deletion of complete Manifest installs before a Download when the Install disk-space
+check would otherwise fail, keeping the reclamation keep set for latest-tracking deployments.
+_Avoid_: Disk cleanup, Space reclaim
+
+**Reclamation keep set**:
+The installs preserved during a Download: the requested Manifest install, the recorded Active
+Manifest install, the Manifest install backing the current Game tree when present, and the recorded
+Previous Active Manifest install when complete, or the fallback install when no complete recorded
+previous exists.
+_Avoid_: Protected set, Retention set
 
 ### Backups
 
@@ -59,7 +100,8 @@ Immutable per-version game copy. Never written after download.
 _Avoid_: Pristine install, Pristine game
 
 **Manifests directory**:
-Path holding every Manifest install: `/data/manifests`.
+Path holding Manifest installs, their control files, and the `.prune` staging directory:
+`/data/manifests`.
 _Avoid_: Manifests volume, Depot directory
 
 **Mod overlay**:

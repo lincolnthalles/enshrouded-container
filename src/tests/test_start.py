@@ -26,8 +26,19 @@ def _prepared(
     )
 
 
-def _seams(stage: MagicMock, build_lifecycle: MagicMock) -> start_cmd.StartupSeams:
-    return start_cmd.StartupSeams(stage=stage, build_lifecycle=build_lifecycle)
+def _seams(
+    stage: MagicMock,
+    build_lifecycle: MagicMock,
+    *,
+    cleanup_prune: MagicMock | None = None,
+    activate_manifest: MagicMock | None = None,
+) -> start_cmd.StartupSeams:
+    return start_cmd.StartupSeams(
+        stage=stage,
+        cleanup_prune=cleanup_prune or MagicMock(),
+        activate_manifest=activate_manifest or MagicMock(return_value=None),
+        build_lifecycle=build_lifecycle,
+    )
 
 
 def test_start_rejects_game_tree_overlapping_backup_dir() -> None:
@@ -98,6 +109,45 @@ def test_run_returns_lifecycle_code() -> None:
     build_lifecycle.assert_called_once()
     assert build_lifecycle.call_args.kwargs["active_manifest"] == manifest
     assert build_lifecycle.call_args.kwargs["save_directories"] == SaveDirectories(SAVE_DIR)
+
+
+def test_start_runs_cleanup_then_stage_then_activation() -> None:
+    # GIVEN staging that succeeds into one Manifest
+    settings = AppSettings()
+    manifest = ManifestRecord("111", "05/29/2026 12:00:00")
+    lifecycle = MagicMock()
+    lifecycle.run.return_value = 0
+    lifecycle.restart_requested = False
+    manager = MagicMock()
+    manager.stage.return_value = _prepared(manifest)
+    manager.build_lifecycle.return_value = lifecycle
+    manager.activate_manifest.return_value = None
+    seams = start_cmd.StartupSeams(
+        stage=manager.stage,
+        cleanup_prune=manager.cleanup_prune,
+        activate_manifest=manager.activate_manifest,
+        build_lifecycle=manager.build_lifecycle,
+    )
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(settings, seams=seams)
+
+    # THEN cleanup precedes staging, and activation records the staged Manifest
+    assert code == 0
+    names = [call[0] for call in manager.method_calls]
+    assert names.index("cleanup_prune") < names.index("stage") < names.index("activate_manifest")
+    manager.cleanup_prune.assert_called_once_with()
+    manager.activate_manifest.assert_called_once()
+    args, kwargs = manager.activate_manifest.call_args
+    assert args == (settings, "111")
+    assert "stop_event" in kwargs
 
 
 def test_start_relaunches_with_pending_manifest() -> None:

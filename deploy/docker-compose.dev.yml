@@ -43,6 +43,8 @@ services:
       AUTO_PAUSE_ENABLED: true
       AUTO_PAUSE_IDLE_TIMEOUT: 60 # 1 minute; default is 5 minutes.
 
+      MANIFEST_PRUNE_ENABLED: "${MANIFEST_PRUNE_ENABLED:-true}"
+
       ENSHROUDED_NAME: "[Dev] Enshrouded Server"
       ENSHROUDED_TAGS: '["Portuguese","Exploration","LookingForPlayers"]'
       ENSHROUDED_IP: 0.0.0.0

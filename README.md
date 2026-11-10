@@ -91,7 +91,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 ## Container Features
 
 - **Version pinning**: Pin exact game server versions via Steam manifest IDs with `VERSION=<manifest_id>` for deterministic deployments.
-- **Auto Update**: With `VERSION=latest`, checks for a newer Manifest on a schedule, warns while an update is pending, and restarts into it when no players are online. Log-only mode reports without acting.
+- **Auto Update**: For latest-tracking deployments, checks for a newer Manifest on a schedule, warns while an update is pending, and restarts into it when no players are online. Log-only mode reports without acting.
 - **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the game server install, keeping the original files untouched.
 - **Config via env vars**: Any `ENSHROUDED_*` env var is converted to a nested JSON key in `enshrouded_server.json`. Works with any config field, including future game updates.
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
@@ -104,14 +104,15 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 
 ### Game version
 
-| Variable        | Default  | Description                                  |
-| --------------- | -------- | -------------------------------------------- |
-| `VERSION`       | `latest` | Steam manifest ID, `latest`, or `build:<id>` |
-| `FORCE_INSTALL` | `false`  | Force re-download even if already installed  |
+| Variable                 | Default  | Description                                                                                                                                                                                                                                        |
+| ------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VERSION`                | `latest` | Steam manifest ID, `latest`, or `build:<id>`                                                                                                                                                                                                       |
+| `FORCE_INSTALL`          | `false`  | Force re-download even if already installed                                                                                                                                                                                                        |
+| `MANIFEST_PRUNE_ENABLED` | `true`   | For `latest`, empty, or unset `VERSION`, keep only the Active and Previous Active Manifest installs. `true`/`1`/`on`/`yes` enable and `false`/`0`/`off`/`no` disable, case-insensitively after trimming; unrecognized values keep pruning enabled. |
 
 ### Auto Update
 
-Auto Update is enabled by default and only runs when `VERSION=latest` (or unset). It checks for a
+Auto Update is enabled by default and only runs when `VERSION` is `latest`, empty, or unset. It checks for a
 newer Manifest on a minute-level cron and logs a warning on every scheduled check while an update is
 pending. By default it downloads the new Manifest immediately and restarts the server as soon as
 the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD` is true, and
@@ -119,7 +120,7 @@ a paused server is resumed first. Pinned versions never check.
 
 | Variable                               | Default        | Description                                           |
 | -------------------------------------- | -------------- | ----------------------------------------------------- |
-| `AUTO_UPDATE_ENABLED`                  | `true`         | Enable Auto Update for `latest`                       |
+| `AUTO_UPDATE_ENABLED`                  | `true`         | Enable Auto Update for latest-tracking deployments    |
 | `AUTO_UPDATE_CRON`                     | `*/60 * * * *` | Minute-level check schedule                           |
 | `AUTO_UPDATE_LOG_ONLY`                 | `false`        | Warn on updates without downloading or restarting     |
 | `AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY` | `false`        | Defer the download until the empty-server gate clears |
@@ -127,9 +128,15 @@ a paused server is resumed first. Pinned versions never check.
 The restart requires an empty player roster, no pending join, a ready world, a healthy server output
 stream, a non-degraded tracker, and a recent complete Session block containing only the local
 machine. A2S is not required. A paused tree is resumed first and qualifies without a fresh Session
-block. Mod files trigger a startup warning because automatic updates may break mods. Old Manifest
-installs are kept; when disk space runs out, the update download fails with a warning and the
-running server stays put.
+block. Mod files trigger a startup warning because automatic updates may break mods. By default,
+once a start or update has prepared the new Manifest install and Game tree, the container keeps that
+install and the Previous Active Manifest install, then removes older complete installs in the
+background.
+The first start after upgrading also prunes an existing backlog. An update briefly needs room for the
+Active Manifest, Previous Active Manifest, and requested Manifest installs; older backlog is
+reclaimed before the Download when the free-space guard requires it. Set
+`MANIFEST_PRUNE_ENABLED=false` to keep every install. When disk space still runs out, the update
+Download fails with a warning and the running server stays put.
 
 ### Backups
 
@@ -311,18 +318,32 @@ If you do not provide any authentication and request an older manifest, the orch
 ### Existing files
 
 > [!TIP]
-> Old manifests are kept by the orchestrator, allowing you to pin `VERSION` to any manifest still
-> present in storage. Auto Update never deletes them; when free storage is too low, new downloads
-> fail until you remove old installs.
+> For `latest`, empty, or unset `VERSION`, the orchestrator keeps the Active Manifest install and the
+> Previous Active Manifest install, allowing a rollback without re-downloading. Older complete
+> installs are pruned after every start or update that prepares the Active Manifest install; before a
+> Download, installs outside the reclamation keep set are reclaimed when needed to satisfy the
+> free-space guard. `.manifest` files stay available for auth-free downloads. Set
+> `MANIFEST_PRUNE_ENABLED=false` to keep every install.
 >
-> This fits most users who want to upgrade at a slower pace due to mod compatibility or other reasons.
+> Pinned Version specs never prune, so you can pin `VERSION` to any Manifest install still present
+> in storage. This fits users who want to upgrade at a slower pace due to mod compatibility or other
+> reasons. An install added manually or with `enshctl download` is a deletion candidate at the next
+> start of a latest-tracking deployment unless it is the Active Manifest install or Previous Active
+> Manifest install (recorded or fallback), or you pin `VERSION` or set
+> `MANIFEST_PRUNE_ENABLED=false`.
 
 ### Alternative methods
 
 <details>
 <summary>Inserting manifests manually</summary>
 
-If you already have the game server files, place them directly into `/data/manifests/<manifest_id>/` and create an empty `.installed` marker file. The orchestrator will recognize it as a valid installed version on the next start.
+If you already have the game server files, place them directly into
+`/data/manifests/<manifest_id>/` and create an empty `.installed` marker file. The orchestrator will
+recognize it as a Complete Manifest install on the next start. On a latest-tracking deployment, that
+install is deleted on the next start unless it is the Active Manifest install or Previous Active
+Manifest install (recorded or fallback); pin `VERSION` or set `MANIFEST_PRUNE_ENABLED=false` to keep
+it. Incomplete Manifest installs persist for resume and are never deleted automatically; remove them
+manually to reclaim space.
 
 ```bash
 mkdir -p data/manifests/1234567890

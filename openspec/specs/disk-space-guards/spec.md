@@ -6,7 +6,7 @@ Free-space guards that gate game installs and backups before they run.
 
 ### Requirement: Install disk space check
 
-Before downloading game files, the Install SHALL verify that free space plus any partial download of the same Manifest ID meets the configured minimum (default 10 GB). Otherwise the Install SHALL fail with an error naming exact sizes. A startup or CLI Install SHALL exit 1; an Auto Update download failure SHALL follow `auto-update`. Partial data for other Manifest IDs SHALL NOT count.
+Before downloading game files, the Install SHALL verify that free space plus any partial download of the same Manifest ID meets the configured minimum (default 10 GB), after any reclamation performed under `versioned-game-install`. Otherwise the Install SHALL fail with an error naming exact sizes. A startup or CLI Install SHALL exit 1; an Auto Update download failure SHALL follow `auto-update`. Partial data for other Manifest IDs SHALL NOT count.
 
 #### Scenario: Sufficient space for fresh install
 
@@ -15,7 +15,7 @@ Before downloading game files, the Install SHALL verify that free space plus any
 
 #### Scenario: Insufficient space aborts with sizes
 
-- **WHEN** free space plus same-manifest partial data is below the minimum
+- **WHEN** free space plus same-manifest partial data is below the minimum after reclamation
 - **THEN** a startup or CLI Install SHALL fail with an error naming free, partial, and required
   sizes, and exit 1
 

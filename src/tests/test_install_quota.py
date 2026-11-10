@@ -1,5 +1,6 @@
 """Tests for install disk space quota checks."""
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -129,6 +130,110 @@ class TestDownloadVersionQuota:
                 host=cast("HostIO", _host(7 * 1024**3)),
                 source=cast("DownloadIO", _download()),
             )
+
+
+def _complete_install(manifests_dir: Path, manifest_id: str, mtime_ns: int) -> Path:
+    path = manifests_dir / manifest_id
+    path.mkdir(parents=True)
+    (path / "game.bin").write_bytes(b"game")
+    marker = path / STATUS_FILE
+    marker.touch()
+    os.utime(marker, ns=(mtime_ns, mtime_ns))
+    return path
+
+
+def _host_reclaiming(manifests_dir: Path, old_id: str, *, free_before: int, free_after: int) -> MagicMock:
+    host = _host(free_before)
+    host.space = SpaceGuard(
+        disk_free=lambda _p: free_after if not (manifests_dir / old_id).exists() else free_before,
+    )
+    return host
+
+
+class TestDownloadVersionReclamation:
+    """Tests for pre-download reclamation of older Manifest installs."""
+
+    def test_reclaimed_backlog_lets_download_proceed(self, tmp_path: Path) -> None:
+        # GIVEN two older complete installs and free space below the threshold
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir(parents=True)
+        _complete_install(manifests_dir, "100", 1_000)
+        _complete_install(manifests_dir, "200", 2_000)
+        host = _host_reclaiming(manifests_dir, "100", free_before=5 * 1024**3, free_after=15 * 1024**3)
+
+        # WHEN downloading a latest-tracking Manifest with insufficient space
+        result = download_version(
+            "999",
+            _settings(version="latest", force_install=True),
+            manifests_dir=manifests_dir,
+            host=cast("HostIO", host),
+            source=cast("DownloadIO", _download()),
+        )
+
+        # THEN the oldest install is reclaimed, the fallback remains, and the download proceeds
+        assert result == manifests_dir / "999"
+        assert not (manifests_dir / "100").exists()
+        assert (manifests_dir / "200").is_dir()
+
+    def test_reclamation_failure_still_aborts(self, tmp_path: Path) -> None:
+        # GIVEN two older complete installs and space that stays short after reclaiming
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir(parents=True)
+        _complete_install(manifests_dir, "100", 1_000)
+        _complete_install(manifests_dir, "200", 2_000)
+
+        # WHEN downloading with no room even after reclamation
+        # THEN the install aborts after attempting reclamation
+        with pytest.raises(InstallError):
+            download_version(
+                "999",
+                _settings(version="latest", force_install=True),
+                manifests_dir=manifests_dir,
+                host=cast("HostIO", _host(5 * 1024**3)),
+                source=cast("DownloadIO", _download()),
+            )
+        assert not (manifests_dir / "100").exists()
+        assert (manifests_dir / "200").is_dir()
+
+    def test_disabled_pruning_skips_reclamation(self, tmp_path: Path) -> None:
+        # GIVEN older complete installs and pruning disabled
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir(parents=True)
+        _complete_install(manifests_dir, "100", 1_000)
+        _complete_install(manifests_dir, "200", 2_000)
+
+        # WHEN downloading with insufficient space
+        # THEN the install aborts without deleting anything
+        with pytest.raises(InstallError):
+            download_version(
+                "999",
+                _settings(version="latest", force_install=True, manifest_prune_enabled=False),
+                manifests_dir=manifests_dir,
+                host=cast("HostIO", _host(5 * 1024**3)),
+                source=cast("DownloadIO", _download()),
+            )
+        assert (manifests_dir / "100").is_dir()
+        assert (manifests_dir / "200").is_dir()
+
+    def test_pinned_version_skips_reclamation(self, tmp_path: Path) -> None:
+        # GIVEN older complete installs and an explicit Version spec
+        manifests_dir = tmp_path / "manifests"
+        manifests_dir.mkdir(parents=True)
+        _complete_install(manifests_dir, "100", 1_000)
+        _complete_install(manifests_dir, "200", 2_000)
+
+        # WHEN downloading with insufficient space
+        # THEN the install aborts without deleting anything
+        with pytest.raises(InstallError):
+            download_version(
+                "999",
+                _settings(version="999", force_install=True),
+                manifests_dir=manifests_dir,
+                host=cast("HostIO", _host(5 * 1024**3)),
+                source=cast("DownloadIO", _download()),
+            )
+        assert (manifests_dir / "100").is_dir()
+        assert (manifests_dir / "200").is_dir()
 
 
 class TestDownloadVersionLifecycle:

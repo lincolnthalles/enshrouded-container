@@ -96,6 +96,7 @@ class AppSettings:
     # Version / install
     version: str = _env_field("latest", "VERSION", _parse_version)
     force_install: bool = _env_field(default=False, key="FORCE_INSTALL", parse=_parse_bool)
+    manifest_prune_enabled: bool = _env_field(default=True, key="MANIFEST_PRUNE_ENABLED", parse=_parse_bool)
     min_free_space: int = _env_field(10 * 1024**3, "INSTALL_MIN_FREE_SPACE", _parse_int)
 
     # Auto Update

@@ -1,10 +1,14 @@
 # Restart into the newest Manifest from inside the running container
 
+This ADR remains current except for the Manifest install retention decision, which ADR 0004
+supersedes.
+
 Auto Update must work under the default `on-failure:5` restart policy, which does not restart a
 container after a clean exit. We keep the container process alive, stop the game, rebuild the Game
 tree from the new Manifest install, and launch a new server process in the same container. The
-update is enabled by default for `latest`, checks hourly, downloads eagerly, and restarts only when
-the empty-server gate is clear. A cold backup runs before the restart when `BACKUP_COLD` is true.
+update is enabled by default for latest-tracking deployments, checks hourly, downloads eagerly, and
+restarts only when the empty-server gate is clear. A cold backup runs before the restart when
+`BACKUP_COLD` is true.
 
 ## Considered Options
 
@@ -17,13 +21,15 @@ the empty-server gate is clear. A cold backup runs before the restart when `BACK
   Manifest install is never modified.
 - **A2S as a restart veto**: rejected because A2S is advisory and can time out. The log-derived
   roster, pending join, tracker, stream, and Session block are the same evidence Auto Pause trusts.
-- **Delete old Manifest installs after an update**: rejected because it removes the rollback target.
-  The install disk-space guard blocks and warns when space runs out instead.
+- **Delete old Manifest installs after an update**: rejected at the time because it removes the
+  rollback target. Superseded by ADR 0004, which keeps only the Active Manifest install and the
+  Previous Active Manifest install.
 
 ## Consequences
 
-- A `latest` server can restart unattended after a game release.
+- A latest-tracking server can restart unattended after a game release.
 - Mod files only produce a startup warning; Auto Update does not block or adapt to them.
 - A player joining between the final presence check and `SIGINT` can be disconnected.
-- Old Manifest installs accumulate by design and eventually require operator cleanup.
+- Old Manifest installs accumulated by design before ADR 0004; latest-tracking deployments now keep
+  only the Active Manifest install and the Previous Active Manifest install.
 - Shutdown aborts an in-flight update download; the partial Manifest install resumes next run.
