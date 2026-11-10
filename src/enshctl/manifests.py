@@ -63,6 +63,11 @@ def latest_manifest(fetch: Callable[[], list[ManifestRecord]] | None = None) -> 
     return max(manifests, key=manifest_sort_key)
 
 
+def is_latest_tracking(version_spec: str) -> bool:
+    """Return whether a Version spec tracks the latest Manifest."""
+    return not version_spec or version_spec == "latest"
+
+
 def resolve_manifest(
     version_spec: str,
     *,
@@ -71,7 +76,7 @@ def resolve_manifest(
 ) -> str:
     """Resolve a VERSION value to a specific manifest ID."""
     fetcher = fetch if fetch is not None else DepotDownloader().fetch_manifests
-    if not version_spec or version_spec == "latest":
+    if is_latest_tracking(version_spec):
         fetch_error: SubprocessError | None = None
         try:
             latest = latest_manifest(fetcher)

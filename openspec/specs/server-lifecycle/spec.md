@@ -6,7 +6,7 @@ Server startup ordering from Install through launch; shutdown and crash behavior
 
 ### Requirement: Startup sequence
 
-The entrypoint SHALL execute the following startup sequence in order: (1) Install the game Version spec, (2) build the Game tree, (3) generate the Generated config, (4) launch the server executable under Wine with resolved DLL overrides in its environment. The server's environment SHALL carry no Steam AppID variable; the app ID SHALL reach DepotDownloader as a command argument only.
+The entrypoint SHALL execute the following startup sequence in order: (1) Install the game Version spec, (2) build the Game tree, (3) generate the Generated config, (4) launch the server executable under Wine with resolved DLL overrides in its environment. Manifest pruning hooks (see `versioned-game-install`) SHALL run around the sequence without changing its order. The server's environment SHALL carry no Steam AppID variable; the app ID SHALL reach DepotDownloader as a command argument only.
 
 #### Scenario: Full startup sequence
 

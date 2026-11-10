@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from enshctl import manifest_retention
+from enshctl.manifests import is_latest_tracking
 from enshctl.paths import STATUS_FILE
 from enshctl.settings import AppSettings
 
@@ -73,6 +74,23 @@ def test_malformed_activation_record_is_treated_as_absent(tmp_path: Path) -> Non
     manifests_dir = tmp_path / "manifests"
     manifests_dir.mkdir()
     (manifests_dir / manifest_retention.ACTIVATION_RECORD_NAME).write_text("{not-json")
+
+    # WHEN reading and replacing it
+    assert manifest_retention.read_activation_record(manifests_dir) is None
+    assert manifest_retention.record_activation(manifests_dir, "333")
+
+    # THEN the replacement record starts without a previous entry
+    assert manifest_retention.read_activation_record(manifests_dir) == manifest_retention.ActivationRecord(
+        active="333",
+        previous=None,
+    )
+
+
+def test_invalid_utf8_activation_record_is_treated_as_absent(tmp_path: Path) -> None:
+    # GIVEN an activation record with invalid UTF-8 bytes
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    (manifests_dir / manifest_retention.ACTIVATION_RECORD_NAME).write_bytes(b"\xff\xfe-not-utf8")
 
     # WHEN reading and replacing it
     assert manifest_retention.read_activation_record(manifests_dir) is None
@@ -257,6 +275,34 @@ def test_cleanup_removes_staged_data_without_following_symlinks(tmp_path: Path) 
     assert (outside / "keep").read_text() == "keep"
 
 
+def test_stale_prune_collision_is_reclaimed(tmp_path: Path) -> None:
+    # GIVEN a live install with a stale staged copy under the same Manifest ID
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    _install(manifests_dir, "100")
+    _install(manifests_dir, "200")
+    _install(manifests_dir, "300")
+    _activate(manifests_dir, "300")
+    prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+    prune_dir.mkdir()
+    stale = prune_dir / "100"
+    stale.mkdir()
+    (stale / "old.bin").write_bytes(b"stale")
+
+    # WHEN retaining after preparation of Manifest 300
+    thread = manifest_retention.retain_after_start(
+        _settings(version="latest"),
+        "300",
+        threading.Event(),
+        manifests_dir=manifests_dir,
+    )
+    _join(thread)
+
+    # THEN the stale copy is replaced and the live install is reclaimed
+    assert not (manifests_dir / "100").exists()
+    assert not (prune_dir / "100").exists()
+
+
 def test_read_only_install_tree_is_deleted(tmp_path: Path) -> None:
     # GIVEN an old install with read-only directories
     manifests_dir = tmp_path / "manifests"
@@ -306,6 +352,32 @@ def test_reclamation_keeps_requested_active_previous_and_game_tree(tmp_path: Pat
     assert [path.name for path in staged] == ["100"]
     assert not (manifests_dir / "100").exists()
     for manifest_id in ("200", "300", "350", "400"):
+        assert (manifests_dir / manifest_id).is_dir()
+
+
+def test_reclamation_keeps_every_linked_game_tree_install(tmp_path: Path) -> None:
+    # GIVEN a Game tree linking two Manifest installs and an old install
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    for manifest_id in ("100", "200", "350", "360", "400"):
+        _install(manifests_dir, manifest_id)
+    _activate(manifests_dir, "200", "400")
+    game_tree = tmp_path / "gameserver"
+    game_tree.mkdir()
+    (game_tree / "one.exe").symlink_to(manifests_dir / "350" / "game.bin")
+    (game_tree / "two.exe").symlink_to(manifests_dir / "360" / "game.bin")
+
+    # WHEN reclaiming before downloading Manifest 400
+    staged = manifest_retention.reclaim_for_download(
+        manifests_dir,
+        requested_id="400",
+        game_tree_dir=game_tree,
+    )
+
+    # THEN both linked installs remain and only the old install is reclaimed
+    assert [path.name for path in staged] == ["100"]
+    assert not (manifests_dir / "100").exists()
+    for manifest_id in ("200", "350", "360", "400"):
         assert (manifests_dir / manifest_id).is_dir()
 
 
@@ -363,9 +435,39 @@ def test_pinned_and_disabled_deployments_keep_every_install(tmp_path: Path) -> N
     assert (manifests_dir / "300").is_dir()
 
 
+def test_cleanup_runs_when_pruning_disabled(tmp_path: Path) -> None:
+    # GIVEN staged prune data and a pruning-disabled deployment
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    _install(manifests_dir, "100")
+    _install(manifests_dir, "300")
+    prune_dir = manifests_dir / manifest_retention.PRUNE_DIR_NAME
+    prune_dir.mkdir()
+    (prune_dir / "999").mkdir()
+    (prune_dir / "999" / "game.bin").write_bytes(b"stale")
+    _activate(manifests_dir, "300")
+
+    # WHEN cleaning before a pruning-disabled start
+    manifest_retention.cleanup_prune_dir(manifests_dir)
+    _join(
+        manifest_retention.retain_after_start(
+            _settings(version="latest", manifest_prune_enabled=False),
+            "300",
+            threading.Event(),
+            manifests_dir=manifests_dir,
+        )
+    )
+
+    # THEN staged data is removed but installs remain
+    assert prune_dir.is_dir()
+    assert not (prune_dir / "999").exists()
+    assert (manifests_dir / "100").is_dir()
+    assert (manifests_dir / "300").is_dir()
+
+
 @pytest.mark.parametrize(("version", "expected"), [("latest", True), ("", True), ("123", False), ("build:123", False)])
 def test_latest_tracking_classification(version: str, expected: bool) -> None:
     # GIVEN a Version spec
     # WHEN classifying it
     # THEN only latest, empty, and unset values are latest-tracking
-    assert manifest_retention.is_latest_tracking(version) is expected
+    assert is_latest_tracking(version) is expected

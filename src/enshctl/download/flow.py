@@ -8,7 +8,8 @@ from enshctl.download.depotdownloader import with_manifest_override
 from enshctl.download.io import DownloadIO, HostIO, SystemDownloadIO, SystemHostIO
 from enshctl.download.types import DownloadConfig, InstallError, ManifestFile
 from enshctl.keys import depot_keys_path
-from enshctl.paths import DEPOT_ID, MANIFESTS_DIR, STATUS_FILE
+from enshctl.manifests import is_latest_tracking
+from enshctl.paths import DEPOT_ID, GAME_TREE_DIR, MANIFESTS_DIR, STATUS_FILE
 from enshctl.utils import human_size
 
 if TYPE_CHECKING:
@@ -147,6 +148,7 @@ def download_version(
     version_spec: str | None = None,
     host: HostIO | None = None,
     source: DownloadIO | None = None,
+    game_tree_dir: Path = GAME_TREE_DIR,
 ) -> Path:
     """Download a specific Manifest ID via DepotDownloader.
 
@@ -157,7 +159,7 @@ def download_version(
     host_io = cast("HostIO", host or SystemHostIO())
     download_io = cast("DownloadIO", source or SystemDownloadIO())
     selected_version = version_spec if version_spec is not None else settings.version
-    is_latest = manifest_retention.is_latest_tracking(selected_version)
+    is_latest = is_latest_tracking(selected_version)
     target_dir = manifests_dir / manifest_id
     status_file = target_dir / STATUS_FILE
 
@@ -174,7 +176,11 @@ def download_version(
     partial_size = host_io.space.tree_size(target_dir)
     verdict = host_io.space.check(manifests_dir, required_bytes=settings.min_free_space, existing_bytes=partial_size)
     if not verdict.is_sufficient and is_latest and settings.manifest_prune_enabled:
-        staged = manifest_retention.reclaim_for_download(manifests_dir, requested_id=manifest_id)
+        staged = manifest_retention.reclaim_for_download(
+            manifests_dir,
+            requested_id=manifest_id,
+            game_tree_dir=game_tree_dir,
+        )
         if staged:
             logger.info("Reclaimed %d Manifest install(s) before downloading %s", len(staged), manifest_id)
         partial_size = host_io.space.tree_size(target_dir)

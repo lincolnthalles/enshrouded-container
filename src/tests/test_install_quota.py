@@ -160,6 +160,8 @@ class TestDownloadVersionReclamation:
         _complete_install(manifests_dir, "100", 1_000)
         _complete_install(manifests_dir, "200", 2_000)
         host = _host_reclaiming(manifests_dir, "100", free_before=5 * 1024**3, free_after=15 * 1024**3)
+        game_tree_dir = tmp_path / "gameserver"
+        game_tree_dir.mkdir()
 
         # WHEN downloading a latest-tracking Manifest with insufficient space
         result = download_version(
@@ -168,6 +170,7 @@ class TestDownloadVersionReclamation:
             manifests_dir=manifests_dir,
             host=cast("HostIO", host),
             source=cast("DownloadIO", _download()),
+            game_tree_dir=game_tree_dir,
         )
 
         # THEN the oldest install is reclaimed, the fallback remains, and the download proceeds
@@ -181,6 +184,8 @@ class TestDownloadVersionReclamation:
         manifests_dir.mkdir(parents=True)
         _complete_install(manifests_dir, "100", 1_000)
         _complete_install(manifests_dir, "200", 2_000)
+        game_tree_dir = tmp_path / "gameserver"
+        game_tree_dir.mkdir()
 
         # WHEN downloading with no room even after reclamation
         # THEN the install aborts after attempting reclamation
@@ -191,6 +196,7 @@ class TestDownloadVersionReclamation:
                 manifests_dir=manifests_dir,
                 host=cast("HostIO", _host(5 * 1024**3)),
                 source=cast("DownloadIO", _download()),
+                game_tree_dir=game_tree_dir,
             )
         assert not (manifests_dir / "100").exists()
         assert (manifests_dir / "200").is_dir()

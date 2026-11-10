@@ -10,9 +10,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from enshctl import files
+from enshctl.manifests import is_latest_tracking
 from enshctl.paths import GAME_TREE_DIR, MANIFESTS_DIR, STATUS_FILE
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
+
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -20,8 +24,11 @@ logger = logging.getLogger(__name__)
 ACTIVATION_RECORD_NAME = ".manifest-history"
 PRUNE_DIR_NAME = ".prune"
 
-# Every mutation under `.prune` shares this lock. Cleanup, reclamation, and the
-# background deleter must never remove or stage the same path concurrently.
+# _PRUNE_LOCK guards fast `.prune` mutations only: directory creation, listing
+# snapshots, and renames. File-content deletion runs outside the lock so a
+# large background `rmtree` never blocks staging, cleanup, or relaunch.
+# Staging never deletes under the lock: collisions are removed outside before
+# renaming. Deleters tolerate missing entries because snapshots can overlap.
 _PRUNE_LOCK = threading.RLock()
 
 
@@ -60,12 +67,12 @@ def read_activation_record(manifests_dir: Path = MANIFESTS_DIR) -> ActivationRec
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Could not read activation record %s: %s", path, exc)
         return None
     try:
         payload = json.loads(raw)
-    except ValueError, TypeError:
+    except ValueError:
         logger.warning("Malformed activation record %s; treating it as absent", path)
         return None
     if not isinstance(payload, dict):
@@ -90,7 +97,7 @@ def _write_activation_record(record: ActivationRecord, manifests_dir: Path) -> N
     manifests_dir.mkdir(parents=True, exist_ok=True)
     payload = {"active": record.active, "previous": record.previous}
     content = f"{json.dumps(payload, sort_keys=True)}\n".encode()
-    files.write_bytes_atomic(_activation_record_path(manifests_dir), content)
+    files.write_bytes_atomic(path, content)
 
 
 def record_activation(manifests_dir: Path, active_id: str) -> ActivationRecord | None:
@@ -196,65 +203,79 @@ def _remove_path(path: Path) -> None:
     shutil.rmtree(path, onexc=_retry_writable)
 
 
-def _retry_writable(function: object, path: str, _error: object) -> None:
+def _retry_writable(function: Callable[..., Any], path: str, _error: BaseException) -> None:
+    target = Path(path)
     with suppress(OSError):
-        Path(path).chmod(0o700)
-    function(path)  # type: ignore[operator]
-
-
-def _make_tree_writable(root: Path) -> None:
+        target.chmod(0o700)
     with suppress(OSError):
-        root.chmod(0o755)
-    try:
-        entries = tuple(root.rglob("*"))
-    except OSError:
-        return
-    for entry in entries:
-        if entry.is_symlink():
-            continue
-        with suppress(OSError):
-            entry.chmod(0o755 if entry.is_dir() else 0o644)
+        target.parent.chmod(0o700)
+    function(path)
 
 
-def _cleanup_locked(manifests_dir: Path, *, stop_event: threading.Event | None = None) -> None:
-    if not manifests_dir.exists():
-        return
-    prune_dir = _prune_directory(manifests_dir, create=False)
-    if prune_dir is None:
-        return
+def _list_staged_entries(prune_dir: Path) -> tuple[Path, ...]:
     try:
-        entries = tuple(prune_dir.iterdir())
+        return tuple(prune_dir.iterdir())
     except OSError as exc:
         logger.warning("Could not list Manifest deletion staging directory %s: %s", prune_dir, exc)
-        return
+        return ()
+
+
+def _delete_entries(entries: tuple[Path, ...], stop_event: threading.Event | None = None) -> None:
     for entry in entries:
         if stop_event is not None and stop_event.is_set():
             return
         try:
             _remove_path(entry)
+        except FileNotFoundError:
+            continue
         except OSError as exc:
             logger.warning("Could not remove staged Manifest data %s: %s", entry, exc)
 
 
+def _snapshot_prune_entries(manifests_dir: Path) -> tuple[Path, ...]:
+    try:
+        with _PRUNE_LOCK:
+            if not manifests_dir.exists():
+                return ()
+            prune_dir = _prune_directory(manifests_dir, create=False)
+            if prune_dir is None:
+                return ()
+            return _list_staged_entries(prune_dir)
+    except OSError as exc:
+        logger.warning("Could not snapshot Manifest deletion staging in %s: %s", manifests_dir, exc)
+        return ()
+
+
 def cleanup_prune_dir(manifests_dir: Path = MANIFESTS_DIR) -> None:
     """Remove every entry under `.prune`, leaving the staging directory itself in place."""
-    with _PRUNE_LOCK:
-        _cleanup_locked(manifests_dir)
+    _delete_entries(_snapshot_prune_entries(manifests_dir))
 
 
 def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ...]) -> tuple[Path, ...]:
     with _PRUNE_LOCK:
-        _cleanup_locked(manifests_dir)
+        prune_dir = _prune_directory(manifests_dir, create=True)
+        if prune_dir is None:
+            return ()
+        pairs = tuple((install, prune_dir / install.manifest_id) for install in candidates)
+        collisions = tuple(dest for _, dest in pairs if dest.exists() or dest.is_symlink())
+    if collisions:
+        _delete_entries(collisions)
+    with _PRUNE_LOCK:
         prune_dir = _prune_directory(manifests_dir, create=True)
         if prune_dir is None:
             return ()
         staged: list[Path] = []
-        for install in candidates:
-            destination = prune_dir / install.manifest_id
+        for install, destination in pairs:
             try:
                 if destination.exists() or destination.is_symlink():
-                    _remove_path(destination)
-                _make_tree_writable(install.path)
+                    logger.warning(
+                        "Could not stage Manifest install %s for deletion: destination %s exists",
+                        install.path,
+                        destination,
+                    )
+                    continue
+                with suppress(OSError):
+                    install.path.chmod(0o700)
                 install.path.rename(destination)
             except OSError as exc:
                 logger.warning("Could not stage Manifest install %s for deletion: %s", install.path, exc)
@@ -263,36 +284,32 @@ def _stage_candidates(manifests_dir: Path, candidates: tuple[ManifestInstall, ..
         return tuple(staged)
 
 
-def _delete_staged_locked(manifests_dir: Path, *, stop_event: threading.Event | None = None) -> None:
-    _cleanup_locked(manifests_dir, stop_event=stop_event)
-
-
 def _background_delete(manifests_dir: Path, stop_event: threading.Event | None) -> None:
-    try:
-        with _PRUNE_LOCK:
-            _delete_staged_locked(manifests_dir, stop_event=stop_event)
-    except OSError as exc:
-        logger.warning("Manifest deletion failed in %s: %s", manifests_dir, exc)
+    _delete_entries(_snapshot_prune_entries(manifests_dir), stop_event)
 
 
 def delete_prune_contents_in_background(
     manifests_dir: Path = MANIFESTS_DIR,
     stop_event: threading.Event | None = None,
-) -> threading.Thread:
-    """Delete staged Manifest data on a daemon thread."""
+) -> threading.Thread | None:
+    """Delete staged Manifest data on a daemon thread, returning None when the thread cannot start."""
     thread = threading.Thread(
         target=_background_delete,
         args=(manifests_dir, stop_event),
         daemon=True,
         name="manifest-prune",
     )
-    thread.start()
+    try:
+        thread.start()
+    except (OSError, RuntimeError) as exc:
+        logger.warning("Could not start Manifest deletion in %s: %s", manifests_dir, exc)
+        return None
     return thread
 
 
-def _game_tree_manifest_id(game_tree_dir: Path, manifests_dir: Path) -> str | None:
+def _game_tree_manifest_ids(game_tree_dir: Path, manifests_dir: Path) -> frozenset[str]:
     if game_tree_dir.is_symlink() or not game_tree_dir.is_dir():
-        return None
+        return frozenset()
     try:
         base = manifests_dir.resolve(strict=False)
     except OSError, RuntimeError, ValueError:
@@ -302,7 +319,7 @@ def _game_tree_manifest_id(game_tree_dir: Path, manifests_dir: Path) -> str | No
         entries = tuple(game_tree_dir.rglob("*"))
     except OSError as exc:
         logger.warning("Could not inspect Game tree %s: %s", game_tree_dir, exc)
-        return None
+        return frozenset()
     for entry in entries:
         if not entry.is_symlink():
             continue
@@ -313,12 +330,15 @@ def _game_tree_manifest_id(game_tree_dir: Path, manifests_dir: Path) -> str | No
             continue
         if len(relative.parts) >= 2 and _is_manifest_id(relative.parts[0]):
             manifest_ids.add(relative.parts[0])
-    if len(manifest_ids) != 1:
-        return None
-    return next(iter(manifest_ids))
+    if len(manifest_ids) > 1:
+        logger.warning(
+            "Game tree %s links multiple Manifest installs; keeping every linked install",
+            game_tree_dir,
+        )
+    return frozenset(manifest_ids)
 
 
-def stage_pruning(manifests_dir: Path, activation: ActivationRecord) -> tuple[Path, ...]:
+def _stage_pruning(manifests_dir: Path, activation: ActivationRecord) -> tuple[Path, ...]:
     """Stage complete installs outside the Active and Previous Active installs for deletion."""
     installs = _complete_installs(manifests_dir)
     keep = _retained_ids(installs, active_id=activation.active, previous_id=activation.previous)
@@ -336,10 +356,8 @@ def reclaim_for_download(
     activation = read_activation_record(manifests_dir)
     active_id = activation.active if activation is not None else None
     previous_id = activation.previous if activation is not None else None
-    game_tree_id = _game_tree_manifest_id(game_tree_dir, manifests_dir)
-    extra_keep = {requested_id}
-    if game_tree_id is not None:
-        extra_keep.add(game_tree_id)
+    game_tree_ids = _game_tree_manifest_ids(game_tree_dir, manifests_dir)
+    extra_keep = {requested_id} | set(game_tree_ids)
     installs = _complete_installs(manifests_dir)
     keep = _retained_ids(
         installs,
@@ -349,14 +367,8 @@ def reclaim_for_download(
     )
     candidates = tuple(install for install in installs if install.manifest_id not in keep)
     staged = _stage_candidates(manifests_dir, candidates)
-    with _PRUNE_LOCK:
-        _delete_staged_locked(manifests_dir)
+    _delete_entries(_snapshot_prune_entries(manifests_dir))
     return staged
-
-
-def is_latest_tracking(version_spec: str) -> bool:
-    """Return whether a Version spec tracks the latest Manifest."""
-    return not version_spec or version_spec == "latest"
 
 
 def retain_after_start(
@@ -370,7 +382,7 @@ def retain_after_start(
     activation = record_activation(manifests_dir, active_id)
     if activation is None or not settings.manifest_prune_enabled or not is_latest_tracking(settings.version):
         return None
-    staged = stage_pruning(manifests_dir, activation)
+    staged = _stage_pruning(manifests_dir, activation)
     if not staged:
         return None
     return delete_prune_contents_in_background(manifests_dir, stop_event)

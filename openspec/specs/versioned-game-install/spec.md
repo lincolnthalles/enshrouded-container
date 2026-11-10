@@ -314,7 +314,7 @@ NOT change the activation record.
 ### Requirement: Reclamation keep set
 
 The reclamation keep set SHALL be the requested Manifest install, the recorded Active Manifest
-install, the Manifest install backing the current Game tree when present, and the recorded Previous
+install, every Manifest install backing the current Game tree when present, and the recorded Previous
 Active install when complete. The requested Manifest install SHALL never be reclaimed.
 
 #### Scenario: Requested Manifest is never reclaimed
@@ -322,13 +322,18 @@ Active install when complete. The requested Manifest install SHALL never be recl
 - **WHEN** the requested Manifest install is complete but outside the recorded keep set
 - **THEN** it SHALL remain
 
+#### Scenario: Ambiguous Game tree keeps every linked install
+
+- **WHEN** the Game tree links multiple Manifest installs
+- **THEN** every linked Manifest install SHALL remain
+
 ### Requirement: Reclamation fallback keep install
 
 When no complete recorded previous exists, the reclamation keep set SHALL also include the other
 complete Manifest install whose `.installed` marker was written most recently, excluding the
-requested Manifest install, the recorded Active Manifest install, and the Manifest install backing the
-current Game tree when present. Ties SHALL be broken by the greatest Manifest ID compared as an exact
-integer.
+requested Manifest install, the recorded Active Manifest install, and every Manifest install backing
+the current Game tree when present. Ties SHALL be broken by the greatest Manifest ID compared as an
+exact integer.
 
 #### Scenario: First start keeps a fallback
 

@@ -5,7 +5,7 @@ import threading
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from enshctl.manifests import manifest_sort_key
+from enshctl.manifests import is_latest_tracking, manifest_sort_key
 from enshctl.presence import PresenceGate, PresenceIntent
 from enshctl.scheduling import parse_cron
 
@@ -25,7 +25,7 @@ TICK_INTERVAL = 1.0
 
 def is_auto_update_active(settings: AppSettings) -> bool:
     """Whether Auto Update is enabled for a Version spec that resolves to latest."""
-    return settings.auto_update_enabled and settings.version in ("", "latest")
+    return settings.auto_update_enabled and is_latest_tracking(settings.version)
 
 
 class AutoUpdateController:
