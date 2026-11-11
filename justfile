@@ -89,7 +89,7 @@ bump VALUE='major/minor/patch':
 [group('maintainer-only')]
 publish: validate
     #!/usr/bin/env bash
-    VERSION="$(uv version --short)
+    VERSION="$(uv version --short)"
     echo "Publishing version "$VERSION"…"
     just git-tag "$VERSION"
     git push origin main
