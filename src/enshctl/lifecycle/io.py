@@ -8,6 +8,7 @@ from enshctl.backup.core import backup_needed as backup_is_needed
 from enshctl.download import flow as download_flow
 from enshctl.lifecycle import backup, gamelog, server, wine
 from enshctl.lifecycle.auto_update import AutoUpdateController, is_auto_update_active
+from enshctl.lifecycle.rollback import RollbackController, is_rollback_scheduled
 from enshctl.manifests import latest_manifest, record_latest_manifest
 from enshctl.pidfile import PidFile
 
@@ -76,6 +77,12 @@ class LifecycleIO(Protocol):
         restart_request: RestartRequest,
         is_paused: Callable[[], bool],
         pause_gate: PauseGate,
+    ) -> threading.Thread | None: ...
+
+    def start_rollback(
+        self,
+        rollback_request: threading.Event,
+        stop_event: threading.Event,
     ) -> threading.Thread | None: ...
 
     def cleanup_wine(self) -> None: ...
@@ -184,6 +191,15 @@ class SystemLifecycleIO:
     def _download_manifest(self, manifest: ManifestRecord) -> None:
         download_flow.download_version(manifest.manifest_id, self.settings, version_spec="latest")
         record_latest_manifest(manifest.manifest_id, manifest.timestamp)
+
+    def start_rollback(
+        self,
+        rollback_request: threading.Event,
+        stop_event: threading.Event,
+    ) -> threading.Thread | None:
+        if not is_rollback_scheduled(self.settings):
+            return None
+        return RollbackController(settings=self.settings, rollback_request=rollback_request).start(stop_event)
 
     def cleanup_wine(self) -> None:
         wine.cleanup(self.settings)

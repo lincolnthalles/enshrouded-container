@@ -218,6 +218,13 @@ class FakeLifecycleIO:
         self.events.append("updater")
         self.updater_started.set()
 
+    def start_rollback(
+        self,
+        rollback_request: threading.Event,
+        stop_event: threading.Event,
+    ) -> None:
+        del rollback_request, stop_event
+
     def cleanup_wine(self) -> None:
         self.events.append("wine")
         if self.cleanup_error is not None:

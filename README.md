@@ -5,7 +5,7 @@
 [![CI](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml)
 [![Build](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml)
 
-Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, automated backups, auto-update, auto-pause, and ntsync support.
+Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, automated backups, auto-update, auto-pause, auto-rollback and ntsync support.
 
 > [!TIP]
 > Images are published on [ghcr.io](https://github.com/lincolnthalles/enshrouded-container/pkgs/container/enshrouded-container).
@@ -154,6 +154,25 @@ Download fails with a warning and the running server stays put.
 | `BACKUP_EMERGENCY` | `true`                                       | Enable crash-triggered backups                                            |
 | `BACKUP_EXCLUDE`   | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs to exclude; blank disables             |
 | `BACKUP_DIR`       | `/data/backups`                              | Backup destination                                                        |
+
+</details>
+
+### Auto Rollback
+
+Auto Rollback restores a pinned Backup on every container start and on a wall-clock schedule. It fits Shroud Depot instances where players take items and the server rolls inventories back on a timer.
+
+| Variable           | Default | Description                                            |
+| ------------------ | ------- | ------------------------------------------------------ |
+| `ROLLBACK_ENABLED` | `false` | Restore the rollback Backup on start and on schedule   |
+| `ROLLBACK_FILE`    | —       | Exact Backup filename searched across every Category   |
+| `ROLLBACK_CRON`    | —       | Minute-level rollback schedule; empty means start-only |
+
+<details>
+<summary>Feature internals</summary>
+
+- Ignores Player Presence tracking
+- Disables automatic backups (live, cold, and emergency) with a warning
+- Allows manual `backup` and `restore` operations
 
 </details>
 

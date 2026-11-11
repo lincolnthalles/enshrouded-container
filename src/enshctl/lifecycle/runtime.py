@@ -15,6 +15,7 @@ from enshctl.lifecycle.control import ControlFiles
 from enshctl.lifecycle.io import LifecycleIO, ProcessControl, SystemLifecycleIO, SystemProcessControl
 from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.players import PlayerReporter
+from enshctl.lifecycle.rollback import is_rollback_active
 from enshctl.lifecycle.types import ExitRequest, PauseControl, RestartRequest, ServerProcess
 from enshctl.lifecycle.wake import build_wake_source
 from enshctl.paths import AUTOPAUSE_DIR
@@ -50,6 +51,9 @@ def exit_server(
     stopped = _stop_server(process_handle, settings=settings, process_control=process_control)
     if request.trigger is Trigger.UPDATE and not stopped:
         logger.error("Update restart could not stop the server; skipping backup and cleanup")
+        return 1
+    if request.trigger is Trigger.ROLLBACK and not stopped:
+        logger.error("Auto rollback: server did not stop; not relaunching")
         return 1
     _run_triggered_backup(request.trigger, settings=settings, lifecycle_io=lifecycle_io)
     _best_effort(lifecycle_io.cleanup_wine, "Wine cleanup")
@@ -91,6 +95,8 @@ def _stop_server(
 
 
 def _run_triggered_backup(trigger: Trigger | None, *, settings: AppSettings, lifecycle_io: LifecycleIO) -> None:
+    if is_rollback_active(settings):
+        return
     if trigger is Trigger.SHUTDOWN or trigger is Trigger.UPDATE:
         if not settings.backup_cold:
             return
@@ -152,6 +158,8 @@ class ServerLifecycle:
         self._restart_request = RestartRequest()
         self._restart_manifest: ManifestRecord | None = None
         self._restart_requested = False
+        self._rollback_event = threading.Event()
+        self._rollback_requested = False
         self._pause_gate = PauseGate()
         self._shutdown_requested = False
         self._stream_thread: threading.Thread | None = None
@@ -183,6 +191,10 @@ class ServerLifecycle:
     def restart_manifest(self) -> ManifestRecord | None:
         return self._restart_manifest
 
+    @property
+    def rollback_requested(self) -> bool:
+        return self._rollback_requested
+
     def run(self) -> int:
         """Launch, supervise, and exit the server; return the process exit code."""
         self._install_signal_handlers()
@@ -206,8 +218,10 @@ class ServerLifecycle:
             if self._settings.auto_pause_enabled:
                 self._pause_control = self._build_auto_pause(self._stream_thread, self._presence, presence_gate)
                 self._pause_control.start(self._stop_event)
-            if self._settings.backup_live:
+            if self._settings.backup_live and not is_rollback_active(self._settings):
                 self._lifecycle_io.start_scheduler(self._stop_event, pause_gate=self._pause_gate)
+            elif is_rollback_active(self._settings):
+                logger.info("Live backups disabled while auto rollback is active")
             else:
                 logger.info("Live backups disabled")
             if self._active_manifest is not None:
@@ -219,6 +233,7 @@ class ServerLifecycle:
                     is_paused=self._control_files.is_paused,
                     pause_gate=self._pause_gate,
                 )
+            self._lifecycle_io.start_rollback(self._rollback_event, self._stop_event)
             if self._settings.log_tail:
                 self._log_thread = self._process_control.start_log_tail(self._stop_event)
             self._process_control.start_resource_poller(
@@ -283,6 +298,10 @@ class ServerLifecycle:
                 break
             if self._restart_request.event.is_set():
                 self._accept_restart_request()
+                if self._request is not None and not self._rollback_event.is_set():
+                    break
+            if self._rollback_event.is_set():
+                self._accept_rollback_request()
                 if self._request is not None:
                     break
             if process_handle.poll() is not None:
@@ -304,6 +323,12 @@ class ServerLifecycle:
         self._restart_requested = True
         self._request = ExitRequest(Trigger.UPDATE, 0)
 
+    def _accept_rollback_request(self) -> None:
+        self._rollback_event.clear()
+        self._rollback_requested = True
+        if self._request is None:
+            self._request = ExitRequest(Trigger.ROLLBACK, 0)
+
     def _finish(self, process_handle: ServerProcess | None) -> int:
         if self._finished:
             return self._exit_code
@@ -321,6 +346,11 @@ class ServerLifecycle:
         )
         if request.trigger is Trigger.UPDATE and process_handle is not None and process_handle.poll() is None:
             logger.error("Auto Update: server did not stop; not relaunching")
+            self._restart_requested = False
+            self._restart_manifest = None
+            self._exit_code = 1
+        if request.trigger is Trigger.ROLLBACK and process_handle is not None and process_handle.poll() is None:
+            self._rollback_requested = False
             self._restart_requested = False
             self._restart_manifest = None
             self._exit_code = 1

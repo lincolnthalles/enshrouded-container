@@ -88,6 +88,16 @@ same container from the pending Manifest. See the README Auto Update section.
 | `BACKUP_LEVEL`  | format default  | Override compression level (9 for zstd, 6 for gzip/zip) |
 | `BACKUP_DIR`    | `/data/backups` | Backup storage directory                                |
 
+### Auto Rollback
+
+When `ROLLBACK_ENABLED=true`, the orchestrator restores `ROLLBACK_FILE` before the first launch and on every in-process relaunch, plus scheduled stop, restore, and relaunch ticks on `ROLLBACK_CRON` (minute-level, 3600s fallback). Player presence and Auto Pause gates are ignored. Automatic live, cold, and emergency backups are suppressed while rollback is active; manual backups still work.
+
+| Env var            | Default | Description                                                       |
+| ------------------ | ------- | ----------------------------------------------------------------- |
+| `ROLLBACK_ENABLED` | `false` | Enable startup and scheduled save restores                        |
+| `ROLLBACK_FILE`    | —       | Exact Backup filename searched across every Category by presence  |
+| `ROLLBACK_CRON`    | —       | Minute-level rollback schedule; empty means restore on start only |
+
 ### Content exclusions
 
 | Env var          | Default                                      | Description                                                                  |

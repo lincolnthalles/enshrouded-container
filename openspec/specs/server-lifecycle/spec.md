@@ -54,6 +54,12 @@ non-zero and SHALL NOT relaunch.
 - **THEN** the PID file SHALL remain
 - **AND** the container SHALL exit non-zero
 
+#### Scenario: Rollback stop failure retains the PID
+
+- **WHEN** a rollback restart cannot stop the server (see `auto-rollback`)
+- **THEN** the PID file SHALL remain
+- **AND** the container SHALL exit non-zero
+
 #### Scenario: Update restart failure exits
 
 - **WHEN** the stop, install, or relaunch step fails during an update restart
@@ -68,7 +74,7 @@ non-zero and SHALL NOT relaunch.
 
 ### Requirement: PID file lifecycle
 
-After launching the server, the entrypoint SHALL write the launched server process PID to the PID file. Every exit after a successful write SHALL clear the PID file, except an update restart that cannot stop the server; that path SHALL retain the PID file because the process is still running. A failed write SHALL NOT remove a marker the process did not write. Presence of the PID file is the restore guard (see `backup-restore`).
+After launching the server, the entrypoint SHALL write the launched server process PID to the PID file. Every exit after a successful write SHALL clear the PID file, except an update or rollback restart that cannot stop the server; that path SHALL retain the PID file because the process is still running. A failed write SHALL NOT remove a marker the process did not write. Presence of the PID file is the restore guard (see `backup-restore`).
 
 #### Scenario: PID file written on launch
 

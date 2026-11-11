@@ -119,6 +119,11 @@ class AppSettings:
     backup_emergency: bool = _env_field(default=True, key="BACKUP_EMERGENCY", parse=_parse_bool)
     backup_exclude: str = _env_field("migrated/**;backup/world0.ksd.backup-[1-9]", "BACKUP_EXCLUDE", _parse_str)
 
+    # Auto Rollback
+    rollback_enabled: bool = _env_field(default=False, key="ROLLBACK_ENABLED", parse=_parse_bool)
+    rollback_file: str = _env_field("", "ROLLBACK_FILE", _parse_str)
+    rollback_cron: str = _env_field("", "ROLLBACK_CRON", _parse_str)
+
     # Logging / monitoring
     log_tail: bool = _env_field(default=False, key="LOG_TAIL", parse=_parse_bool)
     resource_poll_interval: int = _env_field(60, "RESOURCE_POLL_INTERVAL", _parse_int)

@@ -22,6 +22,7 @@ class Trigger(StrEnum):
     UPDATE = "update"
     CRASH = "crash"
     MANUAL = "manual"
+    ROLLBACK = "rollback"
 
 
 _TRIGGER_CATEGORIES = {
@@ -48,7 +49,7 @@ class BackupRequest:
     @classmethod
     def for_trigger(cls, trigger: Trigger, *, wait_seconds: int = 0) -> BackupRequest:
         """Build the request for a lifecycle trigger; manual callers pass a Category."""
-        if trigger is Trigger.MANUAL:
+        if trigger is Trigger.MANUAL or trigger is Trigger.ROLLBACK:
             msg = "Manual backups select a Category explicitly"
             raise ValueError(msg)
         category = _TRIGGER_CATEGORIES[trigger]

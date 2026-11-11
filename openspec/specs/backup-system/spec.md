@@ -7,7 +7,7 @@ with configurable compression.
 
 ### Requirement: Scheduled live backups
 
-The container SHALL run periodic Backups of the saves directory (see `save-management`) in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. A scheduled trigger with no save data present SHALL skip that backup. While Auto Pause holds a quiet window (see `auto-pause`), a scheduled tick SHALL be skipped. Skipped ticks SHALL NOT create a backlog or move the next tick; the schedule SHALL keep its cadence after resume. Manual Backups SHALL remain available while the server is suspended.
+The container SHALL run periodic Backups of the saves directory (see `save-management`) in the live Category on a configurable schedule, and SHALL stop the scheduler during shutdown. The default schedule SHALL be every 60 minutes. The first backup SHALL run when the container starts. When live backups are disabled, no scheduler SHALL run. While auto rollback is enabled, no scheduler SHALL run (see `auto-rollback`). A scheduled trigger with no save data present SHALL skip that backup. While Auto Pause holds a quiet window (see `auto-pause`), a scheduled tick SHALL be skipped. Skipped ticks SHALL NOT create a backlog or move the next tick; the schedule SHALL keep its cadence after resume. Manual Backups SHALL remain available while the server is suspended.
 
 #### Scenario: Default backup schedule
 
@@ -22,6 +22,11 @@ The container SHALL run periodic Backups of the saves directory (see `save-manag
 #### Scenario: Live backups disabled
 
 - **WHEN** `BACKUP_LIVE` disables live backups
+- **THEN** no scheduler SHALL run and no scheduled backups SHALL be triggered
+
+#### Scenario: Rollback suppresses the scheduler
+
+- **WHEN** auto rollback is enabled (see `auto-rollback`)
 - **THEN** no scheduler SHALL run and no scheduled backups SHALL be triggered
 
 #### Scenario: No save data skips scheduled backup
@@ -128,7 +133,7 @@ send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it
 (force-killing after the timeout), create a detached cold backup when `BACKUP_COLD=1` and save data
 exists after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s;
 see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, then clean
-up Wine, clear the PID file, and exit 0.
+up Wine, clear the PID file, and exit 0. While auto rollback is enabled, no cold backup SHALL be created (see `auto-rollback`).
 
 #### Scenario: Cold backup on shutdown
 
@@ -140,6 +145,12 @@ up Wine, clear the PID file, and exit 0.
 #### Scenario: Cold backup disabled or no saves
 
 - **WHEN** the container receives SIGTERM with `BACKUP_COLD=0`, or with no save data present
+- **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the
+  entrypoint SHALL exit cleanly
+
+#### Scenario: Rollback suppresses the cold backup
+
+- **WHEN** the container receives SIGTERM with auto rollback enabled (see `auto-rollback`)
 - **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the
   entrypoint SHALL exit cleanly
 
@@ -170,7 +181,7 @@ up Wine, clear the PID file, and exit 0.
 When Auto Update restarts the server (see `auto-update`), the container SHALL create a cold Backup
 when cold backups are enabled and save data exists, after the server exits and before Wine cleanup,
 waiting up to `SHUTDOWN_BACKUP_WAIT` for an in-progress Backup (see `backup-subprocess`). When cold
-backups are disabled, the restart SHALL continue without a Backup.
+backups are disabled, the restart SHALL continue without a Backup. While auto rollback is enabled, no cold Backup SHALL be created (see `auto-rollback`).
 
 #### Scenario: Cold backup on update restart
 
@@ -181,6 +192,12 @@ backups are disabled, the restart SHALL continue without a Backup.
 #### Scenario: Update restart without cold backups
 
 - **WHEN** cold backups are disabled and Auto Update restarts the server
+- **THEN** no cold Backup SHALL be created
+- **AND** the restart SHALL continue
+
+#### Scenario: Rollback suppresses the update cold backup
+
+- **WHEN** Auto Update restarts the server with auto rollback enabled (see `auto-rollback`)
 - **THEN** no cold Backup SHALL be created
 - **AND** the restart SHALL continue
 
@@ -238,7 +255,7 @@ Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-eme
 
 ### Requirement: Emergency backup on crash
 
-When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before Wine cleanup and PID clear, then exit with the server's exit code.
+When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before Wine cleanup and PID clear, then exit with the server's exit code. While auto rollback is enabled, no emergency backup SHALL be created (see `auto-rollback`).
 
 #### Scenario: Emergency backup spawned
 
@@ -250,9 +267,14 @@ When the game server exits unexpectedly (not shutdown-initiated) and emergency b
 - **WHEN** the game server exits unexpectedly with `BACKUP_EMERGENCY=0`, or with no save data present
 - **THEN** no emergency Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit with the server's code
 
+#### Scenario: Rollback suppresses the emergency backup
+
+- **WHEN** the game server exits unexpectedly with auto rollback enabled (see `auto-rollback`)
+- **THEN** no emergency Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit with the server's code
+
 ### Requirement: Exit after unexpected failure
 
-When an unexpected error occurs after the server has launched, the entrypoint SHALL stop the server, apply the emergency backup policy, clean up Wine, clear the PID file, and exit 1. An error isolated by a subsystem's failure contract SHALL NOT trigger this path.
+When an unexpected error occurs after the server has launched, the entrypoint SHALL stop the server, apply the emergency backup policy, clean up Wine, clear the PID file, and exit 1. While auto rollback is enabled, the emergency backup policy SHALL create no Backup (see `auto-rollback`). An error isolated by a subsystem's failure contract SHALL NOT trigger this path.
 
 #### Scenario: Unexpected failure cleans up
 

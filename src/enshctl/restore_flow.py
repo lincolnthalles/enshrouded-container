@@ -65,9 +65,10 @@ def restore_transaction(
     save_directories: SaveDirectories,
     *,
     restore_io: RestoreIO,
+    wait_seconds: int = 0,
 ) -> RestoreOutcome:
     """Hold the backup lock and restore one Backup atomically."""
-    lock_fd = restore_io.lock.acquire(backup_lock_path(backup_dir))
+    lock_fd = restore_io.lock.acquire(backup_lock_path(backup_dir), wait_seconds)
     if lock_fd is None:
         return RestoreOutcome.LOCK_HELD
     try:

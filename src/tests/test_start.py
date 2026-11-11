@@ -91,6 +91,7 @@ def test_run_returns_lifecycle_code() -> None:
     lifecycle = MagicMock()
     lifecycle.run.return_value = 7
     lifecycle.restart_requested = False
+    lifecycle.rollback_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 
@@ -118,6 +119,7 @@ def test_start_runs_cleanup_then_stage_then_activation() -> None:
     lifecycle = MagicMock()
     lifecycle.run.return_value = 0
     lifecycle.restart_requested = False
+    lifecycle.rollback_requested = False
     manager = MagicMock()
     manager.stage.return_value = _prepared(manifest)
     manager.build_lifecycle.return_value = lifecycle
@@ -160,10 +162,12 @@ def test_start_relaunches_with_pending_manifest() -> None:
     first = MagicMock()
     first.run.return_value = 0
     first.restart_requested = True
+    first.rollback_requested = False
     first.restart_manifest = target
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
+    second.rollback_requested = False
     stage = MagicMock(side_effect=[_prepared(active, active_saves), _prepared(target, target_saves)])
     build_lifecycle = MagicMock(side_effect=[first, second])
 
@@ -196,6 +200,7 @@ def test_start_returns_one_when_update_relaunch_fails() -> None:
     first = MagicMock()
     first.run.return_value = 0
     first.restart_requested = True
+    first.rollback_requested = False
     first.restart_manifest = target
     stage = MagicMock(side_effect=[_prepared(active), InstallError("update install failed")])
     build_lifecycle = MagicMock(return_value=first)
@@ -222,6 +227,7 @@ def test_start_warns_on_mods_when_auto_update_is_active(caplog: pytest.LogCaptur
     lifecycle = MagicMock()
     lifecycle.run.return_value = 0
     lifecycle.restart_requested = False
+    lifecycle.rollback_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 
@@ -247,6 +253,7 @@ def test_start_skips_mod_warning_when_auto_update_is_inactive(caplog: pytest.Log
     lifecycle = MagicMock()
     lifecycle.run.return_value = 0
     lifecycle.restart_requested = False
+    lifecycle.rollback_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 

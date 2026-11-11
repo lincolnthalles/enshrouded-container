@@ -14,6 +14,12 @@ from enshctl.commands.parser import CommandParser
 from enshctl.files import chown_tree
 from enshctl.lifecycle import ServerLifecycle
 from enshctl.lifecycle.auto_update import is_auto_update_active
+from enshctl.lifecycle.rollback import (
+    describe_startup,
+    is_rollback_active,
+    restore_at_startup,
+    restore_for_restart,
+)
 from enshctl.lifecycle.wine import ensure_prefix
 from enshctl.paths import (
     BACKUP_BASE_DIR,
@@ -25,11 +31,12 @@ from enshctl.paths import (
     WINE_PREFIX,
     X11_DIR,
 )
+from enshctl.restore_flow import RestoreOutcome
 from enshctl.settings import AppSettings, load_settings
 from enshctl.staging import STARTUP_ERRORS, PreparedServer
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from enshctl.config import SaveDirectories
     from enshctl.download.types import ManifestRecord
@@ -87,6 +94,8 @@ class StartupSeams:
     cleanup_prune: CleanupPrune = manifest_retention.cleanup_prune_dir
     activate_manifest: ActivateManifest = manifest_retention.retain_after_start
     build_lifecycle: BuildLifecycle = ServerLifecycle
+    startup_restore: Callable[[AppSettings, SaveDirectories], RestoreOutcome | None] = restore_at_startup
+    scheduled_restore: Callable[[AppSettings, SaveDirectories], RestoreOutcome | None] = restore_for_restart
 
 
 def _setup_directories(settings: AppSettings) -> None:
@@ -134,6 +143,22 @@ def _setup_timezone(settings: AppSettings) -> None:
         environ["TZ"] = "UTC"
 
 
+def _apply_startup_rollback(
+    settings: AppSettings,
+    prepared: PreparedServer,
+    resolved: StartupSeams,
+) -> int | None:
+    if not is_rollback_active(settings):
+        return None
+    logger.info("%s", describe_startup(settings))
+    logger.warning("Auto rollback: automatic live/cold/emergency backups are disabled while rollback is active")
+    startup_outcome = resolved.startup_restore(settings, prepared.save_directories)
+    if startup_outcome is not RestoreOutcome.SUCCESS:
+        logger.error("Auto rollback: startup restore failed; not launching server")
+        return 1
+    return None
+
+
 def run(
     settings: AppSettings | None = None,
     argv: Sequence[str] = (),
@@ -166,6 +191,9 @@ def run(
     if is_auto_update_active(settings) and mods.mod_files():
         logger.warning("Auto Update: mod files are present; automatic updates may break mods")
 
+    if (rollback_abort := _apply_startup_rollback(settings, prepared, resolved)) is not None:
+        return rollback_abort
+
     while True:
         lifecycle = resolved.build_lifecycle(
             settings,
@@ -174,20 +202,35 @@ def run(
             save_directories=prepared.save_directories,
         )
         exit_code = lifecycle.run()
+        update_requested = bool(lifecycle.restart_requested)
+        rollback_requested = bool(lifecycle.rollback_requested)
         target = lifecycle.restart_manifest
-        if not lifecycle.restart_requested or exit_code != 0:
+        if not update_requested and not rollback_requested:
+            return exit_code
+        if exit_code != 0:
             return exit_code
         if shutdown_event.is_set():
             return exit_code
-        if target is None:
-            logger.error("Auto Update: restart requested without a pending Manifest")
-            return 1
-        logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
-        try:
-            prepared = resolved.stage(settings, target=target)
-        except STARTUP_ERRORS:
-            logger.exception("Update restart failed")
-            return 1
+        if is_rollback_active(settings):
+            resolved.scheduled_restore(settings, prepared.save_directories)
+            if shutdown_event.is_set():
+                return 0
+        if update_requested:
+            if target is None:
+                logger.error("Auto Update: restart requested without a pending Manifest")
+                return 1
+            logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
+            try:
+                prepared = resolved.stage(settings, target=target)
+            except STARTUP_ERRORS:
+                logger.exception("Update restart failed")
+                return 1
+        else:
+            try:
+                prepared = resolved.stage(settings)
+            except STARTUP_ERRORS:
+                logger.exception("Auto rollback: relaunch staging failed")
+                return 1
         if shutdown_event.is_set():
             return 0
         _ = resolved.activate_manifest(settings, prepared.active_manifest.manifest_id, stop_event=shutdown_event)
