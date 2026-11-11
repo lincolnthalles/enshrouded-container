@@ -7,8 +7,12 @@ import zipfile
 import zlib
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import zstandard
+
+if TYPE_CHECKING:
+    from enshctl.backup.excludes import BackupExcludes
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +104,23 @@ class BackupFormat(Enum):
             case BackupFormat.ZIP:
                 return 6
 
-    def compress(self, source_dir: Path, output_path: Path, level: int) -> None:
+    def compress(
+        self,
+        source_dir: Path,
+        output_path: Path,
+        level: int,
+        *,
+        excludes: BackupExcludes | None = None,
+    ) -> None:
+        excluded_count = 0
+
+        def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+            nonlocal excluded_count
+            if excludes is not None and excludes.is_excluded(info.name):
+                excluded_count += 1
+                return None
+            return info
+
         try:
             match self:
                 case BackupFormat.ZSTD:
@@ -111,7 +131,7 @@ class BackupFormat(Enum):
                         cctx.stream_writer(f_out) as compressor,
                         tarfile.open(fileobj=compressor, mode="w|") as tar,
                     ):
-                        tar.add(str(source_dir), arcname=".")
+                        tar.add(str(source_dir), arcname=".", filter=_tar_filter)
                 case BackupFormat.GZIP:
                     logger.info("Creating gzip backup at level %d", level)
                     with (
@@ -119,16 +139,21 @@ class BackupFormat(Enum):
                         gzip.GzipFile(fileobj=f_out, mode="wb", compresslevel=level) as gz,
                         tarfile.open(fileobj=gz, mode="w|") as tar,
                     ):
-                        tar.add(str(source_dir), arcname=".")
+                        tar.add(str(source_dir), arcname=".", filter=_tar_filter)
                 case BackupFormat.ZIP:
                     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
                         for file_path in source_dir.rglob("*"):
                             if file_path.is_file():
                                 arcname = str(file_path.relative_to(source_dir))
+                                if excludes is not None and excludes.is_excluded(arcname):
+                                    excluded_count += 1
+                                    continue
                                 zf.write(file_path, arcname)
         except _ARCHIVE_ERRORS as exc:
             msg = f"{self.value} compression failed: {exc}"
             raise ArchiveError(msg) from exc
+        if excluded_count:
+            logger.info("Excluded %d path(s) via BACKUP_EXCLUDE", excluded_count)
 
     def decompress(self, archive_path: Path, target_dir: Path) -> None:
         try:

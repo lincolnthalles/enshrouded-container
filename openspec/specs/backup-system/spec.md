@@ -99,6 +99,27 @@ Backups SHALL support configurable compression formats (zstd, gzip, zip) and com
 - **WHEN** a backup is invoked with an unrecognized `--format` value
 - **THEN** the command SHALL exit with code 2
 
+### Requirement: Backup content exclusions
+
+Backups SHALL exclude Save directory members matching the `BACKUP_EXCLUDE` env var, a semicolon-separated list of relative glob patterns (`*`, `**`, `?`, `[seq]`). The default SHALL be `migrated/**;backup/world0.ksd.backup-[1-9]`. A blank value SHALL disable all exclusions. Exclusions SHALL apply at backup creation for every compression format and SHALL NOT change restore, retention, or verification of existing backups. An invalid pattern SHALL be ignored with a warning naming the pattern while the backup continues. When any path is excluded, the backup SHALL log a one-line summary naming `BACKUP_EXCLUDE`.
+
+#### Scenario: Default exclusions drop game-generated copies
+
+- **WHEN** a backup runs with default settings and the Save directory holds `world0.ksd`, `backup/world0.ksd.backup-0`, `backup/world0.ksd.backup-1`, and `migrated/old.dat`
+- **THEN** the archive SHALL contain `world0.ksd` and `backup/world0.ksd.backup-0`
+- **AND** the archive SHALL NOT contain `backup/world0.ksd.backup-1` or `migrated/old.dat`
+
+#### Scenario: Blank filter keeps everything
+
+- **WHEN** `BACKUP_EXCLUDE` is blank and a backup runs with `migrated/old.dat` present
+- **THEN** the archive SHALL contain `migrated/old.dat`
+
+#### Scenario: Invalid pattern warns and continues
+
+- **WHEN** `BACKUP_EXCLUDE` holds an absolute or parent-traversal pattern alongside a valid pattern
+- **THEN** a warning SHALL name the invalid pattern
+- **AND** the backup SHALL complete applying the valid pattern
+
 ### Requirement: Shutdown-triggered cold backup
 
 When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: stop the scheduler,

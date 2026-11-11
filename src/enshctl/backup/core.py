@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from enshctl.backup.catalog import BackupName
+from enshctl.backup.excludes import BackupExcludes
 from enshctl.backup.format import ArchiveError, BackupFormat
 from enshctl.utils import human_size
 
@@ -26,6 +27,7 @@ class BackupPlan:
     level: int
     min_free_stop: int
     min_free_warn: int
+    excludes: BackupExcludes
 
     @classmethod
     def from_settings(
@@ -50,6 +52,7 @@ class BackupPlan:
             level=resolved_level,
             min_free_stop=settings.backup_min_free_stop,
             min_free_warn=settings.backup_min_free_warn,
+            excludes=BackupExcludes.from_raw(settings.backup_exclude),
         )
 
 
@@ -117,7 +120,7 @@ def create_backup(
 
     is_complete = False
     try:
-        plan.fmt.compress(saves_dir, output_path, plan.level)
+        plan.fmt.compress(saves_dir, output_path, plan.level, excludes=plan.excludes)
     except ArchiveError as exc:
         logger.warning("Backup failed for %s: %s", output_path, exc)
         return None

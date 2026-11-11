@@ -117,6 +117,7 @@ class AppSettings:
     backup_live: bool = _env_field(default=True, key="BACKUP_LIVE", parse=_parse_bool)
     backup_cold: bool = _env_field(default=True, key="BACKUP_COLD", parse=_parse_bool)
     backup_emergency: bool = _env_field(default=True, key="BACKUP_EMERGENCY", parse=_parse_bool)
+    backup_exclude: str = _env_field("migrated/**;backup/world0.ksd.backup-[1-9]", "BACKUP_EXCLUDE", _parse_str)
 
     # Logging / monitoring
     log_tail: bool = _env_field(default=False, key="LOG_TAIL", parse=_parse_bool)

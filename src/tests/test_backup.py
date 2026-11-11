@@ -3,7 +3,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +14,9 @@ from enshctl.backup.format import ArchiveError, BackupFormat, verify_archive
 from enshctl.backup.locking import acquire_lock, release_lock
 from enshctl.disk_space import SpaceGuard
 from enshctl.settings import AppSettings
+
+if TYPE_CHECKING:
+    from enshctl.backup.excludes import BackupExcludes
 
 
 def _space(free: int) -> SpaceGuard:
@@ -668,7 +671,9 @@ class TestCreateBackupCompressionFailure:
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
-        def _fail_after_write(_self: BackupFormat, _source: Path, output: Path, _level: int) -> None:
+        def _fail_after_write(
+            _self: BackupFormat, _source: Path, output: Path, _level: int, *, excludes: BackupExcludes | None = None
+        ) -> None:
             output.write_bytes(b"partial")
             msg = "disk full"
             raise ArchiveError(msg)
@@ -700,7 +705,9 @@ class TestCreateBackupCompressionFailure:
         (saves / "world.db").write_bytes(b"data")
         settings = replace(AppSettings(), backup_dir=str(tmp_path / "backups"))
 
-        def _fail_after_write(_self: BackupFormat, _source: Path, output: Path, _level: int) -> None:
+        def _fail_after_write(
+            _self: BackupFormat, _source: Path, output: Path, _level: int, *, excludes: BackupExcludes | None = None
+        ) -> None:
             output.write_bytes(b"partial")
             msg = "bad level"
             raise ValueError(msg)
@@ -771,7 +778,7 @@ class TestCreateBackupOverrides:
         # THEN level 0 reaches compression instead of the configured 9 and the archive is valid
         assert result is not None
         assert plan.level == 0
-        mock_compress.assert_called_once_with(BackupFormat.ZSTD, saves, result, 0)
+        mock_compress.assert_called_once_with(BackupFormat.ZSTD, saves, result, 0, excludes=plan.excludes)
         assert verify_archive(result) is True
 
 

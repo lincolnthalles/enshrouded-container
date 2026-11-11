@@ -25,6 +25,7 @@ services:
       # BACKUP_LIVE: "${BACKUP_LIVE:-true}"
       # BACKUP_COLD: "${BACKUP_COLD:-true}"
       # BACKUP_EMERGENCY: "${BACKUP_EMERGENCY:-true}"
+      # BACKUP_EXCLUDE: "${BACKUP_EXCLUDE-migrated/**;backup/world0.ksd.backup-[1-9]}"
       # FORCE_INSTALL: "${FORCE_INSTALL:-0}"
       # LOG_TAIL: "${LOG_TAIL:-0}"
       ENSHROUDED_NAME: "${ENSHROUDED_NAME:-Enshrouded Server}"

@@ -88,6 +88,14 @@ same container from the pending Manifest. See the README Auto Update section.
 | `BACKUP_LEVEL`  | format default  | Override compression level (9 for zstd, 6 for gzip/zip) |
 | `BACKUP_DIR`    | `/data/backups` | Backup storage directory                                |
 
+### Content exclusions
+
+| Env var          | Default                                      | Description                                                                  |
+| ---------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `BACKUP_EXCLUDE` | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs (`*`, `**`, `?`, `[seq]`); blank disables |
+
+The filter drops dead weight the server does not load: the whole `migrated/` tree (static pre-1.0 data the game set aside and never reads again; filtered backups cannot restore it) and the other nine game rolling copies `backup-1` through `backup-9`. It keeps the active world (`world0.ksd`), one game rolling copy (`backup-0`), and every other top-level world. Unknown future names stay included by design. Exclusions apply at backup creation for every format; restoring a filtered backup still replaces the whole Save directory. Invalid patterns warn and are ignored; excluded paths produce a one-line `BACKUP_EXCLUDE` summary in the log.
+
 ### Disk space guards
 
 | Env var                      | Default             | Description                               |

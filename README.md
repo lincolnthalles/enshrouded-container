@@ -143,16 +143,17 @@ Download fails with a warning and the running server stays put.
 <details>
     <summary>Click to expand</summary>
 
-| Variable           | Default         | Description                                                               |
-| ------------------ | --------------- | ------------------------------------------------------------------------- |
-| `BACKUP_CRON`      | `*/60 * * * *`  | Cron schedule for backups                                                 |
-| `BACKUP_FORMAT`    | `zstd`          | Compression format: `zstd`, `gzip`, or `zip`                              |
-| `BACKUP_LEVEL`     | format default  | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
-| `BACKUP_KEEP_LAST` | `24`            | Number of recent backups to keep (`-1` = keep all)                        |
-| `BACKUP_LIVE`      | `true`          | Enable scheduled backups                                                  |
-| `BACKUP_COLD`      | `true`          | Enable graceful-shutdown and update-restart backups                       |
-| `BACKUP_EMERGENCY` | `true`          | Enable crash-triggered backups                                            |
-| `BACKUP_DIR`       | `/data/backups` | Backup destination                                                        |
+| Variable           | Default                                      | Description                                                               |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------- |
+| `BACKUP_CRON`      | `*/60 * * * *`                               | Cron schedule for backups                                                 |
+| `BACKUP_FORMAT`    | `zstd`                                       | Compression format: `zstd`, `gzip`, or `zip`                              |
+| `BACKUP_LEVEL`     | format default                               | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
+| `BACKUP_KEEP_LAST` | `24`                                         | Number of recent backups to keep (`-1` = keep all)                        |
+| `BACKUP_LIVE`      | `true`                                       | Enable scheduled backups                                                  |
+| `BACKUP_COLD`      | `true`                                       | Enable graceful-shutdown and update-restart backups                       |
+| `BACKUP_EMERGENCY` | `true`                                       | Enable crash-triggered backups                                            |
+| `BACKUP_EXCLUDE`   | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs to exclude; blank disables             |
+| `BACKUP_DIR`       | `/data/backups`                              | Backup destination                                                        |
 
 </details>
 
