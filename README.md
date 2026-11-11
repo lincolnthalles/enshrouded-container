@@ -4,6 +4,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lincolnthalles/enshrouded-container/badge)](https://scorecard.dev/viewer/?uri=github.com/lincolnthalles/enshrouded-container)
 [![CI](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/ci.yml)
 [![Build](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml/badge.svg)](https://github.com/lincolnthalles/enshrouded-container/actions/workflows/build.yml)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lincolnthalles/enshrouded-container)
 
 Docker container for the Enshrouded Dedicated Server with version pinning, mod injection, automated backups, auto-update, auto-pause, auto-rollback and ntsync support.
 
@@ -98,7 +99,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 - **ntsync**: Can improve game server performance by accurately emulating Windows synchronization primitives. Requires a host with kernel 6.14+, the ntsync module loaded, and mounting `/dev/ntsync` into the container.
 - **Resource polling**: Periodically logs CPU% and RSS for the orchestrator and game server process tree. Set `RESOURCE_POLL_INTERVAL` (default 60s) to control the interval.
 - **Player presence**: Derives the connected-player roster from server output and logs joins, leaves, and a periodic summary. Set `PLAYER_LOG=false` to silence roster lines.
-- **Auto Pause**: Optionally suspends the whole Wine tree after an idle period and resumes on client traffic. Set `AUTO_PAUSE_ENABLED=true` to opt in. It saves CPU, not memory; a paused server may leave the Steam browser until a direct-IP query wakes it.
+- **Auto Pause**: Optionally suspends the server after an idle period and resumes on client traffic. Set `AUTO_PAUSE_ENABLED=true` to opt in. It saves CPU, not memory; a paused server may leave the Steam browser until a direct-IP query wakes it.
 
 ## Environment Variables
 
@@ -187,13 +188,13 @@ Auto Rollback restores a pinned Backup on every container start and on a wall-cl
 
 ### Auto Pause
 
-Auto Pause is opt-in and suspends the game and its Wine services with `SIGSTOP` when no players
+Auto Pause is opt-in and suspends the game server and its Wine services with `SIGSTOP` when no players
 are connected. It resumes automatically on client traffic.
 
-> [!NOTE]
+> [!IMPORTANT]
 > Players will likely get a `The server is full or unavailable` error when trying to join a paused server.
 >
-> The server will wake up on this event and reconnect to Steam.
+> The server will awaken during this event and reconnect to Steam.
 > Inform the players to wait a minute and try joining again when facing that error.
 
 | Variable                  | Default | Description                                                             |
@@ -202,7 +203,7 @@ are connected. It resumes automatically on client traffic.
 | `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.  |
 
 <details>
-    <summary>CLI and feature internals</summary>
+<summary>CLI and feature internals</summary>
 
 Control files live under `/data/config/autopause/`. The persistent `disabled` marker survives
 restarts; `paused`, `status.json`, and `request` are runtime state.
