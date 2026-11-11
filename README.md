@@ -57,8 +57,7 @@ Download the compose file and the example env file, or clone the repo:
 
 ```bash
 curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/deploy/docker-compose.yml
-curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/deploy/.env.example
-cp .env.example .env
+curl -O https://raw.githubusercontent.com/lincolnthalles/enshrouded-container/main/deploy/enshrouded.env
 
 # Start the server
 docker compose up -d
@@ -73,7 +72,7 @@ docker compose down
 When cloning the repo instead, both files live in [`deploy/`](deploy/) — `cd` there first, then follow the same steps.
 
 - [docker-compose.yml](https://github.com/lincolnthalles/enshrouded-container/blob/main/deploy/docker-compose.yml)
-- [.env.example](https://github.com/lincolnthalles/enshrouded-container/blob/main/deploy/.env.example)
+- [enshrouded.env](https://github.com/lincolnthalles/enshrouded-container/blob/main/deploy/enshrouded.env)
 
 </details>
 

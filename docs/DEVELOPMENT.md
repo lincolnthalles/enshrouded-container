@@ -31,12 +31,12 @@ just        # print available project commands
 
 ## Hot-paths
 
-| Path               | Purpose                                                                                                        |
-| ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `src/enshctl/`     | Container orchestrator CLI, entrypoint `enshctl`, default `start`                                              |
-| `src/tests/`       | Pytest suite                                                                                                   |
-| `openspec/specs/`  | Intended behavior by capability, one owning capability per behavior                                            |
-| `docs/`            | User docs, quirks, environment reference, and `docs/adr/` decisions                                            |
-| `docs/GLOSSARY.md` | Canonical domain terms                                                                                         |
-| `Dockerfile`       | Three-stage build: Python wheel, DepotDownloader, Fedora runtime                                               |
-| `deploy/`          | Runnable samples: `docker-compose.yml` + `.env.example` (prod), `docker-compose.dev.yml` (dev, via `just dev`) |
+| Path               | Purpose                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `src/enshctl/`     | Container orchestrator CLI, entrypoint `enshctl`, default `start`                                                |
+| `src/tests/`       | Pytest suite                                                                                                     |
+| `openspec/specs/`  | Intended behavior by capability, one owning capability per behavior                                              |
+| `docs/`            | User docs, quirks, environment reference, and `docs/adr/` decisions                                              |
+| `docs/GLOSSARY.md` | Canonical domain terms                                                                                           |
+| `Dockerfile`       | Three-stage build: Python wheel, DepotDownloader, Fedora runtime                                                 |
+| `deploy/`          | Runnable samples: `docker-compose.yml` + `enshrouded.env` (prod), `docker-compose.dev.yml` (dev, via `just dev`) |

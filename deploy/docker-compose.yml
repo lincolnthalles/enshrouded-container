@@ -9,6 +9,7 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+    env_file: ./enshrouded.env
     ports:
       - "15637:15637/udp"
     volumes:
