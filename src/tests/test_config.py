@@ -379,6 +379,7 @@ def test_generated_save_directories_pair_sibling_restore_tmp(tmp_path: Path) -> 
 def test_write_generated_config_resolves_invalid_save_dir_before_write(
     configured: str,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     from unittest.mock import patch
 
@@ -395,7 +396,11 @@ def test_write_generated_config_resolves_invalid_save_dir_before_write(
         caplog.at_level("WARNING", logger="enshctl.config"),
     ):
         # WHEN writing the Generated config
-        result = write_generated_config(_settings())
+        result = write_generated_config(
+            _settings(),
+            tracking_file=tmp_path / ".enshrouded-tracked.json",
+            is_persisted=False,
+        )
 
     # THEN the safe directory is returned and only the safe value is written
     assert result.saves_dir == SAVE_DIR
@@ -426,7 +431,11 @@ def test_write_generated_config_preserves_absolute_save_dir(
         caplog.at_level("WARNING", logger="enshctl.config"),
     ):
         # WHEN writing the Generated config
-        result = write_generated_config(_settings())
+        result = write_generated_config(
+            _settings(),
+            tracking_file=tmp_path / ".enshrouded-tracked.json",
+            is_persisted=False,
+        )
 
     # THEN the equivalent path is written unchanged without a warning
     assert result.saves_dir == saves
@@ -449,7 +458,11 @@ def test_write_generated_config_round_trips_through_reader(tmp_path: Path) -> No
         patch("enshctl.config.load_base_config", return_value={}),
         patch("enshctl.config.write_config", side_effect=capture),
     ):
-        written_dirs = write_generated_config(_settings())
+        written_dirs = write_generated_config(
+            _settings(),
+            tracking_file=tmp_path / ".enshrouded-tracked.json",
+            is_persisted=False,
+        )
 
     # WHEN reading the written config back through the consumer path
     config_file = tmp_path / "enshrouded_server.json"
@@ -544,7 +557,7 @@ def test_generate_config_without_source_reads_process_environment() -> None:
         patch("enshctl.config.load_base_config", return_value={}),
     ):
         # WHEN generating without an explicit mapping
-        result = generate_config()
+        result = generate_config(is_persisted=False)
     # THEN the ambient override is applied
     assert result["name"] == "Ambient"
 
@@ -561,7 +574,7 @@ def test_generate_config_with_explicit_source_ignores_process_environment() -> N
         patch("enshctl.config.load_base_config", return_value={}),
     ):
         # WHEN generating from an explicit mapping
-        result = generate_config({"ENSHROUDED_NAME": "Explicit"})
+        result = generate_config({"ENSHROUDED_NAME": "Explicit"}, is_persisted=False)
     # THEN only the supplied mapping contributes
     assert result["name"] == "Explicit"
     assert result["saveDirectory"] == "/data/saves"
@@ -576,7 +589,7 @@ def test_generate_config_remaps_relative_save_directory(caplog: pytest.LogCaptur
         caplog.at_level("WARNING", logger="enshctl.config"),
     ):
         # WHEN generating the config
-        result = generate_config({})
+        result = generate_config({}, is_persisted=False)
     # THEN it remaps to the volume path with a warning naming the value
     assert result["saveDirectory"] == "/data/saves"
     assert "./savegame" in caplog.text
@@ -588,7 +601,7 @@ def test_generate_config_remaps_relative_log_directory() -> None:
     # GIVEN a base config with a relative logDirectory
     with patch("enshctl.config.load_base_config", return_value={"logDirectory": "logs"}):
         # WHEN generating the config
-        result = generate_config({})
+        result = generate_config({}, is_persisted=False)
     # THEN it remaps to the volume path
     assert result["logDirectory"] == "/data/logs"
 
@@ -600,7 +613,7 @@ def test_generate_config_remaps_env_relative_save_directory() -> None:
     source = {"ENSHROUDED_SAVE_DIRECTORY": "./savegame"}
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config(source)
+        result = generate_config(source, is_persisted=False)
     # THEN the env value is remapped, not passed through
     assert result["saveDirectory"] == "/data/saves"
 
@@ -612,7 +625,7 @@ def test_generate_config_empty_save_directory_falls_back_to_default() -> None:
     source = {"ENSHROUDED_SAVE_DIRECTORY": ""}
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config(source)
+        result = generate_config(source, is_persisted=False)
     # THEN the default volume path is used, not the empty string
     assert result["saveDirectory"] == "/data/saves"
 
@@ -623,7 +636,7 @@ def test_generate_config_whitespace_base_save_directory_falls_back_to_default() 
     # GIVEN a whitespace-only save directory in the base config
     with patch("enshctl.config.load_base_config", return_value={"saveDirectory": "   "}):
         # WHEN generating the config
-        result = generate_config({})
+        result = generate_config({}, is_persisted=False)
     # THEN the default volume path is used
     assert result["saveDirectory"] == "/data/saves"
 
@@ -638,7 +651,7 @@ def test_generate_config_keeps_absolute_custom_paths() -> None:
     }
     with patch("enshctl.config.load_base_config", return_value={}):
         # WHEN generating the config
-        result = generate_config(source)
+        result = generate_config(source, is_persisted=False)
     # THEN they pass through untouched
     assert result["saveDirectory"] == "/mnt/nfs/saves"
     assert result["logDirectory"] == "/mnt/nfs/logs"

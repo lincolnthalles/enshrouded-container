@@ -240,8 +240,15 @@ See [Environment Variable Config Reference](./docs/env-config-reference.md) for 
 | `ENSHROUDED_SLOT_COUNT` | 16                | Max player slots |
 | `ENSHROUDED_QUERY_PORT` | 15637             | Query port       |
 
-> [!WARNING]
-> After removing an `ENSHROUDED_*` environment variable, edit or delete the file `/data/config/enshrouded_server.json` manually to remove the setting, or the server will continue to use the old value.
+> [!NOTE]
+> Removing an `ENSHROUDED_*` environment variable removes its setting on the next start.
+
+<details>
+<summary>Feature internals</summary>
+
+enshctl tracks which keys were set from the environment in `/data/config/.enshrouded-tracked.json` and deletes only tracked keys that are no longer set. Keys that were never set from the environment are kept, even if you edited the file directly; a tracked key you edited without its variable is still removed. That tracking file travels with the config, so keep it next to `enshrouded_server.json` when you back up or move your config.
+
+</details>
 
 ## Custom Config File
 

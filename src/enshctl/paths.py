@@ -16,6 +16,7 @@ X11_DIR = Path("/tmp/.X11-unix")
 GAME_EXE = GAME_TREE_DIR / "enshrouded_server.exe"
 CONFIG_FILE = CONFIG_DIR / "enshrouded_server.json"
 OUTPUT_CONFIG = CONFIG_DIR / "enshrouded_server.json"
+TRACKING_FILE = CONFIG_DIR / ".enshrouded-tracked.json"
 GAME_CONFIG_EXAMPLE = GAME_TREE_DIR / "enshrouded_server_example.json"
 PIDFILE = BACKUP_BASE_DIR / "enshctl.pid"
 WINE_PREFIX_INIT_MARKER = WINE_PREFIX / ".wineboot-completed"

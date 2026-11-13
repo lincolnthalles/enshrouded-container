@@ -233,6 +233,16 @@ This is how enshctl converts environment variables to JSON keys. May be useful f
 - `_` (single underscore) in a segment becomes camelCase
   (e.g. `ENABLE_VOICE_CHAT` → `enableVoiceChat`)
 
+## Removing a variable
+
+When you delete an `ENSHROUDED_*` variable and restart the container, enshctl
+removes the keys that variable set from `enshrouded_server.json`. Which keys
+were set from the environment is recorded in
+`/data/config/.enshrouded-tracked.json`, next to the generated config. Keep
+that file together with the config when you back up or copy it. Keys that
+were never set from the environment are kept, even if you edited the file
+directly; a tracked key you edited without its variable is still removed.
+
 ## Value type auto-detection
 
 Values auto-detect their type:
@@ -248,7 +258,8 @@ Values auto-detect their type:
 
 ## Debugging
 
-Print the generated config without starting the server:
+Print the generated config without starting the server. The preview shows
+which stale keys would be removed, without writing anything:
 
 ```bash
 enshctl debug-config

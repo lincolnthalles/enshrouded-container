@@ -122,6 +122,14 @@ _Avoid_: User config, Saved config
 Merged output written back to `/data/config/enshrouded_server.json`.
 _Avoid_: Output config, New config
 
+**Tracked env key**:
+Config key recorded as set from an `ENSHROUDED_*` variable by a config write, so it can be removed once the variable is gone.
+_Avoid_: Known key, Schema key
+
+**Tracking file**:
+Record of tracked env keys at `/data/config/.enshrouded-tracked.json`, separate from the Generated config.
+_Avoid_: Tracking record, Managed file
+
 **Save directory**:
 Directory holding world save data, selected by the Generated config and defaulting to `/data/saves`.
 _Avoid_: Save path, Save folder

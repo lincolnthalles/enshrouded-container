@@ -28,7 +28,7 @@ location SHALL be introduced.
 
 ### Requirement: Typed settings seam
 
-All environment-derived configuration SHALL flow through a single frozen settings object, loaded once per process entrypoint and passed to subsystems via parameters. Subsystems SHALL NOT read process environment directly for configured values; the settings loader, the `ENSHROUDED_*` config merge (see `config-management`), child-process environment forwarding, and the removed-setting check are the only direct environment reads.
+All environment-derived configuration SHALL flow through a single frozen settings object, loaded once per process entrypoint and passed to subsystems via parameters. Subsystems SHALL NOT read process environment directly for configured values; the settings loader, the `ENSHROUDED_*` config merge (see `config-management`), child-process environment forwarding, and the `Stale env-set key removal` (see `config-management`) are the only direct environment reads.
 
 #### Scenario: Settings loaded once at startup
 

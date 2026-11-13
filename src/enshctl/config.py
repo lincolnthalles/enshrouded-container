@@ -20,7 +20,15 @@ from enshctl.paths import (
     MOD_OVERLAY_DIR,
     OUTPUT_CONFIG,
     SAVE_DIR,
+    TRACKING_FILE,
     WINE_PREFIX,
+)
+from enshctl.tracking import (
+    KeyPath,
+    format_key_path,
+    prune_tracked_keys,
+    read_tracked_paths,
+    write_tracked_paths,
 )
 
 if TYPE_CHECKING:
@@ -302,7 +310,14 @@ def _resolve_array_overrides(base: dict[str, Any], merged: dict[str, Any]) -> No
         if not is_dict:
             continue
         if isinstance(base_val, list) or (key not in base and _is_name_keyed_dict(merged_val)):
-            merged[key] = [{**v, "name": k} for k, v in merged_val.items()]
+            base_by_name: dict[str, dict[str, Any]] = {}
+            if isinstance(base_val, list):
+                for entry in base_val:
+                    if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                        base_by_name[entry["name"]] = entry
+            merged[key] = [
+                {**base_by_name.get(name, {}), **fields, "name": name} for name, fields in merged_val.items()
+            ]
         elif isinstance(base_val, dict):
             _resolve_array_overrides(base_val, merged_val)
 
@@ -336,18 +351,112 @@ def _resolve_persisted_dir(key: str, value: object, default: str) -> str:
     return value
 
 
-def generate_config(source: Mapping[str, str] | None = None) -> dict[str, Any]:
+def _decompose_object_paths(value: dict[str, Any], prefix: KeyPath) -> list[KeyPath]:
+    leaves: list[KeyPath] = []
+    for key, child in value.items():
+        if isinstance(child, dict):
+            leaves.extend(_decompose_object_paths(child, (*prefix, key)))
+        else:
+            leaves.append((*prefix, key))
+    return leaves
+
+
+def _is_name_identity(key_path: KeyPath, base: dict[str, Any]) -> bool:
+    if len(key_path) < 3 or key_path[-1] != "name":
+        return False
+    if isinstance(key_path[-2], int):
+        return False
+    node: object = base
+    for segment in key_path[:-2]:
+        if isinstance(node, dict):
+            if not isinstance(segment, str):
+                return False
+            if segment not in node:
+                return True
+            node = node[segment]
+        elif isinstance(node, list):
+            if isinstance(segment, int):
+                if not 0 <= segment < len(node):
+                    return True
+                node = node[segment]
+            elif isinstance(segment, str):
+                found = None
+                for entry in node:
+                    if isinstance(entry, dict) and entry.get("name") == segment:
+                        found = entry
+                        break
+                if found is None:
+                    return True
+                node = found
+            else:
+                return False
+        else:
+            return False
+    return isinstance(node, list)
+
+
+def _tracked_paths_from_env(env_map: Mapping[str, str], base: dict[str, Any]) -> frozenset[KeyPath]:
+    prefix_re = re.compile(r"^enshrouded_", re.IGNORECASE)
+    paths: set[KeyPath] = set()
+    for raw_key, raw_value in env_map.items():
+        if not prefix_re.match(raw_key):
+            continue
+        stripped = prefix_re.sub("", raw_key, count=1)
+        if not stripped:
+            continue
+        segments = [snake_to_camel(part) for part in stripped.split("__")]
+        key_path: KeyPath = tuple(int(part) if part.isdigit() else part for part in segments)
+        parsed = parse_value(raw_value)
+        if isinstance(parsed, dict):
+            for leaf in _decompose_object_paths(parsed, key_path):
+                if not _is_name_identity(leaf, base):
+                    paths.add(leaf)
+        elif not _is_name_identity(key_path, base):
+            paths.add(key_path)
+    return frozenset(paths)
+
+
+def _generate_with_tracking(
+    source: Mapping[str, str] | None = None,
+    *,
+    tracking_file: Path | None = None,
+    is_persisted: bool | None = None,
+) -> tuple[dict[str, Any], frozenset[KeyPath]]:
+    if tracking_file is None:
+        tracking_file = TRACKING_FILE
+    env_map: Mapping[str, str] = dict(environ) if source is None else source
+    base = load_base_config()
+    is_persisted = CONFIG_FILE.exists() if is_persisted is None else is_persisted
+    overrides = env_to_dict(env_map)
+    current = _tracked_paths_from_env(env_map, base)
+    pruned_base = base
+    if is_persisted:
+        previous = read_tracked_paths(tracking_file)
+        if previous is not None:
+            stale = previous - current
+            if stale:
+                pruned_base, removed = prune_tracked_keys(base, stale)
+                for removed_path in removed:
+                    logger.warning("Removed stale tracked key %s", format_key_path(removed_path))
+    config = deep_merge(pruned_base, overrides)
+    _resolve_array_overrides(pruned_base, config)
+    set_defaults(config)
+    config["saveDirectory"] = _resolve_persisted_dir("saveDirectory", config["saveDirectory"], str(SAVE_DIR))
+    config["logDirectory"] = _resolve_persisted_dir("logDirectory", config["logDirectory"], str(LOG_DIR))
+    return config, current
+
+
+def generate_config(
+    source: Mapping[str, str] | None = None,
+    *,
+    tracking_file: Path | None = None,
+    is_persisted: bool | None = None,
+) -> dict[str, Any]:
     """Merge Base config with ENSHROUDED_* overrides from the given mapping.
 
     Uses the process environment when `source` is omitted.
     """
-    base = load_base_config()
-    overrides = env_to_dict(source)
-    config = deep_merge(base, overrides)
-    _resolve_array_overrides(base, config)
-    set_defaults(config)
-    config["saveDirectory"] = _resolve_persisted_dir("saveDirectory", config["saveDirectory"], str(SAVE_DIR))
-    config["logDirectory"] = _resolve_persisted_dir("logDirectory", config["logDirectory"], str(LOG_DIR))
+    config, _ = _generate_with_tracking(source, tracking_file=tracking_file, is_persisted=is_persisted)
     return config
 
 
@@ -359,13 +468,24 @@ def write_config(config: dict[str, Any], *, puid: int = 1000, pgid: int = 1000) 
     logger.info("Config written to %s", OUTPUT_CONFIG)
 
 
-def write_generated_config(settings: AppSettings) -> SaveDirectories:
+def write_generated_config(
+    settings: AppSettings,
+    *,
+    tracking_file: Path | None = None,
+    is_persisted: bool | None = None,
+) -> SaveDirectories:
     """Resolve the save directory and write the Generated config once."""
-    generated = generate_config()
+    if tracking_file is None:
+        tracking_file = TRACKING_FILE
+    generated, current = _generate_with_tracking(tracking_file=tracking_file, is_persisted=is_persisted)
     configured = str(generated["saveDirectory"])
     directories = SaveDirectories(resolve_save_directory(configured, backup_dir=Path(settings.backup_dir)))
     if Path(configured) != directories.saves_dir:
         logger.warning("Using save directory %s instead of %s", directories.saves_dir, configured)
         generated["saveDirectory"] = str(directories.saves_dir)
     write_config(generated, puid=settings.puid, pgid=settings.pgid)
+    try:
+        write_tracked_paths(tracking_file, current, puid=settings.puid, pgid=settings.pgid)
+    except OSError:
+        logger.warning("Could not write tracking file %s; Generated config remains written", tracking_file)
     return directories
