@@ -159,6 +159,37 @@ def _apply_startup_rollback(
     return None
 
 
+def _relaunch_prepared(
+    settings: AppSettings,
+    resolved: StartupSeams,
+    prepared: PreparedServer,
+    *,
+    update_requested: bool,
+    recovery_requested: bool,
+    rollback_requested: bool,
+    target: ManifestRecord | None,
+) -> tuple[PreparedServer, bool] | None:
+    reuse_prepared = recovery_requested and not update_requested and not rollback_requested
+    if update_requested:
+        if target is None:
+            logger.error("Auto Update: restart requested without a pending Manifest")
+            return None
+        logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
+        try:
+            return resolved.stage(settings, target=target), False
+        except STARTUP_ERRORS:
+            logger.exception("Update restart failed")
+            return None
+    if reuse_prepared:
+        logger.info("Auto Pause: relaunching after recovery restart")
+        return prepared, True
+    try:
+        return resolved.stage(settings), False
+    except STARTUP_ERRORS:
+        logger.exception("Auto rollback: relaunch staging failed")
+        return None
+
+
 def run(
     settings: AppSettings | None = None,
     argv: Sequence[str] = (),
@@ -204,8 +235,9 @@ def run(
         exit_code = lifecycle.run()
         update_requested = bool(lifecycle.restart_requested)
         rollback_requested = bool(lifecycle.rollback_requested)
+        recovery_requested = bool(lifecycle.recovery_restart_requested)
         target = lifecycle.restart_manifest
-        if not update_requested and not rollback_requested:
+        if not update_requested and not rollback_requested and not recovery_requested:
             return exit_code
         if exit_code != 0:
             return exit_code
@@ -215,22 +247,23 @@ def run(
             resolved.scheduled_restore(settings, prepared.save_directories)
             if shutdown_event.is_set():
                 return 0
-        if update_requested:
-            if target is None:
-                logger.error("Auto Update: restart requested without a pending Manifest")
-                return 1
-            logger.info("Auto Update: relaunching with manifest %s", target.manifest_id)
-            try:
-                prepared = resolved.stage(settings, target=target)
-            except STARTUP_ERRORS:
-                logger.exception("Update restart failed")
-                return 1
-        else:
-            try:
-                prepared = resolved.stage(settings)
-            except STARTUP_ERRORS:
-                logger.exception("Auto rollback: relaunch staging failed")
-                return 1
+        relaunch = _relaunch_prepared(
+            settings,
+            resolved,
+            prepared,
+            update_requested=update_requested,
+            recovery_requested=recovery_requested,
+            rollback_requested=rollback_requested,
+            target=target,
+        )
+        if relaunch is None:
+            return 1
+        prepared, reuse_prepared = relaunch
         if shutdown_event.is_set():
             return 0
-        _ = resolved.activate_manifest(settings, prepared.active_manifest.manifest_id, stop_event=shutdown_event)
+        if not reuse_prepared:
+            _ = resolved.activate_manifest(
+                settings,
+                prepared.active_manifest.manifest_id,
+                stop_event=shutdown_event,
+            )

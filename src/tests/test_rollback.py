@@ -612,11 +612,13 @@ def test_scheduled_rollback_relaunches_after_restore() -> None:
     first.run.return_value = 0
     first.restart_requested = False
     first.rollback_requested = True
+    first.recovery_restart_requested = False
     first.restart_manifest = None
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
+    second.recovery_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),
@@ -658,11 +660,13 @@ def test_failed_scheduled_restore_still_relaunches() -> None:
     first.run.return_value = 0
     first.restart_requested = False
     first.rollback_requested = True
+    first.recovery_restart_requested = False
     first.restart_manifest = None
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
+    second.recovery_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),
@@ -720,11 +724,13 @@ def test_combined_update_and_rollback_relaunch_once() -> None:
     first.run.return_value = 0
     first.restart_requested = True
     first.rollback_requested = True
+    first.recovery_restart_requested = False
     first.restart_manifest = target
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
+    second.recovery_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),

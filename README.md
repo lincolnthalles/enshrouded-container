@@ -196,10 +196,11 @@ are connected. It resumes automatically on client traffic.
 > The server will awaken during this event and reconnect to Steam.
 > Inform the players to wait a minute and try joining again when facing that error.
 
-| Variable                  | Default | Description                                                             |
-| ------------------------- | ------- | ----------------------------------------------------------------------- |
-| `AUTO_PAUSE_ENABLED`      | `false` | Opt in to automatic pause. Manual control needs the controller enabled. |
-| `AUTO_PAUSE_IDLE_TIMEOUT` | `300`   | Seconds without players before pausing; `0` disables automatic pauses.  |
+| Variable                       | Default | Description                                                                                                                                     |
+| ------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTO_PAUSE_ENABLED`           | `false` | Opt in to automatic pause. Manual control needs the controller enabled.                                                                         |
+| `AUTO_PAUSE_IDLE_TIMEOUT`      | `300`   | Seconds without players before pausing; `0` disables automatic pauses.                                                                          |
+| `AUTO_PAUSE_WAKE_DENY_SOURCES` | empty   | Comma-separated IPv4/IPv6 addresses or CIDR blocks that must not wake the server. Requires packet capture; otherwise Auto Pause will not pause. |
 
 <details>
 <summary>CLI and feature internals</summary>
@@ -222,6 +223,18 @@ A paused server consumes no Wine CPU but keeps its resident memory. It may disap
 Steam server browser; direct-IP joining wakes it through the query port. Resume reconnects Steam in
 about 10 seconds. The pause waits for an observed autosave; a force-kill while paused can lose up
 to one autosave interval.
+
+Use `AUTO_PAUSE_WAKE_DENY_SOURCES=172.22.0.1,172.16.0.0/12` to ignore internal Docker probes and
+other unwanted wake sources. CIDR entries must use the network address; an entry with host bits
+set, such as `172.22.0.5/16`, is invalid. Denied packets do not resume the tree, but they are not
+removed from the kernel queue. The filter needs `CAP_NET_RAW` for packet capture; without it, Auto
+Pause keeps the server running instead of pausing unfiltered. A non-empty value with no valid entry
+also keeps the server running rather than silently disabling the filter. Source addresses can be
+spoofed; this is a wake filter, not access control.
+
+If a wake or an operator resume leaves the server rejecting joins with error 4003, Auto Pause waits
+for two failures within 60 seconds and then requests one in-process recovery restart for that
+resume. A completed join clears the guard.
 
 While Auto Pause is preparing to pause or has the server paused, scheduled live backups, resource
 polling, and periodic roster summaries are suspended. A pause attempt is refused while non-essential

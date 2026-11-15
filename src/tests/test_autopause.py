@@ -2,6 +2,7 @@
 
 import threading
 from dataclasses import replace
+from ipaddress import IPv4Network
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, override
@@ -13,7 +14,7 @@ from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.saves import SaveSignature
 from enshctl.lifecycle.wake import WakeEvent
 from enshctl.presence import MAX_SESSION_MACHINES, PresenceGate, PresenceTracker
-from enshctl.settings import AppSettings
+from enshctl.settings import AppSettings, WakeDenyList
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,11 +45,18 @@ class _Driver:
 
 
 class _Process:
-    def __init__(self, *, suspend_error: Exception | None = None, resume_result: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        suspend_error: Exception | None = None,
+        resume_result: bool = True,
+        resume_hook: Callable[[], None] | None = None,
+    ) -> None:
         self.suspended = 0
         self.resumed = 0
         self.suspend_error = suspend_error
         self.resume_result = resume_result
+        self.resume_hook = resume_hook
 
     def suspend_all(self) -> bool:
         if self.suspend_error is not None:
@@ -58,6 +66,8 @@ class _Process:
 
     def resume_all(self) -> bool:
         self.resumed += 1
+        if self.resume_hook is not None:
+            self.resume_hook()
         return self.resume_result
 
 
@@ -67,10 +77,17 @@ class _Wake:
         self.closed = 0
         self.event: WakeEvent | None = None
         self.ignored_source_endpoints: list[frozenset[tuple[str, int]] | None] = []
+        self.can_arm_result = True
+        self.arm_result = True
+        self.can_arm_calls = 0
+
+    def can_arm(self) -> bool:
+        self.can_arm_calls += 1
+        return self.can_arm_result
 
     def arm(self) -> bool:
         self.armed += 1
-        return True
+        return self.arm_result
 
     def ignore_source_endpoints(self, endpoints: frozenset[tuple[str, int]] | None) -> None:
         self.ignored_source_endpoints.append(endpoints)
@@ -183,6 +200,7 @@ def _controller(
     save_probe: Callable[[Path], SaveSignature | None] | None = None,
     settings: AppSettings | None = None,
     pause_gate: PauseGate | None = None,
+    request_recovery_restart: Callable[[], None] | None = None,
 ) -> AutoPauseController:
     return AutoPauseController(
         settings=settings or _settings(),
@@ -196,6 +214,7 @@ def _controller(
         wake_source=wake,
         pause_gate=pause_gate or PauseGate(),
         stream_healthy=stream_healthy,
+        request_recovery_restart=request_recovery_restart or (lambda: None),
         clock=driver.clock,
         wall_clock=driver.wall_clock,
         wait=driver.wait,
@@ -208,6 +227,30 @@ def _run(controller: AutoPauseController, driver: _Driver) -> None:
     thread = controller.start(threading.Event())
     thread.join(timeout=3)
     assert thread.is_alive() is False
+
+
+def _pause_then_resume(
+    driver: _Driver,
+    control: ControlFiles,
+    process: _Process,
+    after_resume: Callable[[], None],
+) -> Callable[[], None]:
+    phase = {"pause_requested": False, "resume_requested": False, "after": False}
+
+    def _drive() -> None:
+        if not phase["pause_requested"] and not control.is_paused():
+            control.write_request("pause", "pause-token", now=driver.wall_clock())
+            phase["pause_requested"] = True
+            return
+        if phase["pause_requested"] and control.is_paused() and not phase["resume_requested"]:
+            control.write_request("resume", "resume-token", now=driver.wall_clock())
+            phase["resume_requested"] = True
+            return
+        if phase["resume_requested"] and process.resumed >= 1 and not phase["after"]:
+            phase["after"] = True
+            after_resume()
+
+    return _drive
 
 
 def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
@@ -246,6 +289,115 @@ def test_automatic_pause_suspends_after_idle(tmp_path: Path) -> None:
     assert process.resumed >= 1
     assert gate.is_quiet is False
     assert control.is_paused() is False
+
+
+def test_unavailable_wake_source_prevents_pause_before_save_wait(tmp_path: Path) -> None:
+    # GIVEN a ready empty server and a wake source that cannot be armed
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.can_arm_result = False
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+
+    save_probe_called = False
+
+    def _save_probe(_saves_dir: Path) -> SaveSignature | None:
+        nonlocal save_probe_called
+        save_probe_called = True
+        return _NEW_SAVE
+
+    # WHEN the controller passes the idle timeout
+    _run(
+        _controller(
+            tmp_path=tmp_path,
+            driver=driver,
+            tracker=tracker,
+            process=process,
+            control=control,
+            wake=wake,
+            save_probe=_save_probe,
+        ),
+        driver,
+    )
+
+    # THEN the pause is refused before any save wait
+    assert process.suspended == 0
+    assert wake.armed == 0
+    assert save_probe_called is False
+
+
+def test_deny_list_wake_source_veto_names_queue_polling(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a configured deny list and a wake source that cannot arm
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.can_arm_result = False
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    settings = replace(
+        _settings(),
+        auto_pause_wake_deny_sources=WakeDenyList(
+            configured=True,
+            networks=(IPv4Network("192.0.2.0/24"),),
+        ),
+    )
+
+    # WHEN the controller passes the idle timeout
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(
+            _controller(
+                tmp_path=tmp_path,
+                driver=driver,
+                tracker=tracker,
+                process=process,
+                control=control,
+                wake=wake,
+                settings=settings,
+            ),
+            driver,
+        )
+
+    # THEN the veto explains why queue polling cannot enforce the filter
+    assert "queue polling cannot enforce" in caplog.text
+    assert process.suspended == 0
+
+
+def test_arm_failure_invalidates_the_wake_preflight_cache(tmp_path: Path) -> None:
+    # GIVEN a wake source whose preflight passes but whose arm fails
+    driver = _Driver(stop_at=10)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.arm_result = False
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+
+    # WHEN the controller passes the idle timeout twice
+    _run(
+        _controller(
+            tmp_path=tmp_path,
+            driver=driver,
+            tracker=tracker,
+            process=process,
+            control=control,
+            wake=wake,
+        ),
+        driver,
+    )
+
+    # THEN the second attempt rechecks availability instead of trusting the stale preflight
+    assert wake.armed == 1
+    assert wake.can_arm_calls >= 2
+    assert process.suspended == 0
 
 
 def test_pause_waits_for_background_work(
@@ -856,6 +1008,504 @@ def test_wake_event_resumes_paused_tree(tmp_path: Path) -> None:
     assert process.suspended == 1
     assert process.resumed >= 1
     assert control.is_paused() is False
+
+
+def test_repeated_4003_after_wake_requests_one_recovery_restart(tmp_path: Path) -> None:
+    # GIVEN a controller that pauses, wakes, and then sees two 4003 failures
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    injected = False
+    failures = [
+        "Session failed for peer 0(7) with error 4003",
+        "Session failed for peer 0(7) with error 4003",
+    ]
+
+    def _inject_after_resume() -> None:
+        nonlocal injected
+        if injected or process.resumed == 0:
+            return
+        injected = True
+        for failure in failures:
+            tracker.observe(failure, now=driver.now)
+
+    driver.on_wait = _inject_after_resume
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller runs
+    _run(controller, driver)
+
+    # THEN exactly one recovery restart is requested and the controller stops
+    assert restarts == ["restart"]
+    assert process.suspended == 1
+    assert controller.state == "stopping"
+
+
+def test_single_4003_after_wake_does_not_restart(tmp_path: Path) -> None:
+    # GIVEN a controller that pauses, wakes, and then sees one 4003 failure
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    injected = False
+
+    def _inject_after_resume() -> None:
+        nonlocal injected
+        if injected or process.resumed == 0:
+            return
+        injected = True
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _inject_after_resume
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller runs
+    _run(controller, driver)
+
+    # THEN no recovery restart is requested
+    assert restarts == []
+    assert process.suspended == 1
+    assert controller.state == "active"
+
+
+def test_completed_join_after_wake_disarms_the_4003_guard(tmp_path: Path) -> None:
+    # GIVEN a controller that pauses, wakes, sees a completed join, and then two failures
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    injected = False
+
+    def _inject_after_resume() -> None:
+        nonlocal injected
+        if injected or process.resumed == 0:
+            return
+        injected = True
+        tracker.observe("Remote player added. Player handle: 0(7)", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _inject_after_resume
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller runs
+    _run(controller, driver)
+
+    # THEN the successful join clears the guard and no restart is requested
+    assert restarts == []
+    assert controller.state == "active"
+
+
+def test_manual_resume_arms_the_4003_guard(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a manually paused server with no automatic idle pause
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+
+    def _inject_two_failures() -> None:
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _pause_then_resume(driver, control, process, _inject_two_failures)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the operator resumes and two 4003 lines arrive
+    with caplog.at_level("WARNING", logger="enshctl.lifecycle.autopause"):
+        _run(controller, driver)
+
+    # THEN the guard requests one recovery restart and names the evidence
+    assert restarts == ["restart"]
+    assert "Auto Pause: requesting a recovery restart after repeated session errors (4003)" in caplog.text
+
+
+def test_disable_resume_does_not_arm_the_4003_guard(tmp_path: Path) -> None:
+    # GIVEN an automatically paused server that is disabled
+    driver = _Driver(stop_at=20)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    phase = {"disabled": False, "injected": False}
+
+    def _drive() -> None:
+        if control.is_paused() and not phase["disabled"]:
+            control.set_disabled()
+            phase["disabled"] = True
+        elif process.resumed >= 1 and not phase["injected"]:
+            phase["injected"] = True
+            tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+            tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _drive
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the disabled marker resumes the tree and 4003 lines arrive
+    _run(controller, driver)
+
+    # THEN the guard was not armed
+    assert restarts == []
+    assert controller.state == "disabled"
+
+
+def test_stream_end_while_active_disarms_the_4003_guard(tmp_path: Path) -> None:
+    # GIVEN a manually paused server that resumes and then loses its stream
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    healthy = True
+
+    def _fail_after_resume() -> None:
+        nonlocal healthy
+        healthy = False
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _pause_then_resume(driver, control, process, _fail_after_resume)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        stream_healthy=lambda: healthy,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the stream ends after resume and 4003 lines arrive
+    _run(controller, driver)
+
+    # THEN the guard is disarmed
+    assert restarts == []
+    assert controller.state == "active"
+
+
+def test_4003_failures_outside_the_window_do_not_restart(tmp_path: Path) -> None:
+    # GIVEN a manually paused server that resumes
+    driver = _Driver(stop_at=80)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+    first_failure_at: float | None = None
+    injected_late = False
+
+    def _inject_first() -> None:
+        nonlocal first_failure_at
+        first_failure_at = driver.now
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        driver.on_wait = _inject_second
+
+    def _inject_second() -> None:
+        nonlocal injected_late
+        if injected_late or first_failure_at is None or driver.now - first_failure_at < 61:
+            return
+        injected_late = True
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _pause_then_resume(driver, control, process, _inject_first)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the two 4003 failures are more than 60 seconds apart
+    _run(controller, driver)
+
+    # THEN no recovery restart is requested
+    assert restarts == []
+    assert injected_late is True
+
+
+def test_4003_window_uses_failure_spacing_not_evaluation_time(tmp_path: Path) -> None:
+    # GIVEN two failures 59 seconds apart that are evaluated 61 seconds after the first
+    driver = _Driver(stop_at=100)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+
+    def _inject_spaced_failures() -> None:
+        first_at = driver.now
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=first_at)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=first_at + 59)
+        driver.now = first_at + 61
+
+    driver.on_wait = _pause_then_resume(driver, control, process, _inject_spaced_failures)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller evaluates the pair
+    _run(controller, driver)
+
+    # THEN the 59-second spacing triggers even though evaluation is later
+    assert restarts == ["restart"]
+
+
+def test_4003_failures_before_resume_do_not_restart(tmp_path: Path) -> None:
+    # GIVEN two 4003 failures recorded before the pause
+    driver = _Driver(stop_at=20)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    tracker.observe("Session failed for peer 0(7) with error 4003", now=0)
+    tracker.observe("Session failed for peer 0(7) with error 4003", now=0)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+
+    driver.on_wait = _pause_then_resume(driver, control, process, lambda: None)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller pauses and resumes without new failures
+    _run(controller, driver)
+
+    # THEN the pre-arm failures are ignored
+    assert restarts == []
+
+
+def test_shutdown_resume_disarms_the_4003_guard(tmp_path: Path) -> None:
+    # GIVEN a manually paused server that resumes and then shuts down
+    driver = _Driver(stop_at=30)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    restarts: list[str] = []
+
+    def _shutdown_after_resume() -> None:
+        controller.resume_for_shutdown()
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=_Wake(),
+        settings=replace(_settings(), auto_pause_idle_timeout=0),
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+    driver.on_wait = _pause_then_resume(driver, control, process, _shutdown_after_resume)
+
+    # WHEN shutdown resumes the tree and 4003 lines arrive
+    _run(controller, driver)
+
+    # THEN the guard is disarmed
+    assert restarts == []
+
+
+def test_4003_during_resume_requests_restart(tmp_path: Path) -> None:
+    # GIVEN a paused server whose resume window receives two 4003 failures
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    restarts: list[str] = []
+
+    def _fail_during_resume() -> None:
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    process = _Process(resume_hook=_fail_during_resume)
+    wake = _Wake()
+    wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller runs
+    _run(controller, driver)
+
+    # THEN the failures inside the resume window still trigger the guard
+    assert restarts == ["restart"]
+
+
+def test_completed_join_during_resume_disarms_the_4003_guard(tmp_path: Path) -> None:
+    # GIVEN a paused server whose resume window receives a completed join
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    restarts: list[str] = []
+
+    def _join_during_resume() -> None:
+        tracker.observe("Remote player added. Player handle: 0(7)", now=driver.now)
+
+    process = _Process(resume_hook=_join_during_resume)
+    wake = _Wake()
+    wake.event = WakeEvent("192.0.2.1", 40000, 10, "a2s")
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    injected = False
+
+    def _inject_after_resume() -> None:
+        nonlocal injected
+        if injected or process.resumed == 0:
+            return
+        injected = True
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+        tracker.observe("Session failed for peer 0(7) with error 4003", now=driver.now)
+
+    driver.on_wait = _inject_after_resume
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        request_recovery_restart=lambda: restarts.append("restart"),
+    )
+
+    # WHEN the controller runs
+    _run(controller, driver)
+
+    # THEN the join clears the guard before the later failures are counted
+    assert restarts == []
+
+
+def test_all_invalid_deny_list_logs_error_and_refuses_pause(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a configured deny list with no valid entries
+    driver = _Driver(stop_at=15)
+    tracker = _tracker(driver)
+    _ready(tracker)
+    _empty_session(tracker)
+    process = _Process()
+    wake = _Wake()
+    wake.can_arm_result = False
+    control = ControlFiles(root=tmp_path, puid=0, pgid=0)
+    settings = replace(
+        _settings(),
+        auto_pause_wake_deny_sources=WakeDenyList(configured=True, networks=()),
+    )
+    controller = _controller(
+        tmp_path=tmp_path,
+        driver=driver,
+        tracker=tracker,
+        process=process,
+        control=control,
+        wake=wake,
+        settings=settings,
+    )
+
+    # WHEN the controller passes the idle timeout
+    with caplog.at_level("ERROR", logger="enshctl.lifecycle.autopause"):
+        _run(controller, driver)
+
+    # THEN the unusable list is reported once and no pause occurs
+    assert "wake deny list has no valid entries" in caplog.text
+    assert process.suspended == 0
 
 
 def test_manual_reset_request_clears_roster(tmp_path: Path) -> None:

@@ -418,8 +418,9 @@ An attempt that aborts before suspension SHALL end the window. A manual pause, i
 ### Requirement: Wake source
 
 While paused, Auto Pause SHALL resume on any IPv4 or IPv6 UDP packet to the query port or a resume
-request. `AF_PACKET` SHALL be preferred; queue polling SHALL be the fallback. If no wake source is
-available, a pause SHALL be prevented.
+request, except packets from a Wake deny list entry (see `Wake deny list`). `AF_PACKET` SHALL be
+preferred; queue polling SHALL be the fallback. If no wake source is available, a pause SHALL be
+prevented.
 
 #### Scenario: Direct-IP query wakes the server
 
@@ -433,6 +434,65 @@ available, a pause SHALL be prevented.
 - **THEN** no pause SHALL occur
 - **AND** a warning SHALL be logged
 
+### Requirement: Wake deny list
+
+`AUTO_PAUSE_WAKE_DENY_SOURCES` SHALL default to empty. A non-empty value SHALL be a comma-separated
+list of IPv4 or IPv6 addresses and CIDR blocks. A CIDR entry SHALL use the network address; host
+bits set SHALL make the entry invalid. An invalid entry SHALL be ignored with a warning naming the
+entry; valid entries SHALL remain active. A configured value with no valid entry SHALL
+NOT silently disable filtering: a pause SHALL be prevented and an error SHALL be logged. A packet
+from any denied source SHALL NOT resume the tree, regardless of its A2S classification. The first
+denial per source SHALL be logged at INFO for each armed wake source, up to a bounded number of
+distinct sources per arm. If the list is non-empty and
+`AF_PACKET` cannot be opened, the queue fallback SHALL NOT be used and a pause SHALL be prevented.
+
+#### Scenario: Denied address does not wake the server
+
+- **WHEN** the server is paused and a denied source sends an A2S query to the query port
+- **THEN** the tree SHALL remain paused
+- **AND** an INFO line SHALL name the denied source
+
+#### Scenario: Denied block does not wake the server
+
+- **WHEN** `AUTO_PAUSE_WAKE_DENY_SOURCES` contains a CIDR block and a source inside that block sends
+  generic UDP to the query port
+- **THEN** the tree SHALL remain paused
+
+#### Scenario: Unlisted source still wakes the server
+
+- **WHEN** the server is paused and a source outside every denied address or block sends UDP to the
+  query port
+- **THEN** the tree SHALL resume
+
+#### Scenario: Invalid entry is skipped
+
+- **WHEN** the deny list contains a malformed entry and a valid address
+- **THEN** a warning SHALL name the malformed entry
+- **AND** the valid address SHALL still be filtered
+
+#### Scenario: Host-bit CIDR is invalid
+
+- **WHEN** the deny list contains `192.0.2.1/24` and no other entry
+- **THEN** a warning SHALL name the entry
+- **AND** no pause SHALL occur
+
+#### Scenario: All entries invalid prevents pause
+
+- **WHEN** the deny list is non-empty and every entry is malformed
+- **THEN** an error SHALL be logged
+- **AND** no pause SHALL occur
+
+#### Scenario: Repeated denials log once per source
+
+- **WHEN** the same denied source sends several packets while one wake source is armed
+- **THEN** only one INFO line SHALL name that source
+
+#### Scenario: Filter without packet capture prevents pause
+
+- **WHEN** a deny list is configured and `AF_PACKET` cannot be opened
+- **THEN** no pause SHALL occur
+- **AND** a warning SHALL explain that queue polling cannot enforce the filter
+
 ### Requirement: Wake arming window
 
 Auto Pause SHALL arm the wake source before the final A2S probe and save re-stat so a pre-join
@@ -444,6 +504,66 @@ packet in that window is retained. Outgoing probe traffic SHALL be ignored.
   `SIGSTOP` completes
 - **THEN** the paused controller SHALL observe it
 - **AND** the server SHALL resume instead of discarding the event
+
+### Requirement: Post-wake session recovery
+
+After resuming through a Wake event or an operator resume, Auto Pause SHALL observe
+`Session failed for peer ... with error 4003` lines. Two such failures within 60 seconds, before a
+completed join, SHALL request one recovery restart. A completed join — a `Remote player added` line
+for a new handle, any machine login, or any valid player name line (see `Pending join evidence`) —
+SHALL clear the guard. The guard SHALL stay armed until a completed join and SHALL request at most
+one recovery restart per resume. A later pause, disable,
+stream end, or shutdown SHALL clear the guard. The request SHALL log
+`Auto Pause: requesting a recovery restart after repeated session errors (4003)`; the restart
+mechanics are owned by `server-lifecycle`.
+
+#### Scenario: Repeated 4003 after wake triggers the guard
+
+- **WHEN** the server wakes, two `Session failed ... error 4003` lines arrive within 60 seconds, and
+  no completed join occurs
+- **THEN** Auto Pause SHALL log the recovery restart warning
+- **AND** it SHALL request one recovery restart
+
+#### Scenario: Single 4003 does not trigger the guard
+
+- **WHEN** the server wakes and exactly one `Session failed ... error 4003` line arrives
+- **THEN** no recovery restart SHALL be requested
+
+#### Scenario: Completed join clears the guard
+
+- **WHEN** the server wakes, a completed join arrives, and later 4003 lines arrive
+- **THEN** no recovery restart SHALL be requested
+
+#### Scenario: Manual resume arms the guard
+
+- **WHEN** the operator resumes a paused server and two 4003 lines then arrive within 60 seconds
+- **THEN** one recovery restart SHALL be requested
+
+#### Scenario: Disable resume does not arm the guard
+
+- **WHEN** Auto Pause resumes the tree because the `disabled` marker appeared and 4003 lines arrive
+- **THEN** no recovery restart SHALL be requested
+
+#### Scenario: One restart per resume
+
+- **WHEN** a wake triggers two 4003 failures and the recovery restart is requested
+- **THEN** no second request SHALL be made for that resume
+
+#### Scenario: Failures before resume are ignored
+
+- **WHEN** two 4003 failures were logged before the pause, the server resumes, and no new failure
+  arrives
+- **THEN** no recovery restart SHALL be requested
+
+#### Scenario: Failures outside the window do not trigger
+
+- **WHEN** the server resumes and two 4003 failures arrive more than 60 seconds apart
+- **THEN** no recovery restart SHALL be requested
+
+#### Scenario: Stream end clears the guard
+
+- **WHEN** the server resumes, its stdout stream ends, and 4003 lines remain in the tracker
+- **THEN** no recovery restart SHALL be requested
 
 ### Requirement: Manual pause
 

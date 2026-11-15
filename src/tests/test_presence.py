@@ -32,6 +32,7 @@ _CLEAN_LOGOUT = (
 )
 _REMOVED = "[I 00:00:04,300] [session] Player removed. Player handle: {handle}"
 _SESSION_ACCEPTED = "[I 00:00:01,000] [online] Session accepted with peer (steamid:99999999999999999)"
+_SESSION_FAILED = "[I 00:00:01,300] [online] Session failed for peer {handle} with error 4003"
 _AUTHENTICATED = "[I 00:00:01,100] [online] Client '99999999999999999' authenticated by steam"
 _SESSION_START = "[I 00:00:01,000] [session] -------------- Session ----------------"
 _SESSION_END = "[I 00:00:01,100] [session] ----------------------------------------"
@@ -483,7 +484,12 @@ def test_snapshot_is_immutable() -> None:
         snapshot.players = ()  # type: ignore[misc]
 
     # THEN the original value is unchanged
-    assert snapshot == PresenceSnapshot((Player("0(0)"),), last_activity_at=0, activity_generation=1)
+    assert snapshot == PresenceSnapshot(
+        (Player("0(0)"),),
+        last_activity_at=0,
+        activity_generation=1,
+        completed_join_generation=1,
+    )
 
 
 def test_pending_join_opens_and_clears() -> None:
@@ -528,6 +534,81 @@ def test_pending_join_expires_without_policy_warning() -> None:
     # THEN the window clears silently; the controller owns the policy warning
     assert events == ()
     assert tracker.snapshot().pending_join_until is None
+
+
+def test_session_failure_4003_is_recorded() -> None:
+    # GIVEN a tracker observing two failed sessions
+    tracker = PresenceTracker()
+
+    # WHEN both failures arrive
+    tracker.observe(_SESSION_FAILED.format(handle="0(7)"), now=10)
+    tracker.observe(_SESSION_FAILED.format(handle="0(7)"), now=20)
+
+    # THEN their timestamps are retained for the Auto Pause guard
+    assert tracker.snapshot().session_failure_times == (10, 20)
+
+
+def test_session_failure_accepts_any_peer_shape() -> None:
+    # GIVEN a failure whose peer is rendered as a Steam ID rather than a handle
+    tracker = PresenceTracker()
+
+    # WHEN the line arrives
+    tracker.observe("Session failed for peer (steamid:123) with error 4003", now=10)
+
+    # THEN it is still recorded as 4003 evidence
+    assert tracker.snapshot().session_failure_times == (10,)
+
+
+def test_completed_join_generation_tracks_add_machine_and_name() -> None:
+    # GIVEN a tracker observing a join, a duplicate add, a missed add, and a name
+    tracker = PresenceTracker()
+
+    # WHEN the lines arrive
+    tracker.observe(_add("0(0)"), now=0)
+    tracker.observe(_add("0(0)"), now=1)
+    tracker.observe(_machine("0(1)"), now=2)
+    tracker.observe(_name("Alice"), now=3)
+    tracker.observe(_machine("0(1)"), now=4)
+
+    # THEN only completed joins, including a repeated machine login, advance the generation
+    assert tracker.snapshot().completed_join_generation == 4
+
+
+def test_unpaired_player_name_advances_join_generation() -> None:
+    # GIVEN a name line with no tracked handle
+    tracker = PresenceTracker()
+
+    # WHEN the name arrives
+    tracker.observe(_name("Alice"), now=0)
+
+    # THEN the line still counts as a completed join
+    assert tracker.snapshot().completed_join_generation == 1
+
+
+def test_non_4003_session_failure_is_ignored() -> None:
+    # GIVEN a session failure with a different error code
+    tracker = PresenceTracker()
+
+    # WHEN the line arrives
+    tracker.observe(_SESSION_FAILED.replace("4003", "4002").format(handle="0(7)"), now=10)
+
+    # THEN it is not recorded as 4003 evidence
+    assert tracker.snapshot().session_failure_times == ()
+
+
+def test_reset_clears_session_failures_without_rewinding_join_generation() -> None:
+    # GIVEN a tracker with one completed join and one session failure
+    tracker = PresenceTracker()
+    tracker.observe(_add("0(0)"), now=0)
+    tracker.observe(_SESSION_FAILED.format(handle="0(7)"), now=1)
+
+    # WHEN the operator resets presence evidence
+    tracker.reset(now=2)
+
+    # THEN failures clear while the join generation stays monotonic
+    snapshot = tracker.snapshot()
+    assert snapshot.session_failure_times == ()
+    assert snapshot.completed_join_generation == 1
 
 
 def test_run_marker_sets_ready_and_activity() -> None:

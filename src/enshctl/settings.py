@@ -1,6 +1,8 @@
 """Typed settings seam — immutable values, one environment loader, and the backup child contract."""
 
+import logging
 from dataclasses import MISSING, dataclass, field, fields, replace
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from os import environ
 from typing import TYPE_CHECKING, Any, cast
 
@@ -9,6 +11,12 @@ if TYPE_CHECKING:
     from dataclasses import Field
 
     type _Parser = Callable[[str, object], object]
+
+logger = logging.getLogger(__name__)
+
+_WAKE_DENY_SOURCES_ENV = "AUTO_PAUSE_WAKE_DENY_SOURCES"
+
+type IpNetwork = IPv4Network | IPv6Network
 
 
 def normalize_api_url(value: str | None) -> str | None:
@@ -60,6 +68,31 @@ def _parse_unstripped(raw: str, _default: object) -> str:
 
 def _parse_csv(raw: str, _default: object) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+@dataclass(frozen=True)
+class WakeDenyList:
+    """Configured wake source filter and whether the operator supplied one."""
+
+    configured: bool = False
+    networks: tuple[IpNetwork, ...] = ()
+
+
+_DEFAULT_WAKE_DENY_LIST = WakeDenyList()
+
+
+def _parse_networks(raw: str, _default: object) -> WakeDenyList:
+    configured = bool(raw.strip())
+    networks: list[IpNetwork] = []
+    for item in raw.split(","):
+        entry = item.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ip_network(entry, strict=True))
+        except ValueError:
+            logger.warning("Ignoring invalid %s entry %r", _WAKE_DENY_SOURCES_ENV, entry)
+    return WakeDenyList(configured=configured, networks=tuple(networks))
 
 
 def _parse_url(raw: str, _default: object) -> str | None:
@@ -133,6 +166,10 @@ class AppSettings:
     # Auto Pause
     auto_pause_enabled: bool = _env_field(default=False, key="AUTO_PAUSE_ENABLED", parse=_parse_bool)
     auto_pause_idle_timeout: int = _env_field(300, "AUTO_PAUSE_IDLE_TIMEOUT", _parse_non_negative_int)
+    auto_pause_wake_deny_sources: WakeDenyList = field(
+        default=_DEFAULT_WAKE_DENY_LIST,
+        metadata={"env_key": _WAKE_DENY_SOURCES_ENV, "parse": _parse_networks},
+    )
 
     # Shutdown
     shutdown_timeout: int = _env_field(60, "SHUTDOWN_TIMEOUT", _parse_non_negative_int)

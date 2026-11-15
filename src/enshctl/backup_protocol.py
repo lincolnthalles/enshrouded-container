@@ -15,12 +15,13 @@ class BackupOutcome(IntEnum):
 
 
 class Trigger(StrEnum):
-    """Event that caused a Backup, orthogonal to its storage Category."""
+    """Event that caused a Backup or a server lifecycle exit, orthogonal to any Backup Category."""
 
     SCHEDULED = "scheduled"
     SHUTDOWN = "shutdown"
     UPDATE = "update"
     CRASH = "crash"
+    RECOVERY = "recovery"
     MANUAL = "manual"
     ROLLBACK = "rollback"
 
@@ -51,6 +52,9 @@ class BackupRequest:
         """Build the request for a lifecycle trigger; manual callers pass a Category."""
         if trigger is Trigger.MANUAL or trigger is Trigger.ROLLBACK:
             msg = "Manual backups select a Category explicitly"
+            raise ValueError(msg)
+        if trigger is Trigger.RECOVERY:
+            msg = "Recovery restarts do not create backups"
             raise ValueError(msg)
         category = _TRIGGER_CATEGORIES[trigger]
         return cls(

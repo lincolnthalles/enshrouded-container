@@ -28,6 +28,7 @@ _PLAYER_NAME = re.compile(r"Player '(?P<name>.*)' logged in with Permissions:")
 _PLAYER_REMOVED = re.compile(rf"Player removed\. Player handle: (?P<handle>{_HANDLE_PATTERN})")
 _REMOVE_ENTITY = re.compile(r"Remove Entity for Player '(?P<name>.*)'")
 _SESSION_ACCEPTED = re.compile(r"Session accepted with peer \(steamid:\d+\)")
+_SESSION_FAILED = re.compile(r"Session failed for peer \S+ with error 4003")
 _AUTHENTICATED = re.compile(r"Client '\d+' authenticated by steam")
 _RUN_MARKER = re.compile(r"Switching state from LoadEcsScene to Run(?:\s+after\s+[\d.]+\s*ms)?")
 _SESSION_BLOCK_START = re.compile(r"-{3,}\s+Session\s+-{3,}")
@@ -62,6 +63,8 @@ class PresenceSnapshot:
     session_malformed: bool = False
     degraded: bool = False
     activity_generation: int = 0
+    session_failure_times: tuple[float, ...] = ()
+    completed_join_generation: int = 0
 
     @property
     def handles(self) -> frozenset[str]:
@@ -274,6 +277,8 @@ class PresenceTracker:
         self._ready = False
         self._last_activity_at: float | None = None
         self._activity_generation = 0
+        self._completed_join_generation = 0
+        self._session_failure_times: deque[float] = deque(maxlen=8)
         self._session_machines: frozenset[int] | None = None
         self._session_complete_at: float | None = None
         self._session_malformed = False
@@ -318,6 +323,8 @@ class PresenceTracker:
                 session_malformed=self._session_malformed,
                 degraded=self._degraded,
                 activity_generation=self._activity_generation,
+                session_failure_times=tuple(self._session_failure_times),
+                completed_join_generation=self._completed_join_generation,
             )
 
     def reset(self, now: float | None = None) -> None:
@@ -338,6 +345,8 @@ class PresenceTracker:
             self._session_indices.clear()
             self._session_open_malformed = False
             self._session_overdue_warned = False
+            self._session_failure_times.clear()
+            # The completed-join generation stays monotonic so an armed guard still sees later joins.
             self._last_activity_at = timestamp
 
     def _apply_line(self, message: str, now: float) -> list[PresenceEvent]:
@@ -358,6 +367,9 @@ class PresenceTracker:
             if _SESSION_MACHINE_PREFIX.match(message):
                 self._session_open_malformed = True
                 return []
+        if _SESSION_FAILED.fullmatch(message):
+            self._session_failure_times.append(now)
+            return []
         if _SESSION_ACCEPTED.fullmatch(message) or _AUTHENTICATED.fullmatch(message):
             self._touch(now)
             self._pending_join_until = now + PENDING_JOIN_WINDOW
@@ -370,7 +382,7 @@ class PresenceTracker:
         if match := _MACHINE_LOGIN.fullmatch(message):
             self._touch(now)
             self._clear_pending_join()
-            return self._add_handle(match["handle"], now)
+            return self._add_handle(match["handle"], now, confirm=True)
         if match := _PLAYER_NAME.fullmatch(message):
             return self._attach_name(match["name"], now)
         if match := _REMOVE_ENTITY.fullmatch(message):
@@ -392,9 +404,11 @@ class PresenceTracker:
         self._pending_join_until = None
         self._pending_join_expired_at = None
 
-    def _add_handle(self, handle: str, now: float) -> list[PresenceEvent]:
+    def _add_handle(self, handle: str, now: float, *, confirm: bool = False) -> list[PresenceEvent]:
         entry = self._players.get(handle)
         if entry is not None:
+            if confirm:
+                self._completed_join_generation += 1
             return self._enqueue_name(handle)
 
         if len(self._players) >= MAX_HANDLES:
@@ -405,6 +419,7 @@ class PresenceTracker:
             return [PresenceWarning(f"Player handle cap reached; ignoring {handle}")]
 
         self._players[handle] = _Entry(handle, None, now)
+        self._completed_join_generation += 1
         events: list[PresenceEvent] = [PlayerJoined(handle)]
         events.extend(self._enqueue_name(handle))
         return events
@@ -428,6 +443,7 @@ class PresenceTracker:
             return [PresenceWarning("Ignoring empty player name")]
         self._touch(now)
         self._clear_pending_join()
+        self._completed_join_generation += 1
 
         handle: str | None = None
         while self._pending_names:

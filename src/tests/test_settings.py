@@ -1,10 +1,11 @@
 """Tests for the settings seam."""
 
 from dataclasses import FrozenInstanceError, fields, replace
+from ipaddress import IPv4Network, IPv6Network
 from unittest.mock import patch
 
 import pytest
-from enshctl.settings import AppSettings, backup_child_env, load_settings
+from enshctl.settings import AppSettings, WakeDenyList, backup_child_env, load_settings
 
 
 def test_load_settings_without_source_reads_process_environment() -> None:
@@ -79,6 +80,7 @@ def test_app_settings_defaults_are_documented_values() -> None:
         player_poll_interval=60,
         auto_pause_enabled=False,
         auto_pause_idle_timeout=300,
+        auto_pause_wake_deny_sources=WakeDenyList(),
         shutdown_timeout=60,
         shutdown_backup_wait=120,
         orchestrator_log_file="",
@@ -135,6 +137,7 @@ def test_load_settings_parses_every_declared_key() -> None:
         "PLAYER_POLL_INTERVAL": "7",
         "AUTO_PAUSE_ENABLED": "true",
         "AUTO_PAUSE_IDLE_TIMEOUT": "45",
+        "AUTO_PAUSE_WAKE_DENY_SOURCES": " 192.0.2.1, 198.51.100.0/24, bad, 2001:db8::/32 ",
         "SHUTDOWN_TIMEOUT": "-1",
         "SHUTDOWN_BACKUP_WAIT": "10",
         "ORCHESTRATOR_LOG_FILE": " true ",
@@ -193,6 +196,14 @@ def test_load_settings_parses_every_declared_key() -> None:
         player_poll_interval=7,
         auto_pause_enabled=True,
         auto_pause_idle_timeout=45,
+        auto_pause_wake_deny_sources=WakeDenyList(
+            configured=True,
+            networks=(
+                IPv4Network("192.0.2.1/32"),
+                IPv4Network("198.51.100.0/24"),
+                IPv6Network("2001:db8::/32"),
+            ),
+        ),
         shutdown_timeout=0,
         shutdown_backup_wait=10,
         orchestrator_log_file="true",
@@ -210,6 +221,32 @@ def test_load_settings_parses_every_declared_key() -> None:
         backup_keep_monthly=7,
         backup_keep_yearly=8,
     )
+
+
+def test_load_settings_skips_invalid_wake_deny_entries(caplog: pytest.LogCaptureFixture) -> None:
+    # GIVEN a deny list with one valid and one invalid entry
+    with caplog.at_level("WARNING", logger="enshctl.settings"):
+        settings = load_settings({"AUTO_PAUSE_WAKE_DENY_SOURCES": "not-an-ip, 192.0.2.1"})
+
+    # THEN the valid entry remains and the invalid entry is named
+    assert settings.auto_pause_wake_deny_sources == WakeDenyList(
+        configured=True,
+        networks=(IPv4Network("192.0.2.1/32"),),
+    )
+    assert "not-an-ip" in caplog.text
+
+
+def test_load_settings_marks_a_configured_all_invalid_wake_deny_list(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # GIVEN a deny list with no valid entries
+    with caplog.at_level("WARNING", logger="enshctl.settings"):
+        settings = load_settings({"AUTO_PAUSE_WAKE_DENY_SOURCES": "not-an-ip, 192.0.2.1/24"})
+
+    # THEN the list is still marked configured so Auto Pause can fail closed
+    assert settings.auto_pause_wake_deny_sources == WakeDenyList(configured=True, networks=())
+    assert "not-an-ip" in caplog.text
+    assert "192.0.2.1/24" in caplog.text
 
 
 def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:

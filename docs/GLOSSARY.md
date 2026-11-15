@@ -203,9 +203,19 @@ Interval when Auto Pause blocks scheduled live Backups and non-essential backgro
 tree can be suspended without work in flight.
 _Avoid_: Pause attempt, Exclusion
 
+**Recovery restart**:
+An in-process server relaunch after a wake or operator resume leaves the server rejecting joins
+with repeated 4003 session failures.
+_Avoid_: Crash restart, Auto restart
+
 **Wake traffic**:
 Inbound UDP traffic to the query port that resumes a paused server.
 _Avoid_: Wake packet, Query packet
+
+**Wake deny list**:
+Configured IPv4 or IPv6 addresses and CIDR blocks whose wake traffic must not resume a paused
+server.
+_Avoid_: Blocklist, A2S filter
 
 **Auto update**:
 Automatic check for a newer Manifest and a supervised restart into it when the empty-server gate is

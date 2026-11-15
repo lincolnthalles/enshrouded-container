@@ -4,8 +4,9 @@ import signal
 import subprocess
 import threading
 from dataclasses import replace
+from ipaddress import IPv4Network
 from typing import IO, TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from enshctl.backup_protocol import BackupRequest, Trigger
 from enshctl.config import SaveDirectories
@@ -17,7 +18,7 @@ from enshctl.lifecycle.pause_gate import PauseGate
 from enshctl.lifecycle.runtime import ServerLifecycle, exit_server
 from enshctl.lifecycle.types import ExitRequest, RestartRequest, ServerProcess
 from enshctl.paths import SAVE_DIR
-from enshctl.settings import AppSettings
+from enshctl.settings import AppSettings, WakeDenyList
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -414,6 +415,50 @@ def test_lifecycle_starts_auto_pause_and_resumes_on_exit() -> None:
     assert "pause_resume" in events
 
 
+def test_lifecycle_wires_wake_deny_list_into_auto_pause(tmp_path: Path) -> None:
+    # GIVEN an Auto Pause lifecycle with a configured deny list and a recording wake factory
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    shutdown = threading.Event()
+    wake_factory = MagicMock()
+
+    def _build_wake(*_args: object, **_kwargs: object) -> MagicMock:
+        shutdown.set()
+        return MagicMock()
+
+    wake_factory.side_effect = _build_wake
+    networks = (IPv4Network("192.0.2.0/24"),)
+    settings = _settings(
+        auto_pause_enabled=True,
+        auto_pause_wake_deny_sources=WakeDenyList(configured=True, networks=networks),
+        backup_live=False,
+        backup_cold=False,
+        backup_emergency=False,
+    )
+    lifecycle = ServerLifecycle(
+        settings,
+        process_control=control,
+        lifecycle_io=io,
+        control_files=ControlFiles(tmp_path, puid=0, pgid=0),
+        save_directories=SaveDirectories(SAVE_DIR),
+        shutdown_event=shutdown,
+        wake_source_factory=wake_factory,
+    )
+
+    # WHEN the lifecycle builds Auto Pause
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN the deny networks and configured flag reach the wake factory
+    assert code == 0
+    wake_factory.assert_called_once()
+    kwargs = wake_factory.call_args.kwargs
+    assert kwargs["deny_sources"] == networks
+    assert kwargs["deny_configured"] is True
+
+
 def test_lifecycle_shares_one_pause_gate(tmp_path: Path) -> None:
     # GIVEN a lifecycle with Auto Pause and live backups enabled
     events: list[object] = []
@@ -590,6 +635,83 @@ def test_update_exit_orders_server_cold_backup_wine_pid() -> None:
         "clear_pid",
     ]
     assert process.waits == [7]
+
+
+def test_lifecycle_recovery_restart_relaunches_without_backup() -> None:
+    # GIVEN a running server that requests a recovery restart after launch
+    events: list[object] = []
+    process = FakeProcess(returncode=None)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=True, backup_emergency=True),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_recovery_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN it exits cleanly for a relaunch without a backup and clears the PID
+    assert code == 0
+    assert lifecycle.recovery_restart_requested is True
+    assert io.backups == []
+    assert ("signal_game", signal.SIGINT) in events
+    assert "wine" in events
+    assert "clear_pid" in events
+
+
+def test_lifecycle_recovery_restart_stop_failure_exits_without_relaunch() -> None:
+    # GIVEN a server that ignores the recovery stop wait
+    events: list[object] = []
+    process = FakeProcess(stuck=True)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_recovery_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN it exits non-zero and does not expose a relaunch
+    assert code == 1
+    assert lifecycle.recovery_restart_requested is False
+    assert "wine" not in events
+    assert "clear_pid" not in events
+
+
+def test_recovery_request_does_not_mask_a_crash() -> None:
+    # GIVEN a server that exits while a recovery restart is also requested
+    events: list[object] = []
+    process = FakeProcess(returncode=9)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=True),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_recovery_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN the unexpected exit wins and runs the emergency backup
+    assert code == 9
+    assert lifecycle.recovery_restart_requested is False
+    assert io.backups == [BackupRequest.for_trigger(Trigger.CRASH)]
+    assert "clear_pid" in events
 
 
 def test_lifecycle_update_restart_uses_pending_manifest() -> None:

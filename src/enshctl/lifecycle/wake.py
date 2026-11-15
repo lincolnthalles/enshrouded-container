@@ -4,7 +4,7 @@ import logging
 import select
 import socket
 from dataclasses import dataclass
-from ipaddress import IPv4Address, IPv6Address
+from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Protocol, cast
@@ -14,8 +14,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from enshctl.config import QueryEndpoint
+    from enshctl.settings import IpNetwork
 
 logger = logging.getLogger(__name__)
+
+_MAX_DENIED_SOURCES_LOGGED = 64
 
 _ETHERTYPE_IPV4 = 0x0800
 _ETHERTYPE_IPV6 = 0x86DD
@@ -41,6 +44,8 @@ class WakeEvent:
 class WakeSource(Protocol):
     """A wake source that can be armed before suspension and polled while paused."""
 
+    def can_arm(self) -> bool: ...
+
     def arm(self) -> bool: ...
 
     def ignore_source_endpoints(self, endpoints: frozenset[tuple[str, int]] | None) -> None: ...
@@ -63,6 +68,9 @@ class _PacketSocket(Protocol):
 
 
 class _NoWake:
+    def can_arm(self) -> bool:
+        return False
+
     def arm(self) -> bool:
         return False
 
@@ -86,6 +94,7 @@ class PacketWake:
         *,
         interface_root: Path,
         socket_factory: Callable[[str], _PacketSocket] | None = None,
+        deny_sources: tuple[IpNetwork, ...] = (),
     ) -> None:
         self._endpoint = endpoint
         self._interface_root = interface_root
@@ -93,6 +102,22 @@ class PacketWake:
         self._sockets: list[_PacketSocket] = []
         self._source_label = "packet"
         self._ignored_source_endpoints: frozenset[tuple[str, int]] = frozenset()
+        self._deny_sources = deny_sources
+        self._denied_logged: set[str] = set()
+
+    def can_arm(self) -> bool:
+        try:
+            interfaces = sorted(self._interface_root.iterdir())
+        except OSError:
+            return False
+        for interface in interfaces:
+            try:
+                packet_socket = self._socket_factory(interface.name)
+            except OSError:
+                continue
+            packet_socket.close()
+            return True
+        return False
 
     def arm(self) -> bool:
         self.close()
@@ -142,6 +167,9 @@ class PacketWake:
                     continue
                 if (event.source, event.source_port) in self._ignored_source_endpoints:
                     continue
+                if self._is_denied(event.source):
+                    self._log_denied(event.source)
+                    continue
                 return event
         return None
 
@@ -152,6 +180,19 @@ class PacketWake:
             except OSError:
                 continue
         self._sockets.clear()
+        self._denied_logged.clear()
+
+    def _is_denied(self, source: str) -> bool:
+        if not self._deny_sources:
+            return False
+        address = ip_address(source)
+        return any(address in network for network in self._deny_sources)
+
+    def _log_denied(self, source: str) -> None:
+        if source in self._denied_logged or len(self._denied_logged) >= _MAX_DENIED_SOURCES_LOGGED:
+            return
+        self._denied_logged.add(source)
+        logger.info("Auto Pause: ignoring wake packet from denied source %s", source)
 
     @staticmethod
     def _open_socket(interface: str) -> _PacketSocket:
@@ -175,6 +216,9 @@ class QueueWake:
         self._poll_interval = poll_interval
         self._baseline = 0
         self._armed = False
+
+    def can_arm(self) -> bool:
+        return bool(self._readable_files())
 
     def arm(self) -> bool:
         readable = self._readable_files()
@@ -238,15 +282,30 @@ class QueueWake:
 class FallbackWake:
     """Prefer packet capture and fall back to queue polling."""
 
-    def __init__(self, packet: WakeSource, queue: WakeSource) -> None:
+    def __init__(
+        self,
+        packet: WakeSource,
+        queue: WakeSource,
+        *,
+        requires_packet_capture: bool = False,
+    ) -> None:
         self._packet = packet
         self._queue = queue
+        self._requires_packet_capture = requires_packet_capture
         self._active: WakeSource | None = None
+
+    def can_arm(self) -> bool:
+        if self._packet.can_arm():
+            return True
+        return not self._requires_packet_capture and self._queue.can_arm()
 
     def arm(self) -> bool:
         if self._packet.arm():
             self._active = self._packet
             return True
+        if self._requires_packet_capture:
+            logger.warning("Auto Pause: wake source filtering requires AF_PACKET; queue polling is not used")
+            return False
         if self._queue.arm():
             self._active = self._queue
             return True
@@ -267,13 +326,19 @@ class FallbackWake:
         self._active = None
 
 
-def build_wake_source(endpoint: QueryEndpoint | None) -> WakeSource:
+def build_wake_source(
+    endpoint: QueryEndpoint | None,
+    *,
+    deny_sources: tuple[IpNetwork, ...] = (),
+    deny_configured: bool = False,
+) -> WakeSource:
     """Build the production wake source for one resolved endpoint."""
-    if endpoint is None:
+    if endpoint is None or (deny_configured and not deny_sources):
         return _NoWake()
     return FallbackWake(
-        PacketWake(endpoint, interface_root=Path("/sys/class/net")),
+        PacketWake(endpoint, interface_root=Path("/sys/class/net"), deny_sources=deny_sources),
         QueueWake(endpoint, proc_net_root=Path("/proc/net")),
+        requires_packet_capture=deny_configured,
     )
 
 

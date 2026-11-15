@@ -50,6 +50,14 @@ def test_manual_trigger_requires_explicit_category() -> None:
         BackupRequest.for_trigger(Trigger.MANUAL)
 
 
+def test_recovery_trigger_requires_no_backup() -> None:
+    # GIVEN a recovery restart trigger
+    # WHEN building a Backup request
+    # THEN it fails because recovery restarts do not create backups
+    with pytest.raises(ValueError, match="Recovery"):
+        BackupRequest.for_trigger(Trigger.RECOVERY)
+
+
 @pytest.mark.parametrize(
     ("category", "flag"),
     [

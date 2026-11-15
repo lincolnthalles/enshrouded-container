@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from enshctl.config import SaveDirectories
     from enshctl.download.types import ManifestRecord
+    from enshctl.lifecycle.wake import WakeSource
     from enshctl.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ def exit_server(
         return 1
     if request.trigger is Trigger.ROLLBACK and not stopped:
         logger.error("Auto rollback: server did not stop; not relaunching")
+        return 1
+    if request.trigger is Trigger.RECOVERY and not stopped:
+        logger.error("Recovery restart: server did not stop; not relaunching")
         return 1
     _run_triggered_backup(request.trigger, settings=settings, lifecycle_io=lifecycle_io)
     _best_effort(lifecycle_io.cleanup_wine, "Wine cleanup")
@@ -138,6 +142,7 @@ class ServerLifecycle:
         control_files: ControlFiles | None = None,
         active_manifest: ManifestRecord | None = None,
         shutdown_event: threading.Event | None = None,
+        wake_source_factory: Callable[..., WakeSource] = build_wake_source,
     ) -> None:
         self._settings = settings
         self._save_directories = save_directories
@@ -152,12 +157,15 @@ class ServerLifecycle:
             pgid=settings.pgid,
         )
         self._active_manifest = active_manifest
+        self._wake_source_factory = wake_source_factory
         self._request: ExitRequest | None = None
         self._stop_event = threading.Event()
         self._shutdown_event = shutdown_event if shutdown_event is not None else threading.Event()
         self._restart_request = RestartRequest()
         self._restart_manifest: ManifestRecord | None = None
         self._restart_requested = False
+        self._recovery_restart = threading.Event()
+        self._recovery_restart_requested = False
         self._rollback_event = threading.Event()
         self._rollback_requested = False
         self._pause_gate = PauseGate()
@@ -190,6 +198,13 @@ class ServerLifecycle:
     @property
     def restart_manifest(self) -> ManifestRecord | None:
         return self._restart_manifest
+
+    @property
+    def recovery_restart_requested(self) -> bool:
+        return self._recovery_restart_requested
+
+    def request_recovery_restart(self) -> None:
+        self._recovery_restart.set()
 
     @property
     def rollback_requested(self) -> bool:
@@ -269,7 +284,12 @@ class ServerLifecycle:
         endpoint = config.generated_query_endpoint()
         saves_dir = self._save_directories.saves_dir
         a2s = A2SProbe(UdpA2STransport(endpoint)) if endpoint is not None else None
-        wake_source = build_wake_source(endpoint)
+        deny_list = self._settings.auto_pause_wake_deny_sources
+        wake_source = self._wake_source_factory(
+            endpoint,
+            deny_sources=deny_list.networks,
+            deny_configured=deny_list.configured,
+        )
         return AutoPauseController(
             settings=self._settings,
             tracker=tracker,
@@ -282,6 +302,7 @@ class ServerLifecycle:
             wake_source=wake_source,
             pause_gate=self._pause_gate,
             stream_healthy=stream_thread.is_alive,
+            request_recovery_restart=self.request_recovery_restart,
         )
 
     def _install_signal_handlers(self) -> None:
@@ -302,6 +323,10 @@ class ServerLifecycle:
                     break
             if self._rollback_event.is_set():
                 self._accept_rollback_request()
+                if self._request is not None:
+                    break
+            if self._recovery_restart.is_set() and process_handle.poll() is None:
+                self._accept_recovery_restart()
                 if self._request is not None:
                     break
             if process_handle.poll() is not None:
@@ -329,6 +354,12 @@ class ServerLifecycle:
         if self._request is None:
             self._request = ExitRequest(Trigger.ROLLBACK, 0)
 
+    def _accept_recovery_restart(self) -> None:
+        self._recovery_restart.clear()
+        self._recovery_restart_requested = True
+        if self._request is None:
+            self._request = ExitRequest(Trigger.RECOVERY, 0)
+
     def _finish(self, process_handle: ServerProcess | None) -> int:
         if self._finished:
             return self._exit_code
@@ -353,6 +384,9 @@ class ServerLifecycle:
             self._rollback_requested = False
             self._restart_requested = False
             self._restart_manifest = None
+            self._exit_code = 1
+        if request.trigger is Trigger.RECOVERY and process_handle is not None and process_handle.poll() is None:
+            self._recovery_restart_requested = False
             self._exit_code = 1
         if self._stream_thread is not None:
             self._stream_thread.join(timeout=5)

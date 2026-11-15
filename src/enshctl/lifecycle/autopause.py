@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+from itertools import pairwise
 from time import monotonic
 from typing import TYPE_CHECKING, Protocol
 
@@ -30,6 +31,9 @@ SAVE_WAIT_TIMEOUT = 60.0
 SAVE_SETTLE_TIME = 2.0
 A2S_WARNING_INTERVAL = 5 * 60.0
 VETO_WARNING_INTERVAL = 60.0
+WAKE_SOURCE_RECHECK_INTERVAL = 60.0
+SESSION_FAILURE_WINDOW = 60.0
+SESSION_FAILURE_LIMIT = 2
 
 DISABLED = "disabled"
 WAITING_FOR_READY = "waiting-for-ready"
@@ -69,6 +73,7 @@ class AutoPauseController:
         wake_source: WakeSource,
         pause_gate: PauseGate,
         stream_healthy: Callable[[], bool],
+        request_recovery_restart: Callable[[], None],
         clock: Callable[[], float] = monotonic,
         wall_clock: Callable[[], float] = time.time,
         wait: Callable[[threading.Event, float], bool] | None = None,
@@ -86,6 +91,7 @@ class AutoPauseController:
         self._wake_source = wake_source
         self._pause_gate = pause_gate
         self._stream_healthy = stream_healthy
+        self._request_recovery_restart = request_recovery_restart
         self._clock = clock
         self._wall_clock = wall_clock
         self._wait = wait or (lambda event, timeout: event.wait(timeout))
@@ -104,12 +110,17 @@ class AutoPauseController:
         self._last_result: str | None = None
         self._a2s_state = "unknown"
         self._a2s_warned_at: float | None = None
+        self._wake_source_checked_at: float | None = None
+        self._wake_source_ready = True
+        self._wake_deny_invalid_logged = False
         self._last_status_at = 0.0
         self._last_veto_reason: str | None = None
         self._last_veto_at = 0.0
         self._quiescent_signature: SaveSignature | None = None
         self._save_activity_generation = 0
         self._pending_join_expired_at: float | None = None
+        self._wake_guard_armed_at: float | None = None
+        self._wake_guard_join_generation = 0
 
     @property
     def state(self) -> str:
@@ -126,6 +137,7 @@ class AutoPauseController:
         """Set the stop latch and join the controller without resuming here."""
         with self._lock:
             self._latch.set()
+            self._disarm_wake_guard()
         self._wake_source.close()
         if self._thread is not None:
             self._thread.join(timeout=STOP_JOIN_TIMEOUT)
@@ -135,6 +147,7 @@ class AutoPauseController:
         try:
             with self._lock:
                 self._state = STOPPING
+                self._disarm_wake_guard()
                 self._wake_source.close()
                 if not self._process_control.resume_all():
                     self._state = PAUSED
@@ -187,6 +200,7 @@ class AutoPauseController:
             self._expire_evidence(now)
             self._observe_pending_join()
             self._observe_session()
+            self._evaluate_wake_guard()
             self._handle_request(now)
             tick_started = self._clock()
             self._tick(now)
@@ -199,11 +213,13 @@ class AutoPauseController:
 
     def _handle_disabled(self) -> None:
         if self._run_disabled:
+            self._disarm_wake_guard()
             self._transition(DISABLED)
             return
         if self._control_files.is_disabled():
-            if self._state == PAUSED and not self._resume("disabled marker"):
+            if self._state == PAUSED and not self._resume("disabled marker", arm_guard=False):
                 return
+            self._disarm_wake_guard()
             self._transition(DISABLED)
             return
         if self._state == DISABLED:
@@ -261,19 +277,19 @@ class AutoPauseController:
 
     def _tick_paused(self) -> None:
         if not self._stream_healthy():
-            if not self._resume("stdout stream ended"):
+            if not self._resume("stdout stream ended", arm_guard=False):
                 return
             self._run_disabled = True
             self._transition(DISABLED)
             return
         if self._control_files.is_disabled():
-            if not self._resume("disabled marker"):
+            if not self._resume("disabled marker", arm_guard=False):
                 return
             self._transition(DISABLED)
             return
         event = self._wake_source.wait(self._stop_event, TICK_INTERVAL)
         if event is not None:
-            self._resume(f"wake {event.classification} from {event.source}")
+            self._resume(f"wake {event.classification} from {event.source}", arm_guard=True)
         self._write_status()
 
     def _handle_request(self, now: float) -> None:
@@ -291,7 +307,7 @@ class AutoPauseController:
                 self._last_result = "applied" if paused else "refused"
         elif request.action == "resume":
             if self._state == PAUSED:
-                self._last_result = "applied" if self._resume("resume request") else "refused"
+                self._last_result = "applied" if self._resume("resume request", arm_guard=True) else "refused"
             else:
                 self._last_activity_at = now
                 self._last_result = "applied"
@@ -318,6 +334,8 @@ class AutoPauseController:
             self._a2s_state = "unavailable"
             self._log_veto("query endpoint unavailable")
             return False
+        if not self._wake_source_available():
+            return False
         if not self._pause_gate.try_quiet():
             self._log_veto("background work in progress")
             return False
@@ -332,7 +350,9 @@ class AutoPauseController:
                 self._write_status(force=True)
                 return False
             if not self._wake_source.arm():
-                self._log_veto("wake source unavailable")
+                self._wake_source_checked_at = None
+                self._wake_source_ready = False
+                self._log_veto(self._wake_source_veto())
                 self._state = ACTIVE
                 self._write_status(force=True)
                 return False
@@ -367,6 +387,7 @@ class AutoPauseController:
                 self._transition(ACTIVE)
                 return False
             self._state = PAUSED
+            self._disarm_wake_guard()
             self._control_files.set_paused()
             self._paused_since = self._wall_clock()
             self._last_activity_at = self._clock()
@@ -374,8 +395,10 @@ class AutoPauseController:
             self._write_status(force=True)
             return True
 
-    def _resume(self, reason: str) -> bool:
+    def _resume(self, reason: str, *, arm_guard: bool) -> bool:
         with self._lock:
+            guard_started_at = self._clock()
+            guard_join_generation = self._tracker.snapshot().completed_join_generation
             if not self._process_control.resume_all():
                 self._last_error = "resume verification failed"
                 self._state = PAUSED
@@ -389,6 +412,10 @@ class AutoPauseController:
                 logger.error("Auto Pause: could not remove the paused marker")
             self._paused_since = None
             self._state = DISABLED if self._control_files.is_disabled() else ACTIVE
+            if arm_guard and self._state == ACTIVE:
+                self._arm_wake_guard(started_at=guard_started_at, join_generation=guard_join_generation)
+            else:
+                self._disarm_wake_guard()
             self._last_activity_at = self._clock()
             logger.info("Auto Pause: resumed (%s)", reason)
             self._write_status(force=True)
@@ -404,6 +431,68 @@ class AutoPauseController:
 
     def _pending_join(self, snapshot: PresenceSnapshot, now: float) -> bool:
         return snapshot.pending_join_until is not None and now < snapshot.pending_join_until
+
+    def _wake_source_available(self) -> bool:
+        deny_list = self._settings.auto_pause_wake_deny_sources
+        if deny_list.configured and not deny_list.networks and not self._wake_deny_invalid_logged:
+            self._wake_deny_invalid_logged = True
+            logger.error("Auto Pause: wake deny list has no valid entries; pauses will be refused")
+        now = self._clock()
+        if (
+            self._wake_source_checked_at is not None
+            and now - self._wake_source_checked_at < WAKE_SOURCE_RECHECK_INTERVAL
+        ):
+            if self._wake_source_ready:
+                return True
+            self._log_veto(self._wake_source_veto())
+            return False
+        self._wake_source_checked_at = now
+        self._wake_source_ready = self._wake_source.can_arm()
+        if self._wake_source_ready:
+            return True
+        self._log_veto(self._wake_source_veto())
+        return False
+
+    def _wake_source_veto(self) -> str:
+        deny_list = self._settings.auto_pause_wake_deny_sources
+        if deny_list.configured and not deny_list.networks:
+            return "wake deny list has no valid entries"
+        if deny_list.configured:
+            return (
+                "wake source unavailable; packet capture is required for the wake deny list "
+                "and queue polling cannot enforce it"
+            )
+        return "wake source unavailable"
+
+    def _arm_wake_guard(self, *, started_at: float, join_generation: int) -> None:
+        self._wake_guard_armed_at = started_at
+        self._wake_guard_join_generation = join_generation
+
+    def _disarm_wake_guard(self) -> None:
+        self._wake_guard_armed_at = None
+
+    def _evaluate_wake_guard(self) -> None:
+        armed_at = self._wake_guard_armed_at
+        if armed_at is None or self._state != ACTIVE:
+            return
+        if self._stop_event.is_set() or self._latch.is_set() or not self._stream_healthy():
+            self._disarm_wake_guard()
+            return
+        snapshot = self._tracker.snapshot()
+        if snapshot.completed_join_generation > self._wake_guard_join_generation:
+            self._disarm_wake_guard()
+            return
+        recent = [failed_at for failed_at in snapshot.session_failure_times if failed_at >= armed_at]
+        if len(recent) < SESSION_FAILURE_LIMIT:
+            return
+        if not any(later - earlier <= SESSION_FAILURE_WINDOW for earlier, later in pairwise(recent)):
+            return
+        self._disarm_wake_guard()
+        logger.warning("Auto Pause: requesting a recovery restart after repeated session errors (4003)")
+        self._state = STOPPING
+        self._latch.set()
+        self._write_status(force=True)
+        self._request_recovery_restart()
 
     def _probe_a2s(self) -> bool:
         if self._a2s is None:
