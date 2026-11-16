@@ -97,7 +97,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
 - **ntsync**: Can improve game server performance by accurately emulating Windows synchronization primitives. Requires a host with kernel 6.14+, the ntsync module loaded, and mounting `/dev/ntsync` into the container.
 - **Resource polling**: Periodically logs CPU% and RSS for the orchestrator and game server process tree. Set `RESOURCE_POLL_INTERVAL` (default 60s) to control the interval.
-- **Player presence**: Derives the connected-player roster from server output and logs joins, leaves, and a periodic summary. Set `PLAYER_LOG=false` to silence roster lines.
+- **Player presence**: Derives the connected-player roster from server output and logs joins, leaves, and a periodic summary. Set `PLAYER_LOG_ENABLED=false` to silence roster lines.
 - **Auto Pause**: Optionally suspends the server after an idle period and resumes on client traffic. Set `AUTO_PAUSE_ENABLED=true` to opt in. It saves CPU, not memory; a paused server may leave the Steam browser until a direct-IP query wakes it.
 
 ## Environment Variables
@@ -115,7 +115,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 Auto Update is enabled by default and only runs when `VERSION` is `latest`, empty, or unset. It checks for a
 newer Manifest on a minute-level cron and logs a warning on every scheduled check while an update is
 pending. By default it downloads the new Manifest immediately and restarts the server as soon as
-the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD` is true, and
+the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD_ENABLED` is true, and
 a paused server is resumed first. Pinned versions never check.
 
 | Variable                               | Default        | Description                                           |
@@ -143,17 +143,17 @@ Download fails with a warning and the running server stays put.
 <details>
     <summary>Click to expand</summary>
 
-| Variable           | Default                                      | Description                                                               |
-| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------- |
-| `BACKUP_CRON`      | `*/60 * * * *`                               | Cron schedule for backups                                                 |
-| `BACKUP_FORMAT`    | `zstd`                                       | Compression format: `zstd`, `gzip`, or `zip`                              |
-| `BACKUP_LEVEL`     | format default                               | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
-| `BACKUP_KEEP_LAST` | `24`                                         | Number of recent backups to keep (`-1` = keep all)                        |
-| `BACKUP_LIVE`      | `true`                                       | Enable scheduled backups                                                  |
-| `BACKUP_COLD`      | `true`                                       | Enable graceful-shutdown and update-restart backups                       |
-| `BACKUP_EMERGENCY` | `true`                                       | Enable crash-triggered backups                                            |
-| `BACKUP_EXCLUDE`   | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs to exclude; blank disables             |
-| `BACKUP_DIR`       | `/data/backups`                              | Backup destination                                                        |
+| Variable                   | Default                                      | Description                                                               |
+| -------------------------- | -------------------------------------------- | ------------------------------------------------------------------------- |
+| `BACKUP_CRON`              | `*/60 * * * *`                               | Cron schedule for backups                                                 |
+| `BACKUP_FORMAT`            | `zstd`                                       | Compression format: `zstd`, `gzip`, or `zip`                              |
+| `BACKUP_LEVEL`             | format default                               | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
+| `BACKUP_KEEP_LAST`         | `24`                                         | Number of recent backups to keep (`-1` = keep all)                        |
+| `BACKUP_LIVE_ENABLED`      | `true`                                       | Enable scheduled backups                                                  |
+| `BACKUP_COLD_ENABLED`      | `true`                                       | Enable graceful-shutdown and update-restart backups                       |
+| `BACKUP_EMERGENCY_ENABLED` | `true`                                       | Enable crash-triggered backups                                            |
+| `BACKUP_EXCLUDE`           | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs to exclude; blank disables             |
+| `BACKUP_DIR`               | `/data/backups`                              | Backup destination                                                        |
 
 </details>
 
@@ -178,12 +178,15 @@ Auto Rollback restores a pinned Backup on every container start and on a wall-cl
 
 ### Monitoring
 
-| Variable                 | Default | Description                                                                     |
-| ------------------------ | ------- | ------------------------------------------------------------------------------- |
-| `RESOURCE_POLL_INTERVAL` | `60`    | Seconds between CPU/memory polls (0 = disable)                                  |
-| `PLAYER_LOG`             | `true`  | Log player joins, leaves, and roster summaries                                  |
-| `PLAYER_POLL_INTERVAL`   | `60`    | Seconds between roster summaries (0 = summaries off; joins/leaves still logged) |
-| `LOG_TAIL`               | `false` | Tail server log to container stdout                                             |
+| Variable                   | Default                       | Description                                                                     |
+| -------------------------- | ----------------------------- | ------------------------------------------------------------------------------- |
+| `RESOURCE_POLL_INTERVAL`   | `60`                          | Seconds between CPU/memory polls (0 = disable)                                  |
+| `PLAYER_LOG_ENABLED`       | `true`                        | Log player joins, leaves, and roster summaries                                  |
+| `PLAYER_POLL_INTERVAL`     | `60`                          | Seconds between roster summaries (0 = summaries off; joins/leaves still logged) |
+| `LOG_TAIL_ENABLED`         | `false`                       | Tail server log to container stdout                                             |
+| `ORCHESTRATOR_LOG_ENABLED` | `false`                       | Write orchestrator logs to a file                                               |
+| `ORCHESTRATOR_LOG_FILE`    | `/data/logs/orchestrator.log` | Log file path; ignored while file logging is disabled                           |
+| `ORCHESTRATOR_LOG_LEVEL`   | `WARNING`                     | Minimum level written to the file                                               |
 
 ### Auto Pause
 

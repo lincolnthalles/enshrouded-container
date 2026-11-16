@@ -8,7 +8,7 @@ container after a clean exit. We keep the container process alive, stop the game
 tree from the new Manifest install, and launch a new server process in the same container. The
 update is enabled by default for latest-tracking deployments, checks hourly, downloads eagerly, and
 restarts only when the empty-server gate is clear. A cold backup runs before the restart when
-`BACKUP_COLD` is true.
+`BACKUP_COLD_ENABLED` is true.
 
 ## Considered Options
 

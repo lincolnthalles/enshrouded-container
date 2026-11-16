@@ -162,7 +162,7 @@ def test_run_backup_forwards_settings_env() -> None:
         "PERSIST_FILES": "world.db",
         "WINEARCH": "win64",
         "STEAM_PASSWORD": "s3cret",
-        "ORCHESTRATOR_LOG_FILE": "yes",
+        "ORCHESTRATOR_LOG_ENABLED": "true",
         "UNRELATED_SECRET": "nope",
     }
     with patch.object(lifecycle_backup.subprocess, "run") as mock_run:
@@ -176,7 +176,7 @@ def test_run_backup_forwards_settings_env() -> None:
     assert env["BACKUP_KEEP_LAST"] == "7"
     assert env["PUID"] == "1001"
     assert env["PGID"] == "1002"
-    assert "ORCHESTRATOR_LOG_FILE" not in env
+    assert "ORCHESTRATOR_LOG_ENABLED" not in env
     assert "BACKUP_FUTURE_UNKNOWN" not in env
     assert "PERSIST_FILES" not in env
     assert "WINEARCH" not in env

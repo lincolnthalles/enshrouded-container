@@ -1,9 +1,15 @@
 """Tests for the CLI dispatcher's single exit."""
 
+import logging
+from typing import TYPE_CHECKING
+
 import pytest
 from enshctl import __main__ as entrypoint
 from enshctl.download.types import InstallError
 from enshctl.settings import AppSettings
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_main_exits_with_command_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,3 +156,54 @@ def test_main_exits_one_on_install_error(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
     assert exc_info.value.code == 1
+
+
+def test_main_rejects_file_logging_without_a_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    # GIVEN file logging enabled with an empty path
+    monkeypatch.setattr("sys.argv", ["enshctl", "start"])
+    monkeypatch.setattr(entrypoint, "COMMANDS", {"start": lambda _settings, _argv: 0})
+    monkeypatch.setattr(
+        entrypoint,
+        "load_settings",
+        lambda: AppSettings(orchestrator_log_enabled=True, orchestrator_log_file=""),
+    )
+
+    # WHEN the entrypoint runs
+    # THEN it exits 1 before dispatch
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+    assert exc_info.value.code == 1
+
+
+def test_main_writes_orchestrator_log_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # GIVEN file logging enabled with a writable path
+    log_path = tmp_path / "orchestrator.log"
+
+    def command(_settings: AppSettings | None, _argv: list[str]) -> int:
+        logging.getLogger("test").warning("file logging works")
+        return 0
+
+    monkeypatch.setattr("sys.argv", ["enshctl", "start"])
+    monkeypatch.setattr(entrypoint, "COMMANDS", {"start": command})
+    monkeypatch.setattr(
+        entrypoint,
+        "load_settings",
+        lambda: AppSettings(orchestrator_log_enabled=True, orchestrator_log_file=str(log_path)),
+    )
+    root = logging.getLogger()
+    handlers_before = set(root.handlers)
+
+    # WHEN the entrypoint runs
+    exc_info: pytest.ExceptionInfo[SystemExit] | None = None
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            entrypoint.main()
+    finally:
+        for handler in set(root.handlers) - handlers_before:
+            root.removeHandler(handler)
+            handler.close()
+
+    # THEN the warning reaches the configured file
+    assert exc_info is not None
+    assert exc_info.value.code == 0
+    assert "file logging works" in log_path.read_text()

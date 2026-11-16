@@ -45,11 +45,11 @@ When ALL `BACKUP_KEEP_*` are `0`, pruning is skipped entirely — nothing is del
 
 ### Enable/disable
 
-| Env var            | Default | Description                                      |
-| ------------------ | ------- | ------------------------------------------------ |
-| `BACKUP_LIVE`      | `1`     | Enable scheduled live backups                    |
-| `BACKUP_COLD`      | `1`     | Enable cold backup on shutdown or update restart |
-| `BACKUP_EMERGENCY` | `1`     | Enable emergency backup on unexpected exit       |
+| Env var                    | Default | Description                                      |
+| -------------------------- | ------- | ------------------------------------------------ |
+| `BACKUP_LIVE_ENABLED`      | `1`     | Enable scheduled live backups                    |
+| `BACKUP_COLD_ENABLED`      | `1`     | Enable cold backup on shutdown or update restart |
+| `BACKUP_EMERGENCY_ENABLED` | `1`     | Enable emergency backup on unexpected exit       |
 
 Boolean values: `1`/`true`/`on`/`yes` = enabled, `0`/`false`/`off`/`no` = disabled (case-insensitive).
 

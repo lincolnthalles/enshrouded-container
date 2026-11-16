@@ -26,6 +26,7 @@ services:
       VERSION: "latest"
       TZ: America/Sao_Paulo
 
+      ORCHESTRATOR_LOG_ENABLED: 1
       ORCHESTRATOR_LOG_FILE: /data/logs/orchestrator.log
       ORCHESTRATOR_LOG_LEVEL: WARNING
 
@@ -38,7 +39,7 @@ services:
       # BACKUP_KEEP_YEARLY: 1
       BACKUP_FORMAT: zstd
       BACKUP_LEVEL: 6
-      BACKUP_COLD: 1
+      BACKUP_COLD_ENABLED: 1
 
       ROLLBACK_ENABLED: true
       ROLLBACK_FILE: enshrouded-20261111-033441-cold.tar.zst

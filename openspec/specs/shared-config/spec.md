@@ -45,9 +45,32 @@ All environment-derived configuration SHALL flow through a single frozen setting
 - **WHEN** a test needs custom settings
 - **THEN** it SHALL construct a settings object directly with test values, without modifying process environment
 
+### Requirement: Boolean environment variable shape
+
+enshctl-owned boolean environment variables SHALL use one of two shapes. A variable naming a
+capability, output, or scheduled trigger SHALL end in `_ENABLED`. A variable naming an action or
+policy SHALL be a bare assertion and SHALL NOT end in `_ENABLED`. A path, list, number, or text
+variable SHALL NOT accept a boolean literal as a special value. The `ENSHROUDED_*` namespace and
+variables owned by another ecosystem are exempt.
+
+#### Scenario: Capability gate
+
+- **WHEN** a setting enables a capability, output, or scheduled trigger
+- **THEN** its environment variable SHALL end in `_ENABLED`
+
+#### Scenario: Action or policy
+
+- **WHEN** a boolean setting forces an action or selects a policy
+- **THEN** its environment variable SHALL be the bare assertion and SHALL NOT end in `_ENABLED`
+
+#### Scenario: Non-boolean setting
+
+- **WHEN** a setting holds a path, list, number, or text
+- **THEN** its environment variable SHALL NOT treat a boolean literal as a special value
+
 ### Requirement: Settings cross the backup subprocess seam
 
-Across the backup subprocess seam, the child SHALL observe the same declared settings-bearing `BACKUP_*`, `PUID`, and `PGID` values the parent configured. The parent SHALL forward those declared settings-bearing environment keys (plus the base allowlist) so the child reloads identical backup settings from its inherited environment rather than receiving them over IPC. Keys the backup path never consumes (`MANIFESTHUB_*`, `STEAM_*`, `LOG_TAIL`, `WINE*`, `PERSIST_FILES`) and undeclared `BACKUP_*` keys are not forwarded.
+Across the backup subprocess seam, the child SHALL observe the same declared settings-bearing `BACKUP_*`, `PUID`, and `PGID` values the parent configured. The parent SHALL forward those declared settings-bearing environment keys (plus the base allowlist) so the child reloads identical backup settings from its inherited environment rather than receiving them over IPC. Keys the backup path never consumes (`MANIFESTHUB_*`, `STEAM_*`, `LOG_TAIL_ENABLED`, `WINE*`, `PERSIST_FILES`) and undeclared `BACKUP_*` keys are not forwarded.
 
 #### Scenario: Reload across the backup subprocess seam
 

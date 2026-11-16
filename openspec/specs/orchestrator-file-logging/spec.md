@@ -6,22 +6,43 @@ Opt-in orchestrator file logging with game server output filtered out.
 
 ### Requirement: Orchestrator file logging
 
-When a log file path is configured, orchestrator logs at or above the configured file log level (default WARNING) SHALL be written there in the same format as the console, with game server output excluded. The log file SHALL rotate at 5 MB keeping one backup. The parent directory SHALL be created automatically. A value of `true` SHALL resolve to `/data/logs/orchestrator.log`. The backup child process SHALL NOT write to the file directly (its output reaches the file only via the parent relay when admitted by the level). Without configuration, behavior SHALL be unchanged.
+When `ORCHESTRATOR_LOG_ENABLED` is true, orchestrator logs at or above `ORCHESTRATOR_LOG_LEVEL`
+(default `WARNING`) SHALL be written to `ORCHESTRATOR_LOG_FILE` (default
+`/data/logs/orchestrator.log`) in the same format as the console, with game server output excluded.
+The log file SHALL rotate at 5 MB keeping one backup. The parent directory SHALL be created
+automatically. The backup child process SHALL NOT write to the file directly (its output reaches the
+file only via the parent relay when admitted by the level). When `ORCHESTRATOR_LOG_ENABLED` is false
+or unset, no file output SHALL be added and behavior SHALL be unchanged.
 
 #### Scenario: File logging enabled
 
-- **WHEN** a log file path is configured and the container starts
-- **THEN** orchestrator logs at or above the file log level SHALL be written there, excluding game server output
+- **WHEN** `ORCHESTRATOR_LOG_ENABLED=true` and the container starts
+- **THEN** orchestrator logs at or above `ORCHESTRATOR_LOG_LEVEL` SHALL be written to `ORCHESTRATOR_LOG_FILE`, excluding game server output
+
+#### Scenario: Default log file path
+
+- **WHEN** `ORCHESTRATOR_LOG_ENABLED=true` and `ORCHESTRATOR_LOG_FILE` is unset
+- **THEN** the log file SHALL be `/data/logs/orchestrator.log`
+
+#### Scenario: Custom log file path
+
+- **WHEN** `ORCHESTRATOR_LOG_ENABLED=true` and `ORCHESTRATOR_LOG_FILE` names another path
+- **THEN** the log file SHALL be written at that path
 
 #### Scenario: File logging filters below level
 
-- **WHEN** the file log level is at its default and the orchestrator emits INFO records
+- **WHEN** `ORCHESTRATOR_LOG_LEVEL` is at its default and the orchestrator emits INFO records
 - **THEN** those records SHALL appear on the console but NOT in the log file
 
 #### Scenario: File logging disabled by default
 
-- **WHEN** no log file is configured
+- **WHEN** `ORCHESTRATOR_LOG_ENABLED` is false or unset
 - **THEN** no file output SHALL be added and behavior SHALL be unchanged
+
+#### Scenario: Missing file path fails fast
+
+- **WHEN** `ORCHESTRATOR_LOG_ENABLED=true` and `ORCHESTRATOR_LOG_FILE` is explicitly empty
+- **THEN** the entrypoint SHALL exit non-zero with an error naming `ORCHESTRATOR_LOG_FILE`
 
 #### Scenario: Log rotation at 5 MB
 
@@ -35,10 +56,5 @@ When a log file path is configured, orchestrator logs at or above the configured
 
 #### Scenario: Parent directory created
 
-- **WHEN** a log file path is configured and its parent directory does not exist
+- **WHEN** file logging is enabled and the configured file's parent directory does not exist
 - **THEN** the directory SHALL be created automatically
-
-#### Scenario: True resolves to default path
-
-- **WHEN** the log file setting is `true`
-- **THEN** orchestrator logs SHALL be written to `/data/logs/orchestrator.log`

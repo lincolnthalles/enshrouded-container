@@ -21,7 +21,7 @@ The container SHALL run periodic Backups of the saves directory (see `save-manag
 
 #### Scenario: Live backups disabled
 
-- **WHEN** `BACKUP_LIVE` disables live backups
+- **WHEN** `BACKUP_LIVE_ENABLED=false`
 - **THEN** no scheduler SHALL run and no scheduled backups SHALL be triggered
 
 #### Scenario: Rollback suppresses the scheduler
@@ -130,21 +130,21 @@ Backups SHALL exclude Save directory members matching the `BACKUP_EXCLUDE` env v
 When the container receives SIGTERM or SIGINT, the shutdown sequence SHALL be: stop the scheduler,
 stop Auto Pause from starting a new pause, resume a paused tree (see `paused-tree-resumed-before-exit`),
 send SIGINT to the server and wait up to `SHUTDOWN_TIMEOUT` (default 60s) for it to exit
-(force-killing after the timeout), create a detached cold backup when `BACKUP_COLD=1` and save data
+(force-killing after the timeout), create a detached cold backup when `BACKUP_COLD_ENABLED=1` and save data
 exists after any in-progress backup completes (waiting up to `SHUTDOWN_BACKUP_WAIT`, default 120s;
 see `backup-subprocess` for lock-wait and skip behavior) but BEFORE Wine server cleanup, then clean
 up Wine, clear the PID file, and exit 0. While auto rollback is enabled, no cold backup SHALL be created (see `auto-rollback`).
 
 #### Scenario: Cold backup on shutdown
 
-- **WHEN** the container receives SIGTERM with `BACKUP_COLD=1` and save data present
+- **WHEN** the container receives SIGTERM with `BACKUP_COLD_ENABLED=1` and save data present
 - **THEN** a detached cold Backup SHALL be created after the server exits and before Wine cleanup,
   surviving the parent's process group
 - **AND** the PID file SHALL be cleared before the entrypoint exits 0
 
 #### Scenario: Cold backup disabled or no saves
 
-- **WHEN** the container receives SIGTERM with `BACKUP_COLD=0`, or with no save data present
+- **WHEN** the container receives SIGTERM with `BACKUP_COLD_ENABLED=0`, or with no save data present
 - **THEN** no cold Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the
   entrypoint SHALL exit cleanly
 
@@ -255,7 +255,7 @@ Backup filenames SHALL follow the pattern `enshrouded-YYYYMMDD-HHMMSS[-cold|-eme
 
 ### Requirement: Emergency backup on crash
 
-When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before Wine cleanup and PID clear, then exit with the server's exit code. While auto rollback is enabled, no emergency backup SHALL be created (see `auto-rollback`).
+When the game server exits unexpectedly (not shutdown-initiated) and emergency backups are enabled (`BACKUP_EMERGENCY_ENABLED=1`) and saves exist, the entrypoint SHALL create a detached emergency backup (see `backup-subprocess` for execution behavior) before Wine cleanup and PID clear, then exit with the server's exit code. While auto rollback is enabled, no emergency backup SHALL be created (see `auto-rollback`).
 
 #### Scenario: Emergency backup spawned
 
@@ -264,7 +264,7 @@ When the game server exits unexpectedly (not shutdown-initiated) and emergency b
 
 #### Scenario: Emergency backup skipped
 
-- **WHEN** the game server exits unexpectedly with `BACKUP_EMERGENCY=0`, or with no save data present
+- **WHEN** the game server exits unexpectedly with `BACKUP_EMERGENCY_ENABLED=0`, or with no save data present
 - **THEN** no emergency Backup SHALL be created; Wine cleanup and PID clear SHALL still run and the entrypoint SHALL exit with the server's code
 
 #### Scenario: Rollback suppresses the emergency backup

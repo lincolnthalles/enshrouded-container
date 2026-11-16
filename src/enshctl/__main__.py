@@ -50,7 +50,7 @@ def main() -> None:
         "--log-tail",
         action="store_true",
         default=False,
-        help="Also tail the game's log file to stdout (env: LOG_TAIL)",
+        help="Also tail the game's log file to stdout (env: LOG_TAIL_ENABLED)",
     )
     parser.add_argument(
         "--api-token",
@@ -77,11 +77,11 @@ def main() -> None:
         manifesthub_api_url=normalize_api_url(args.api_url) or base.manifesthub_api_url,
         depot_keys_repo=args.depot_keys_repo or base.depot_keys_repo,
     )
-    if settings.orchestrator_log_file:
-        log_file = settings.orchestrator_log_file
-        if log_file.lower() == "true":
-            log_file = "/data/logs/orchestrator.log"
-        log_path = Path(log_file)
+    if settings.orchestrator_log_enabled:
+        if not settings.orchestrator_log_file:
+            logger.error("ORCHESTRATOR_LOG_FILE must name a file when ORCHESTRATOR_LOG_ENABLED is true")
+            sys.exit(1)
+        log_path = Path(settings.orchestrator_log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             str(log_path),

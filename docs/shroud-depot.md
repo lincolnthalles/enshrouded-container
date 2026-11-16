@@ -27,7 +27,7 @@ an empty saves directory, or move the existing world aside first.
 
 ## 3. Create the cold backup
 
-For this first run, leave `ROLLBACK_ENABLED` unset or set it to `false`. Leave `BACKUP_COLD`
+For this first run, leave `ROLLBACK_ENABLED` unset or set it to `false`. Leave `BACKUP_COLD_ENABLED`
 enabled (the default). Start the server:
 
 ```bash

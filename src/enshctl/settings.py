@@ -147,9 +147,9 @@ class AppSettings:
     backup_cron: str = _env_field("*/60 * * * *", "BACKUP_CRON", _parse_str)
     backup_min_free_warn: int = _env_field(2 * 1024**3, "BACKUP_MIN_FREE_SPACE_WARN", _parse_int)
     backup_min_free_stop: int = _env_field(1 * 1024**3, "BACKUP_MIN_FREE_SPACE_STOP", _parse_int)
-    backup_live: bool = _env_field(default=True, key="BACKUP_LIVE", parse=_parse_bool)
-    backup_cold: bool = _env_field(default=True, key="BACKUP_COLD", parse=_parse_bool)
-    backup_emergency: bool = _env_field(default=True, key="BACKUP_EMERGENCY", parse=_parse_bool)
+    backup_live: bool = _env_field(default=True, key="BACKUP_LIVE_ENABLED", parse=_parse_bool)
+    backup_cold: bool = _env_field(default=True, key="BACKUP_COLD_ENABLED", parse=_parse_bool)
+    backup_emergency: bool = _env_field(default=True, key="BACKUP_EMERGENCY_ENABLED", parse=_parse_bool)
     backup_exclude: str = _env_field("migrated/**;backup/world0.ksd.backup-[1-9]", "BACKUP_EXCLUDE", _parse_str)
 
     # Auto Rollback
@@ -158,9 +158,9 @@ class AppSettings:
     rollback_cron: str = _env_field("", "ROLLBACK_CRON", _parse_str)
 
     # Logging / monitoring
-    log_tail: bool = _env_field(default=False, key="LOG_TAIL", parse=_parse_bool)
+    log_tail: bool = _env_field(default=False, key="LOG_TAIL_ENABLED", parse=_parse_bool)
     resource_poll_interval: int = _env_field(60, "RESOURCE_POLL_INTERVAL", _parse_int)
-    player_log: bool = _env_field(default=True, key="PLAYER_LOG", parse=_parse_bool)
+    player_log: bool = _env_field(default=True, key="PLAYER_LOG_ENABLED", parse=_parse_bool)
     player_poll_interval: int = _env_field(60, "PLAYER_POLL_INTERVAL", _parse_non_negative_int)
 
     # Auto Pause
@@ -176,7 +176,8 @@ class AppSettings:
     shutdown_backup_wait: int = _env_field(120, "SHUTDOWN_BACKUP_WAIT", _parse_non_negative_int)
 
     # Orchestrator logging
-    orchestrator_log_file: str = _env_field("", "ORCHESTRATOR_LOG_FILE", _parse_str)
+    orchestrator_log_enabled: bool = _env_field(default=False, key="ORCHESTRATOR_LOG_ENABLED", parse=_parse_bool)
+    orchestrator_log_file: str = _env_field("/data/logs/orchestrator.log", "ORCHESTRATOR_LOG_FILE", _parse_str)
     orchestrator_log_level: str = _env_field("WARNING", "ORCHESTRATOR_LOG_LEVEL", _parse_str)
 
     # Wine / runtime

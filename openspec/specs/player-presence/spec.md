@@ -223,19 +223,19 @@ a name assignment, and SHALL log a warning.
 
 ### Requirement: Player output controls
 
-`PLAYER_LOG` SHALL default to true and SHALL suppress all player roster lines when false.
+`PLAYER_LOG_ENABLED` SHALL default to true and SHALL suppress all player roster lines when false.
 `PLAYER_POLL_INTERVAL` SHALL default to 60 seconds and SHALL accept integers. A negative value
 SHALL clamp to 0; a non-integer value SHALL fall back to 60. `PLAYER_POLL_INTERVAL=0` SHALL
-suppress only the periodic summary; join and leave lines SHALL continue when `PLAYER_LOG` is true.
+suppress only the periodic summary; join and leave lines SHALL continue when `PLAYER_LOG_ENABLED` is true.
 
 #### Scenario: Output disabled
 
-- **WHEN** `PLAYER_LOG=false`
+- **WHEN** `PLAYER_LOG_ENABLED=false`
 - **THEN** no `Player joined`, `Player left`, or `Players online` lines are logged
 
 #### Scenario: Summary disabled
 
-- **WHEN** `PLAYER_LOG=true` and `PLAYER_POLL_INTERVAL=0`
+- **WHEN** `PLAYER_LOG_ENABLED=true` and `PLAYER_POLL_INTERVAL=0`
 - **THEN** no `Players online` summary is logged
 - **AND** join and leave lines are still logged
 
@@ -249,7 +249,7 @@ suppress only the periodic summary; join and leave lines SHALL continue when `PL
 
 - **WHEN** `PLAYER_POLL_INTERVAL` is negative
 - **THEN** no `Players online` summary is logged
-- **AND** join and leave lines are still logged when `PLAYER_LOG` is true
+- **AND** join and leave lines are still logged when `PLAYER_LOG_ENABLED` is true
 
 ### Requirement: Bounded presence state
 
@@ -299,7 +299,7 @@ without a `Player left` line. A named handle SHALL NOT expire automatically.
 
 #### Scenario: Expiry continues with summaries disabled
 
-- **WHEN** `PLAYER_LOG=false`, `PLAYER_POLL_INTERVAL=0`, Auto Pause is enabled, and an unnamed
+- **WHEN** `PLAYER_LOG_ENABLED=false`, `PLAYER_POLL_INTERVAL=0`, Auto Pause is enabled, and an unnamed
   handle remains unnamed for at least 5 minutes
 - **THEN** the handle SHALL be removed with a warning
 - **AND** no `Player left` line SHALL be logged
@@ -311,13 +311,13 @@ without a `Player left` line. A named handle SHALL NOT expire automatically.
 
 ### Requirement: Presence diagnostics
 
-Bounded-state warnings SHALL be logged at WARNING even when `PLAYER_LOG` is false. Summary work
+Bounded-state warnings SHALL be logged at WARNING even when `PLAYER_LOG_ENABLED` is false. Summary work
 SHALL stop when shutdown begins. Player Presence SHALL NOT log Auto Pause policy messages; those
 are owned by `auto-pause`.
 
 #### Scenario: Warnings survive output suppression
 
-- **WHEN** `PLAYER_LOG=false` and the handle cap is reached
+- **WHEN** `PLAYER_LOG_ENABLED=false` and the handle cap is reached
 - **THEN** the cap warning is still logged
 
 #### Scenario: Shutdown stops summary work
