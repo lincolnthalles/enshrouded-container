@@ -83,6 +83,8 @@ bump VALUE='major/minor/patch':
         exit 0
     fi
     uv version --bump {{ VALUE }}
+    git add pyproject.toml uv.lock
+    git commit -m "chore: bump version to "$(uv version --short)""
 
 # Tag and push to GitHub, triggering the release workflow.
 [confirm("Are you sure you want to publish a new release? Make sure you've bumped the version and pushed your changes.")]
