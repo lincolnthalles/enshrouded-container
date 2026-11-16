@@ -1,7 +1,7 @@
 ## Purpose
 
-Scheduled, shutdown-triggered, update-triggered, and crash-triggered backups of the saves directory
-with configurable compression.
+Scheduled, shutdown-triggered, update-triggered, scheduled-restart, and crash-triggered backups of
+the saves directory with configurable compression.
 
 ## Requirements
 
@@ -198,6 +198,33 @@ backups are disabled, the restart SHALL continue without a Backup. While auto ro
 #### Scenario: Rollback suppresses the update cold backup
 
 - **WHEN** Auto Update restarts the server with auto rollback enabled (see `auto-rollback`)
+- **THEN** no cold Backup SHALL be created
+- **AND** the restart SHALL continue
+
+### Requirement: Scheduled-restart cold backup
+
+When Auto Restart exits the server (see `auto-restart`), the container SHALL create a detached cold
+Backup when `BACKUP_COLD_ENABLED` is true and save data exists, after the server exits and before
+Wine cleanup, waiting up to `SHUTDOWN_BACKUP_WAIT` for an in-progress Backup (see
+`backup-subprocess`). When cold backups are disabled or no save data exists, the restart SHALL
+continue without a Backup. While auto rollback is enabled, no cold Backup SHALL be created (see
+`auto-rollback`).
+
+#### Scenario: Cold backup on scheduled restart
+
+- **WHEN** a scheduled restart runs with cold backups enabled and save data present
+- **THEN** a detached cold Backup SHALL be created before Wine cleanup
+- **AND** the restart SHALL continue
+
+#### Scenario: Scheduled restart without cold backups or saves
+
+- **WHEN** cold backups are disabled or no save data exists and a scheduled restart runs
+- **THEN** no cold Backup SHALL be created
+- **AND** the restart SHALL continue
+
+#### Scenario: Rollback suppresses the scheduled cold backup
+
+- **WHEN** a scheduled restart runs with auto rollback enabled (see `auto-rollback`)
 - **THEN** no cold Backup SHALL be created
 - **AND** the restart SHALL continue
 

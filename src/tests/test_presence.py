@@ -848,6 +848,65 @@ def test_presence_gate_allows_a_clear_pause() -> None:
 
 
 @pytest.mark.parametrize(
+    ("snapshot", "stream_healthy"),
+    [
+        (_policy_snapshot(ready=False), True),
+        (_policy_snapshot(), False),
+        (_policy_snapshot(degraded=True), True),
+        (_policy_snapshot(session_malformed=True), True),
+        (_policy_snapshot(session_complete_at=None), True),
+    ],
+)
+def test_presence_gate_restart_ignores_health_and_session_vetoes(
+    snapshot: PresenceSnapshot,
+    stream_healthy: bool,
+) -> None:
+    # GIVEN unhealthy or incomplete Session evidence without player activity
+    gate = _gate(snapshot, stream_healthy=stream_healthy)
+
+    # WHEN asking about a scheduled restart
+    verdict = gate.evaluate(PresenceIntent.RESTART)
+
+    # THEN only player activity matters and the restart is allowed
+    assert verdict == PresenceVerdict()
+    assert verdict.is_allowed is True
+
+
+def test_presence_gate_restart_blocks_players() -> None:
+    # GIVEN an active player handle
+    gate = _gate(_policy_snapshot(players=(Player("0(0)"),)))
+
+    # WHEN asking about a scheduled restart
+    verdict = gate.evaluate(PresenceIntent.RESTART)
+
+    # THEN the player blocks with active severity
+    assert verdict == PresenceVerdict("players online", VetoCategory.ACTIVE, has_activity=True)
+    assert verdict.is_allowed is False
+
+
+def test_presence_gate_restart_blocks_pending_join() -> None:
+    # GIVEN a pending join before its window expires
+    gate = _gate(_policy_snapshot(pending_join_until=2.0), now=1.0)
+
+    # WHEN asking about a scheduled restart
+    verdict = gate.evaluate(PresenceIntent.RESTART)
+
+    # THEN the pending join blocks
+    assert verdict == PresenceVerdict("pending player join", VetoCategory.ACTIVE, has_activity=True)
+
+
+def test_presence_gate_restart_blocks_remote_machine() -> None:
+    # GIVEN a Session block with a remote machine entry
+    gate = _gate(_policy_snapshot(session_machines=frozenset({0, 1})))
+
+    # WHEN asking about a scheduled restart
+    verdict = gate.evaluate(PresenceIntent.RESTART)
+
+    # THEN the remote machine blocks as active evidence
+    assert verdict == PresenceVerdict("remote machine active", VetoCategory.ACTIVE, has_activity=True)
+
+
+@pytest.mark.parametrize(
     ("snapshot", "stream_healthy", "reason"),
     [
         (_policy_snapshot(ready=False), True, "world not ready"),

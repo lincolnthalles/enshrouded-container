@@ -10,7 +10,7 @@ from enshctl.backup.catalog import select
 from enshctl.backup.locking import BackupLock, SystemBackupLock, backup_lock_path
 from enshctl.files import chown_tree
 from enshctl.restore_flow import RestoreIO, RestoreOutcome, restore_transaction
-from enshctl.scheduling import parse_cron
+from enshctl.scheduling import format_next_run, parse_cron
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,18 +36,6 @@ def is_rollback_scheduled(settings: AppSettings) -> bool:
 def rollback_interval(settings: AppSettings) -> float:
     """Seconds until the next wall-clock rollback tick."""
     return parse_cron(settings.rollback_cron, fallback=ROLLBACK_FALLBACK_INTERVAL) or ROLLBACK_FALLBACK_INTERVAL
-
-
-def format_next_run(seconds: float) -> str:
-    """Human countdown for the next scheduled rollback."""
-    total = max(int(seconds), 60)
-    hours, remainder = divmod(total, 3600)
-    minutes, _ = divmod(remainder, 60)
-    if hours > 0 and minutes > 0:
-        return f"in {hours}h {minutes}m"
-    if hours > 0:
-        return f"in {hours}h"
-    return f"in {minutes}m" if minutes > 0 else "in 1m"
 
 
 def describe_startup(settings: AppSettings) -> str:

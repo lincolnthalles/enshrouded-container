@@ -22,6 +22,7 @@ class Trigger(StrEnum):
     UPDATE = "update"
     CRASH = "crash"
     RECOVERY = "recovery"
+    RESTART = "restart"
     MANUAL = "manual"
     ROLLBACK = "rollback"
 
@@ -30,6 +31,7 @@ _TRIGGER_CATEGORIES = {
     Trigger.SCHEDULED: Category.LIVE,
     Trigger.SHUTDOWN: Category.COLD,
     Trigger.UPDATE: Category.COLD,
+    Trigger.RESTART: Category.COLD,
     Trigger.CRASH: Category.EMERGENCY,
 }
 
@@ -60,7 +62,7 @@ class BackupRequest:
         return cls(
             category=category,
             wait_seconds=wait_seconds,
-            detach=trigger in (Trigger.SHUTDOWN, Trigger.UPDATE, Trigger.CRASH),
+            detach=trigger in (Trigger.SHUTDOWN, Trigger.UPDATE, Trigger.RESTART, Trigger.CRASH),
         )
 
     def to_argv(self) -> list[str]:

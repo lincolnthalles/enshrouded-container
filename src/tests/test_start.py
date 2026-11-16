@@ -95,6 +95,7 @@ def test_run_returns_lifecycle_code() -> None:
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = False
+    lifecycle.scheduled_restart_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 
@@ -124,6 +125,7 @@ def test_start_runs_cleanup_then_stage_then_activation() -> None:
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = False
+    lifecycle.scheduled_restart_requested = False
     manager = MagicMock()
     manager.stage.return_value = _prepared(manifest)
     manager.build_lifecycle.return_value = lifecycle
@@ -168,12 +170,14 @@ def test_start_relaunches_with_pending_manifest() -> None:
     first.restart_requested = True
     first.rollback_requested = False
     first.recovery_restart_requested = False
+    first.scheduled_restart_requested = False
     first.restart_manifest = target
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
     second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
     stage = MagicMock(side_effect=[_prepared(active, active_saves), _prepared(target, target_saves)])
     build_lifecycle = MagicMock(side_effect=[first, second])
 
@@ -207,12 +211,56 @@ def test_start_relaunches_after_recovery_without_staging() -> None:
     first.restart_requested = False
     first.rollback_requested = False
     first.recovery_restart_requested = True
+    first.scheduled_restart_requested = False
     first.restart_manifest = None
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
     second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
+    stage = MagicMock(return_value=_prepared(active))
+    build_lifecycle = MagicMock(side_effect=[first, second])
+    activate_manifest = MagicMock(return_value=None)
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(
+            settings,
+            seams=_seams(stage, build_lifecycle, activate_manifest=activate_manifest),
+        )
+
+    # THEN it relaunches the same prepared tree without staging or activating again
+    assert code == 0
+    assert build_lifecycle.call_count == 2
+    stage.assert_called_once_with(settings)
+    activate_manifest.assert_called_once()
+    assert build_lifecycle.call_args_list[1].kwargs["active_manifest"] == active
+
+
+def test_start_relaunches_after_scheduled_restart_without_staging() -> None:
+    # GIVEN a lifecycle that requests a scheduled restart
+    settings = replace(AppSettings(), version="latest")
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    first = MagicMock()
+    first.run.return_value = 0
+    first.restart_requested = False
+    first.rollback_requested = False
+    first.recovery_restart_requested = False
+    first.scheduled_restart_requested = True
+    first.restart_manifest = None
+    second = MagicMock()
+    second.run.return_value = 0
+    second.restart_requested = False
+    second.rollback_requested = False
+    second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
     stage = MagicMock(return_value=_prepared(active))
     build_lifecycle = MagicMock(side_effect=[first, second])
     activate_manifest = MagicMock(return_value=None)
@@ -247,6 +295,36 @@ def test_start_does_not_relaunch_after_recovery_stop_failure() -> None:
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = True
+    lifecycle.scheduled_restart_requested = False
+    stage = MagicMock(return_value=_prepared(active))
+    build_lifecycle = MagicMock(return_value=lifecycle)
+
+    with (
+        patch.object(start_cmd, "_setup_timezone"),
+        patch.object(start_cmd, "_setup_directories"),
+        patch.object(start_cmd, "_setup_x11_socket"),
+        patch.object(start_cmd, "ensure_prefix"),
+        patch.object(start_cmd.mods, "mod_files", return_value=()),
+    ):
+        # WHEN the start command runs
+        code = start_cmd.run(settings, seams=_seams(stage, build_lifecycle))
+
+    # THEN it exits non-zero without a second lifecycle
+    assert code == 1
+    build_lifecycle.assert_called_once()
+    stage.assert_called_once_with(settings)
+
+
+def test_start_does_not_relaunch_after_scheduled_stop_failure() -> None:
+    # GIVEN a scheduled restart whose lifecycle exit failed to stop the server
+    settings = replace(AppSettings(), version="latest")
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    lifecycle = MagicMock()
+    lifecycle.run.return_value = 1
+    lifecycle.restart_requested = False
+    lifecycle.rollback_requested = False
+    lifecycle.recovery_restart_requested = False
+    lifecycle.scheduled_restart_requested = True
     stage = MagicMock(return_value=_prepared(active))
     build_lifecycle = MagicMock(return_value=lifecycle)
 
@@ -275,6 +353,7 @@ def test_start_aborts_recovery_relaunch_after_shutdown() -> None:
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = True
+    lifecycle.scheduled_restart_requested = False
     stage = MagicMock(return_value=_prepared(active))
     build_lifecycle = MagicMock()
 
@@ -317,6 +396,7 @@ def test_start_returns_one_when_update_relaunch_fails() -> None:
     first.restart_requested = True
     first.rollback_requested = False
     first.recovery_restart_requested = False
+    first.scheduled_restart_requested = False
     first.restart_manifest = target
     stage = MagicMock(side_effect=[_prepared(active), InstallError("update install failed")])
     build_lifecycle = MagicMock(return_value=first)
@@ -345,6 +425,7 @@ def test_start_warns_on_mods_when_auto_update_is_active(caplog: pytest.LogCaptur
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = False
+    lifecycle.scheduled_restart_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 
@@ -372,6 +453,7 @@ def test_start_skips_mod_warning_when_auto_update_is_inactive(caplog: pytest.Log
     lifecycle.restart_requested = False
     lifecycle.rollback_requested = False
     lifecycle.recovery_restart_requested = False
+    lifecycle.scheduled_restart_requested = False
     stage = MagicMock(return_value=_prepared(manifest))
     build_lifecycle = MagicMock(return_value=lifecycle)
 

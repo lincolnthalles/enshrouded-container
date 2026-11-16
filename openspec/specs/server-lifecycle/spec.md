@@ -106,9 +106,47 @@ and exit cleanly.
 - **THEN** the recovery restart SHALL abort
 - **AND** the container SHALL exit cleanly
 
+### Requirement: In-process scheduled restart
+
+When Auto Restart requests a restart (see `auto-restart`), the start command SHALL stop the
+server through the ordered exit path, relaunch from the already-prepared Game tree and Generated
+config in the same container, and launch a new server process with a new PID. It SHALL NOT repeat
+Install, Game tree, or Generated config preparation, and the Active Manifest SHALL NOT change. The
+exit path SHALL apply the cold Backup policy of `backup-system` (see `backup-system`).
+
+#### Scenario: Scheduled restart relaunches without staging
+
+- **WHEN** Auto Restart requests a restart
+- **THEN** the running server SHALL stop
+- **AND** a new server process SHALL launch from the already-prepared Game tree
+- **AND** Install, Game tree, and Generated config preparation SHALL NOT run again
+
+#### Scenario: Scheduled restart keeps the Active Manifest
+
+- **WHEN** a scheduled restart completes
+- **THEN** the Active Manifest SHALL be the same Manifest as before the restart
+
+### Requirement: Scheduled restart failure and shutdown
+
+A scheduled stop failure SHALL exit non-zero, retain the PID file, and SHALL NOT relaunch. A
+shutdown signal before the relaunch SHALL abort it and exit cleanly.
+
+#### Scenario: Scheduled stop failure exits without relaunch
+
+- **WHEN** a scheduled restart cannot stop the server
+- **THEN** the container SHALL exit non-zero
+- **AND** the PID file SHALL remain
+- **AND** no relaunch SHALL occur
+
+#### Scenario: Shutdown during the scheduled window
+
+- **WHEN** a shutdown signal arrives before the scheduled relaunch starts
+- **THEN** the scheduled restart SHALL abort
+- **AND** the container SHALL exit cleanly
+
 ### Requirement: PID file lifecycle
 
-After launching the server, the entrypoint SHALL write the launched server process PID to the PID file. Every exit after a successful write SHALL clear the PID file, except an update, rollback, or recovery restart that cannot stop the server; that path SHALL retain the PID file because the process is still running. A failed write SHALL NOT remove a marker the process did not write. Presence of the PID file is the restore guard (see `backup-restore`).
+After launching the server, the entrypoint SHALL write the launched server process PID to the PID file. Every exit after a successful write SHALL clear the PID file, except an update, rollback, recovery, or scheduled restart that cannot stop the server; that path SHALL retain the PID file because the process is still running. A failed write SHALL NOT remove a marker the process did not write. Presence of the PID file is the restore guard (see `backup-restore`).
 
 #### Scenario: PID file written on launch
 

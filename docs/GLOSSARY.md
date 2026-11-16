@@ -82,7 +82,7 @@ Storage location of a Backup: `live`, `cold`, or `emergency`.
 _Avoid_: Type, Trigger
 
 **Trigger**:
-Event causing a Backup: scheduler tick, update restart, SIGTERM shutdown, unexpected crash, or manual invocation. Orthogonal to Category.
+Event causing a Backup: scheduler tick, update restart, scheduled restart, SIGTERM shutdown, unexpected crash, or manual invocation. Orthogonal to Category.
 _Avoid_: Category
 
 ### Game tree
@@ -180,8 +180,8 @@ One `m#N` row in a Session block; `m#0` is the local baseline and any `N>0` is a
 _Avoid_: Player count, Peer
 
 **Presence gate**:
-The shared rule that applies Player presence evidence to Auto Pause, a save wait, and an Auto Update
-restart, with operation-specific waivers.
+The shared rule that applies Player presence evidence to Auto Pause, a save wait, Auto Update, and
+Auto Restart, with operation-specific waivers.
 _Avoid_: Admission, veto list
 
 **Empty-server gate**:
@@ -203,10 +203,19 @@ Interval when Auto Pause blocks scheduled live Backups and non-essential backgro
 tree can be suspended without work in flight.
 _Avoid_: Pause attempt, Exclusion
 
+**Auto restart**:
+Scheduled in-process server relaunch that resets the running world without changing the Active
+Manifest.
+_Avoid_: Cron restart, Reboot
+
+**Restart grace window**:
+The bounded wait for player activity to clear before a scheduled restart proceeds anyway.
+_Avoid_: Timeout, Deadline
+
 **Recovery restart**:
 An in-process server relaunch after a wake or operator resume leaves the server rejecting joins
 with repeated 4003 session failures.
-_Avoid_: Crash restart, Auto restart
+_Avoid_: Crash restart
 
 **Wake traffic**:
 Inbound UDP traffic to the query port that resumes a paused server.

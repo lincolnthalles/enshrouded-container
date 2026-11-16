@@ -15,6 +15,7 @@ Docker container for the Enshrouded Dedicated Server with version pinning, mod i
 
 - Docker 24+ on a Linux host.
 - UDP port `15637` reachable by clients.
+- 10 GB storage (Recommended 20 GB+)
 - Optional: Linux kernel 6.14+ with `/dev/ntsync` available, and `SYS_NICE` cap for low-priority backups.
 
 ## Quick Start
@@ -92,6 +93,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 
 - **Version pinning**: Pin exact game server versions via Steam manifest IDs with `VERSION=<manifest_id>` for deterministic deployments.
 - **Auto Update**: For latest-tracking deployments, checks for a newer Manifest on a schedule, warns while an update is pending, and restarts into it when no players are online. Log-only mode reports without acting.
+- **Auto Restart**: Optionally restarts the server on a wall-clock cron or elapsed schedule to clear long-running world glitches. It waits for players with a bounded grace window and reuses the prepared Game tree.
 - **Mod injection**: Mount mods at `/data/mods`. A symlink tree layers mods over the game server install, keeping the original files untouched.
 - **Config via env vars**: Any `ENSHROUDED_*` env var is converted to a nested JSON key in `enshrouded_server.json`. Works with any config field, including future game updates.
 - **Automated backups**: Configurable cron-driven backups (default every 60 min) + shutdown-triggered backup. Backups run at low CPU and I/O priority if cap `SYS_NICE` is available.
@@ -112,11 +114,7 @@ Join the server by clicking Play->Join->Press T (Search by IPv4/domain) and inse
 
 ### Auto Update
 
-Auto Update is enabled by default and only runs when `VERSION` is `latest`, empty, or unset. It checks for a
-newer Manifest on a minute-level cron and logs a warning on every scheduled check while an update is
-pending. By default it downloads the new Manifest immediately and restarts the server as soon as
-the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD_ENABLED` is true, and
-a paused server is resumed first. Pinned versions never check.
+Auto Update is enabled by default and only runs when `VERSION` is `latest`, empty, or unset. Pinned versions never check.
 
 | Variable                               | Default        | Description                                           |
 | -------------------------------------- | -------------- | ----------------------------------------------------- |
@@ -125,6 +123,14 @@ a paused server is resumed first. Pinned versions never check.
 | `AUTO_UPDATE_LOG_ONLY`                 | `false`        | Warn on updates without downloading or restarting     |
 | `AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY` | `false`        | Defer the download until the empty-server gate clears |
 
+<details>
+<summary>Feature internals</summary>
+
+It checks for a newer Manifest on a minute-level cron and logs a warning on every scheduled check while an update is
+pending. By default it downloads the new Manifest immediately and restarts the server as soon as
+the empty-server gate clears. A cold backup runs before the restart when `BACKUP_COLD_ENABLED` is true, and
+a paused server is resumed first.
+
 The restart requires an empty player roster, no pending join, a ready world, a healthy server output
 stream, a non-degraded tracker, and a recent complete Session block containing only the local
 machine. A2S is not required. A paused tree is resumed first and qualifies without a fresh Session
@@ -132,16 +138,46 @@ block. Mod files trigger a startup warning because automatic updates may break m
 once a start or update has prepared the new Manifest install and Game tree, the container keeps that
 install and the Previous Active Manifest install, then removes older complete installs in the
 background.
+
 The first start after upgrading also prunes an existing backlog. An update briefly needs room for the
 Active Manifest, Previous Active Manifest, and requested Manifest installs; older backlog is
 reclaimed before the Download when the free-space guard requires it. Set
 `MANIFEST_PRUNE_ENABLED=false` to keep every install. When disk space still runs out, the update
 Download fails with a warning and the running server stays put.
 
+</details>
+
+### Auto Restart
+
+Auto Restart is opt-in and resets the running world without changing the Active Manifest.
+
+It accepts a standard five-field cron expression in the configured `TZ`, such as `0 9 * * *`, or an elapsed
+schedule such as `@every 24h`. Elapsed schedules start at each server launch. Cron schedules do not
+run a catch-up restart for a time missed while the server was stopped.
+
+| Variable                 | Default | Description                                                              |
+| ------------------------ | ------- | ------------------------------------------------------------------------ |
+| `AUTO_RESTART_ENABLED`   | `false` | Opt in to scheduled in-process restarts                                  |
+| `AUTO_RESTART_CRON`      | —       | `0 9 * * *` for daily at 9 AM, or `@every 24h` for 24 hours after launch |
+| `AUTO_RESTART_MAX_DELAY` | `3600`  | Seconds to wait for players before restarting anyway; `0` = immediate    |
+
+<details>
+<summary>Feature internals</summary>
+
+When the schedule becomes due, the restart waits for active players, a pending join, or a remote
+machine entry to clear. If they remain after `AUTO_RESTART_MAX_DELAY`, the restart proceeds anyway.
+
+A2S and server-health evidence do not delay it. An accepted Auto Update restart wins, and Auto
+Restart does not run while Auto Rollback is active. The server relaunches in-process from the
+prepared Game tree with a new PID. When `BACKUP_COLD_ENABLED` is true and save data exists, a cold
+Backup runs before the relaunch.
+
+</details>
+
 ### Backups
 
 <details>
-    <summary>Click to expand</summary>
+<summary>Click to expand</summary>
 
 | Variable                   | Default                                      | Description                                                               |
 | -------------------------- | -------------------------------------------- | ------------------------------------------------------------------------- |
@@ -150,7 +186,7 @@ Download fails with a warning and the running server stays put.
 | `BACKUP_LEVEL`             | format default                               | Compression level (1-22 zstd, 1-9 gzip/zip; defaults: zstd 9, gzip/zip 6) |
 | `BACKUP_KEEP_LAST`         | `24`                                         | Number of recent backups to keep (`-1` = keep all)                        |
 | `BACKUP_LIVE_ENABLED`      | `true`                                       | Enable scheduled backups                                                  |
-| `BACKUP_COLD_ENABLED`      | `true`                                       | Enable graceful-shutdown and update-restart backups                       |
+| `BACKUP_COLD_ENABLED`      | `true`                                       | Enable shutdown, update, and scheduled-restart backups                    |
 | `BACKUP_EMERGENCY_ENABLED` | `true`                                       | Enable crash-triggered backups                                            |
 | `BACKUP_EXCLUDE`           | `migrated/**;backup/world0.ksd.backup-[1-9]` | Semicolon-separated relative globs to exclude; blank disables             |
 | `BACKUP_DIR`               | `/data/backups`                              | Backup destination                                                        |

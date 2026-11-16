@@ -166,10 +166,11 @@ def _relaunch_prepared(
     *,
     update_requested: bool,
     recovery_requested: bool,
+    scheduled_requested: bool,
     rollback_requested: bool,
     target: ManifestRecord | None,
 ) -> tuple[PreparedServer, bool] | None:
-    reuse_prepared = recovery_requested and not update_requested and not rollback_requested
+    reuse_prepared = (recovery_requested or scheduled_requested) and not update_requested and not rollback_requested
     if update_requested:
         if target is None:
             logger.error("Auto Update: restart requested without a pending Manifest")
@@ -181,7 +182,10 @@ def _relaunch_prepared(
             logger.exception("Update restart failed")
             return None
     if reuse_prepared:
-        logger.info("Auto Pause: relaunching after recovery restart")
+        if scheduled_requested:
+            logger.info("Auto Restart: relaunching from the prepared Game tree")
+        else:
+            logger.info("Auto Pause: relaunching after recovery restart")
         return prepared, True
     try:
         return resolved.stage(settings), False
@@ -236,8 +240,9 @@ def run(
         update_requested = bool(lifecycle.restart_requested)
         rollback_requested = bool(lifecycle.rollback_requested)
         recovery_requested = bool(lifecycle.recovery_restart_requested)
+        scheduled_requested = bool(lifecycle.scheduled_restart_requested)
         target = lifecycle.restart_manifest
-        if not update_requested and not rollback_requested and not recovery_requested:
+        if not update_requested and not rollback_requested and not recovery_requested and not scheduled_requested:
             return exit_code
         if exit_code != 0:
             return exit_code
@@ -253,6 +258,7 @@ def run(
             prepared,
             update_requested=update_requested,
             recovery_requested=recovery_requested,
+            scheduled_requested=scheduled_requested,
             rollback_requested=rollback_requested,
             target=target,
         )

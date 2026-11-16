@@ -81,6 +81,9 @@ def test_app_settings_defaults_are_documented_values() -> None:
         auto_pause_enabled=False,
         auto_pause_idle_timeout=300,
         auto_pause_wake_deny_sources=WakeDenyList(),
+        auto_restart_enabled=False,
+        auto_restart_cron="",
+        auto_restart_max_delay=3600,
         shutdown_timeout=60,
         shutdown_backup_wait=120,
         orchestrator_log_enabled=False,
@@ -139,6 +142,9 @@ def test_load_settings_parses_every_declared_key() -> None:
         "AUTO_PAUSE_ENABLED": "true",
         "AUTO_PAUSE_IDLE_TIMEOUT": "45",
         "AUTO_PAUSE_WAKE_DENY_SOURCES": " 192.0.2.1, 198.51.100.0/24, bad, 2001:db8::/32 ",
+        "AUTO_RESTART_ENABLED": "true",
+        "AUTO_RESTART_CRON": " 0 9 * * * ",
+        "AUTO_RESTART_MAX_DELAY": "900",
         "SHUTDOWN_TIMEOUT": "-1",
         "SHUTDOWN_BACKUP_WAIT": "10",
         "ORCHESTRATOR_LOG_ENABLED": "true",
@@ -206,6 +212,9 @@ def test_load_settings_parses_every_declared_key() -> None:
                 IPv6Network("2001:db8::/32"),
             ),
         ),
+        auto_restart_enabled=True,
+        auto_restart_cron="0 9 * * *",
+        auto_restart_max_delay=900,
         shutdown_timeout=0,
         shutdown_backup_wait=10,
         orchestrator_log_enabled=True,
@@ -266,6 +275,9 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
         "PLAYER_POLL_INTERVAL": "-30",
         "AUTO_PAUSE_ENABLED": "maybe",
         "AUTO_PAUSE_IDLE_TIMEOUT": "-30",
+        "AUTO_RESTART_ENABLED": "maybe",
+        "AUTO_RESTART_CRON": "",
+        "AUTO_RESTART_MAX_DELAY": "-30",
         "AUTO_UPDATE_ENABLED": "maybe",
         "AUTO_UPDATE_LOG_ONLY": "maybe",
         "AUTO_UPDATE_DOWNLOAD_ONLY_WHEN_EMPTY": "maybe",
@@ -282,9 +294,21 @@ def test_load_settings_preserves_invalid_and_empty_fallbacks() -> None:
         AppSettings(),
         player_poll_interval=0,
         auto_pause_idle_timeout=0,
+        auto_restart_max_delay=0,
         shutdown_timeout=0,
         winedlloverrides="",
     )
+
+
+def test_load_settings_falls_back_for_non_integer_restart_delay() -> None:
+    # GIVEN a malformed restart grace value
+    source = {"AUTO_RESTART_MAX_DELAY": "soon"}
+
+    # WHEN loading settings
+    settings = load_settings(source)
+
+    # THEN the documented default applies
+    assert settings.auto_restart_max_delay == 3600
 
 
 def test_load_settings_falls_back_for_non_integer_poll_interval() -> None:

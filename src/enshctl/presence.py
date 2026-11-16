@@ -124,6 +124,7 @@ class PresenceIntent(StrEnum):
     FORCED_SAVE_WAIT = "forced-save-wait"
     UPDATE = "update"
     UPDATE_WHILE_PAUSED = "update-while-paused"
+    RESTART = "restart"
 
 
 @dataclass(frozen=True)
@@ -145,7 +146,7 @@ class PresenceVerdict:
 
 
 class PresenceGate:
-    """Shared Player presence policy for Auto Pause, save waits, and Auto Update."""
+    """Shared Player presence policy for Auto Pause, save waits, Auto Update, and Auto Restart."""
 
     def __init__(
         self,
@@ -168,6 +169,8 @@ class PresenceGate:
 
     def _evaluate(self, intent: PresenceIntent | None, *, now: float) -> PresenceVerdict:
         snapshot = self._snapshot()
+        if intent is PresenceIntent.RESTART:
+            return _restart_verdict(snapshot, now=now)
         has_activity = _has_activity(snapshot, now=now)
         session_reason = _session_veto(snapshot, now=now)
         health = _health_veto(snapshot, stream_healthy=self._stream_healthy())
@@ -207,6 +210,17 @@ class PresenceGate:
                 has_activity=True,
             )
         return PresenceVerdict(session_reason=session_reason, has_activity=has_activity)
+
+
+def _restart_verdict(snapshot: PresenceSnapshot, *, now: float) -> PresenceVerdict:
+    reason = _operator_activity_veto(snapshot, now=now)
+    if reason is None and _has_remote_machine(snapshot):
+        reason = "remote machine active"
+    return PresenceVerdict(
+        reason,
+        VetoCategory.ACTIVE if reason is not None else None,
+        has_activity=reason is not None,
+    )
 
 
 def _health_veto(snapshot: PresenceSnapshot, *, stream_healthy: bool) -> str | None:

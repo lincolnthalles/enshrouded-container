@@ -100,6 +100,17 @@ While rollback is enabled, automatic live, cold, and emergency Backups SHALL NOT
 - **WHEN** a scheduled rollback tick fires while a manual backup holds the lock
 - **THEN** the tick SHALL wait up to `SHUTDOWN_BACKUP_WAIT` and, if still held, log a warning and keep the server running without restoring
 
+### Requirement: Auto Restart suppression
+
+While rollback is enabled, Auto Restart SHALL NOT run; startup SHALL log a warning that scheduled
+restarts are disabled (see `auto-restart`).
+
+#### Scenario: Auto Restart is suppressed
+
+- **WHEN** `ROLLBACK_ENABLED=true` and Auto Restart is otherwise configured
+- **THEN** no scheduled restart SHALL occur
+- **AND** a warning SHALL state that Auto Restart is disabled
+
 ### Requirement: Post-stop failure relaunches
 
 A scheduled restore that fails after the server stopped (corrupt archive, disk full) SHALL log an error naming the file and relaunch the server on the pre-rollback saves, retrying at the next tick. A post-stop lock that is still held after the wait SHALL log an error naming the file and relaunch without restoring. A stop failure that leaves the server alive SHALL exit non-zero without relaunching.

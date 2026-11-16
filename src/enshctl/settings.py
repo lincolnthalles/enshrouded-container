@@ -171,6 +171,11 @@ class AppSettings:
         metadata={"env_key": _WAKE_DENY_SOURCES_ENV, "parse": _parse_networks},
     )
 
+    # Auto Restart
+    auto_restart_enabled: bool = _env_field(default=False, key="AUTO_RESTART_ENABLED", parse=_parse_bool)
+    auto_restart_cron: str = _env_field("", "AUTO_RESTART_CRON", _parse_str)
+    auto_restart_max_delay: int = _env_field(3600, "AUTO_RESTART_MAX_DELAY", _parse_non_negative_int)
+
     # Shutdown
     shutdown_timeout: int = _env_field(60, "SHUTDOWN_TIMEOUT", _parse_non_negative_int)
     shutdown_backup_wait: int = _env_field(120, "SHUTDOWN_BACKUP_WAIT", _parse_non_negative_int)

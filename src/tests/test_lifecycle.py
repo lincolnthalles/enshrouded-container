@@ -5,7 +5,7 @@ import subprocess
 import threading
 from dataclasses import replace
 from ipaddress import IPv4Network
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, override
 from unittest.mock import MagicMock, patch
 
 from enshctl.backup_protocol import BackupRequest, Trigger
@@ -637,6 +637,28 @@ def test_update_exit_orders_server_cold_backup_wine_pid() -> None:
     assert process.waits == [7]
 
 
+def test_scheduled_exit_orders_server_cold_backup_wine_pid() -> None:
+    # GIVEN a running server and save data present
+    events: list[object] = []
+    process = FakeProcess()
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    settings = _settings(shutdown_timeout=7, shutdown_backup_wait=5, backup_cold=True, backup_emergency=False)
+
+    # WHEN the scheduled restart exit path runs
+    code = _exit(ExitRequest(Trigger.RESTART, 0), process, control, io, settings)
+
+    # THEN the server is signalled, the cold backup runs, then Wine cleanup and PID clear
+    assert code == 0
+    assert events == [
+        ("signal_game", signal.SIGINT),
+        ("backup", BackupRequest.for_trigger(Trigger.RESTART, wait_seconds=5)),
+        "wine",
+        "clear_pid",
+    ]
+    assert process.waits == [7]
+
+
 def test_lifecycle_recovery_restart_relaunches_without_backup() -> None:
     # GIVEN a running server that requests a recovery restart after launch
     events: list[object] = []
@@ -689,6 +711,127 @@ def test_lifecycle_recovery_restart_stop_failure_exits_without_relaunch() -> Non
     assert "clear_pid" not in events
 
 
+def test_lifecycle_scheduled_restart_relaunches_without_backup() -> None:
+    # GIVEN a running server that requests a scheduled restart after launch
+    events: list[object] = []
+    process = FakeProcess(returncode=None)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_scheduled_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN it exits cleanly for a prepared-tree relaunch and clears the PID
+    assert code == 0
+    assert lifecycle.scheduled_restart_requested is True
+    assert io.backups == []
+    assert ("signal_game", signal.SIGINT) in events
+    assert "wine" in events
+    assert "clear_pid" in events
+
+
+def test_lifecycle_scheduled_restart_stop_failure_exits_without_relaunch() -> None:
+    # GIVEN a server that ignores the scheduled restart stop wait
+    events: list[object] = []
+    process = FakeProcess(stuck=True)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_scheduled_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN it exits non-zero and does not expose a relaunch
+    assert code == 1
+    assert lifecycle.scheduled_restart_requested is False
+    assert "wine" not in events
+    assert "clear_pid" not in events
+
+
+def test_lifecycle_auto_restart_receives_the_rollback_gate() -> None:
+    # GIVEN rollback mode with Auto Restart enabled
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    settings = _settings(
+        auto_restart_enabled=True,
+        auto_restart_cron="@every 24h",
+        rollback_enabled=True,
+        backup_live=False,
+        backup_cold=False,
+        backup_emergency=False,
+    )
+
+    # WHEN the lifecycle runs
+    with (
+        patch.object(runtime.signal, "signal"),
+        patch.object(runtime, "start_auto_restart") as start,
+    ):
+        code = runtime.ServerLifecycle(
+            settings,
+            process_control=control,
+            lifecycle_io=io,
+            save_directories=SaveDirectories(SAVE_DIR),
+        ).run()
+
+    # THEN the factory is told to validate the schedule but not start a controller
+    assert code == 0
+    start.assert_called_once()
+    assert start.call_args.kwargs["rollback_active"] is True
+
+
+def test_lifecycle_starts_auto_restart_when_enabled() -> None:
+    # GIVEN Auto Restart enabled without rollback
+    events: list[object] = []
+    process = FakeProcess(returncode=0)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    settings = _settings(
+        auto_restart_enabled=True,
+        auto_restart_cron="@every 24h",
+        backup_live=False,
+        backup_cold=False,
+        backup_emergency=False,
+    )
+    lifecycle = ServerLifecycle(
+        settings,
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+
+    # WHEN the lifecycle runs
+    with (
+        patch.object(runtime.signal, "signal"),
+        patch.object(runtime, "start_auto_restart") as start,
+    ):
+        code = lifecycle.run()
+
+    # THEN the controller is started with the lifecycle's evidence and request seam
+    assert code == 0
+    start.assert_called_once()
+    kwargs = start.call_args.kwargs
+    assert kwargs["stop_event"] is not None
+    assert kwargs["players_present"]() is False
+    assert callable(kwargs["request_restart"])
+
+
 def test_recovery_request_does_not_mask_a_crash() -> None:
     # GIVEN a server that exits while a recovery restart is also requested
     events: list[object] = []
@@ -712,6 +855,119 @@ def test_recovery_request_does_not_mask_a_crash() -> None:
     assert lifecycle.recovery_restart_requested is False
     assert io.backups == [BackupRequest.for_trigger(Trigger.CRASH)]
     assert "clear_pid" in events
+
+
+def test_scheduled_request_does_not_mask_a_crash() -> None:
+    # GIVEN a server that exits while a scheduled restart is also requested
+    events: list[object] = []
+    process = FakeProcess(returncode=9)
+    control = FakeProcessControl(process, events)
+    io = FakeLifecycleIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=True),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+    )
+    control.on_start = lifecycle.request_scheduled_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN the unexpected exit wins and runs the emergency backup
+    assert code == 9
+    assert lifecycle.scheduled_restart_requested is False
+    assert io.backups == [BackupRequest.for_trigger(Trigger.CRASH)]
+    assert "clear_pid" in events
+
+
+def test_rollback_request_wins_over_a_scheduled_request() -> None:
+    # GIVEN a scheduled request during launch and a rollback request before the wait
+    events: list[object] = []
+    process = FakeProcess(returncode=None)
+    control = FakeProcessControl(process, events)
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+
+    class _RollbackAtStartIO(FakeLifecycleIO):
+        @override
+        def start_rollback(
+            self,
+            rollback_request: threading.Event,
+            stop_event: threading.Event,
+        ) -> None:
+            del stop_event
+            rollback_request.set()
+
+    io = _RollbackAtStartIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+        active_manifest=active,
+    )
+    control.on_start = lifecycle.request_scheduled_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN rollback is accepted and the scheduled request is left alone
+    assert code == 0
+    assert lifecycle.rollback_requested is True
+    assert lifecycle.scheduled_restart_requested is False
+
+
+def test_update_request_wins_over_a_scheduled_request() -> None:
+    # GIVEN a scheduled request during launch and an update request before the wait
+    events: list[object] = []
+    process = FakeProcess(returncode=None)
+    control = FakeProcessControl(process, events)
+    active = ManifestRecord("111", "05/29/2026 12:00:00")
+    target = ManifestRecord("222", "05/29/2026 13:00:00")
+
+    class _UpdateAtStartIO(FakeLifecycleIO):
+        @override
+        def start_updater(
+            self,
+            presence_gate: PresenceGate,
+            *,
+            active_manifest: ManifestRecord,
+            stop_event: threading.Event,
+            restart_request: RestartRequest,
+            is_paused: Callable[[], bool],
+            pause_gate: PauseGate,
+        ) -> None:
+            super().start_updater(
+                presence_gate,
+                active_manifest=active_manifest,
+                stop_event=stop_event,
+                restart_request=restart_request,
+                is_paused=is_paused,
+                pause_gate=pause_gate,
+            )
+            restart_request.request(target)
+
+    io = _UpdateAtStartIO(events)
+    lifecycle = ServerLifecycle(
+        _settings(backup_live=False, backup_cold=False, backup_emergency=False),
+        process_control=control,
+        lifecycle_io=io,
+        save_directories=SaveDirectories(SAVE_DIR),
+        active_manifest=active,
+    )
+    control.on_start = lifecycle.request_scheduled_restart
+
+    # WHEN the lifecycle runs
+    with patch.object(runtime.signal, "signal"):
+        code = lifecycle.run()
+
+    # THEN the update request is accepted and the scheduled request is left alone
+    assert code == 0
+    assert lifecycle.restart_requested is True
+    assert lifecycle.restart_manifest == target
+    assert lifecycle.scheduled_restart_requested is False
 
 
 def test_lifecycle_update_restart_uses_pending_manifest() -> None:

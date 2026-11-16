@@ -13,7 +13,6 @@ from enshctl.download.types import ManifestRecord
 from enshctl.lifecycle.rollback import (
     RollbackController,
     describe_startup,
-    format_next_run,
     is_rollback_active,
     is_rollback_scheduled,
     resolve_rollback_backup,
@@ -101,15 +100,6 @@ def test_rollback_interval_falls_back_on_bad_cron() -> None:
     # WHEN computing the next tick
     # THEN the 3600s fallback applies
     assert rollback_interval(settings) == 3600.0
-
-
-def test_format_next_run_counts_down() -> None:
-    # GIVEN wall-clock countdowns
-    # WHEN formatting the next run
-    # THEN hour and minute buckets are humanized
-    assert format_next_run(3600.0) == "in 1h"
-    assert format_next_run(5400.0) == "in 1h 30m"
-    assert format_next_run(120.0) == "in 2m"
 
 
 def test_describe_startup_names_mode() -> None:
@@ -613,12 +603,14 @@ def test_scheduled_rollback_relaunches_after_restore() -> None:
     first.restart_requested = False
     first.rollback_requested = True
     first.recovery_restart_requested = False
+    first.scheduled_restart_requested = False
     first.restart_manifest = None
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
     second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),
@@ -661,12 +653,14 @@ def test_failed_scheduled_restore_still_relaunches() -> None:
     first.restart_requested = False
     first.rollback_requested = True
     first.recovery_restart_requested = False
+    first.scheduled_restart_requested = False
     first.restart_manifest = None
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
     second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),
@@ -725,12 +719,14 @@ def test_combined_update_and_rollback_relaunch_once() -> None:
     first.restart_requested = True
     first.rollback_requested = True
     first.recovery_restart_requested = False
+    first.scheduled_restart_requested = False
     first.restart_manifest = target
     second = MagicMock()
     second.run.return_value = 0
     second.restart_requested = False
     second.rollback_requested = False
     second.recovery_restart_requested = False
+    second.scheduled_restart_requested = False
     stage = MagicMock(
         side_effect=[
             MagicMock(active_manifest=active, save_directories=SaveDirectories(SAVE_DIR)),
